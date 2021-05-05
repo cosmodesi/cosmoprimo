@@ -204,26 +204,6 @@ def plot_wallish2018():
     plt.xscale('log')
     plt.show()
 
-"""
-def test_2d():
-    from matplotlib import pyplot as plt
-    cosmo = Cosmology()
-    fo = Fourier(cosmo,engine='eisenstein_hu')
-    #fo = Fourier(cosmo,engine='class')
-    pk_interpolator = fo.pk_interpolator().to_1d()
-    xi_interpolator = pk_interpolator.to_xi()
-    s = np.linspace(1e-2,300,4000)
-    plt.plot(s,s**2*xi_interpolator(s),label='input')
-    for engine in ['kirkby2013']:
-        flt = CorrelationFunctionBAOFilter(xi_interpolator,engine=engine)
-        plt.plot(s,s**2*flt.smooth_xi_interpolator()(s),label=engine)
-    fo = Fourier(cosmo,engine='class')
-    pk_interpolator = fo.pk_interpolator().to_1d()
-    xi_interpolator = pk_interpolator.to_xi()
-    plt.plot(s,s**2*xi_interpolator(s),label='class')
-    plt.legend()
-    plt.show()
-"""
 
 if __name__ == '__main__':
 

@@ -149,8 +149,8 @@ def get_engine(cosmology, engine=None, set_engine=True, **extra_params):
     cosmology : Cosmology
         Current cosmology.
 
-    engine : string
-        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+    engine : BaseEngine, string
+        Engine or one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
         If ``None``, returns current :attr:`cosmology.engine`.
 
     set_engine : bool
@@ -394,7 +394,7 @@ class Cosmology(BaseEngine):
         self.params = compile_params(merge_params(self.__class__.get_default_parameters(include_conflicts=False),params))
         self.engine = engine
         if self.engine is not None:
-            self.set_engine(self.engine, extra_params or {})
+            self.set_engine(self.engine, **(extra_params or {}))
 
     def set_engine(self, engine, **extra_params):
         """

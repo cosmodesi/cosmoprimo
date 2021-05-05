@@ -20,6 +20,18 @@ def test_params():
     fo_class = Fourier(cosmo)
 
 
+def test_engine():
+    cosmo = Cosmology(engine='class')
+    cosmo.set_engine(engine='camb')
+    cosmo.set_engine(engine=cosmo.engine)
+    ba = cosmo.get_background()
+    ba = Background(cosmo)
+    assert ba.engine is cosmo.engine
+    ba = cosmo.get_background(engine='camb',set_engine=False)
+    ba = Background(cosmo,engine='camb',set_engine=False)
+    assert cosmo.engine is not ba.engine
+
+
 list_params = [{},{'sigma8':1.},{'A_s':2e-9},{'lensing':True},{'m_ncdm':0.1,'neutrino_hierarchy':'normal'},{'Omega_k':0.1}]
 
 
@@ -361,10 +373,8 @@ def benchmark():
 
 if __name__ == '__main__':
 
-    benchmark()
-    exit()
-
     test_params()
+    test_engine()
     test_registered()
     for params in list_params:
         test_background(params)
