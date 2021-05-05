@@ -1,0 +1,3 @@
+camb
+git+git://github.com/adematti/pyclass
+pyfftw
