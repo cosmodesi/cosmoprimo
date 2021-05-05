@@ -14,7 +14,7 @@ together with routines to manipulate these results:
 
 ## Documentation
 
-Documentation is hosted on Read the Docs, [pypescript docs](https://cosmoprimo.readthedocs.io/).
+Documentation is hosted on Read the Docs, [cosmoprimo docs](https://cosmoprimo.readthedocs.io/).
 
 # Requirements
 
