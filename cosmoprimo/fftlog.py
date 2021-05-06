@@ -243,7 +243,7 @@ class PowerToCorrelation(FFTlog):
 
     It relies on spherical Bessel function kernels.
     """
-    def __init__(self, k, ell, q=1.5, **kwargs):
+    def __init__(self, k, ell=0, q=1.5, **kwargs):
         """
         Initialise power to correlation transform.
 
@@ -280,7 +280,7 @@ class CorrelationToPower(FFTlog):
 
     It relies on spherical Bessel function kernels.
     """
-    def __init__(self, s, ell, q=1.5, **kwargs):
+    def __init__(self, s, ell=0, q=1.5, **kwargs):
         """
         Initialise power to correlation transform.
 

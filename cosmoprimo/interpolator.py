@@ -577,7 +577,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         xi : CorrelationFunctionInterpolator1D
         """
         k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
-        s,xi = PowerToCorrelation(k,ell=0,**(fftlog_kwargs or {}))(self(k))
+        s,xi = PowerToCorrelation(k,**(fftlog_kwargs or {}))(self(k))
         default_params = dict(interp_s='log',interp_order_s=self.interp_order_k)
         default_params.update(kwargs)
         return CorrelationFunctionInterpolator1D(s,xi=xi,**default_params)
@@ -739,7 +739,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
 
             def interp(k, z=0, grid=True, islogk=False):
                 if islogk: k = np.exp(k)
-                pk = pk_callable(k,z,grid=grid) * self._rsigma8sq
+                pk = pk_callable(k,z=z,grid=grid) * self._rsigma8sq
                 return pk
 
         self.interp = interp
@@ -837,9 +837,9 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         s,var = TophatVariance(k)(self(k,z=self.z).T)
         return np.sqrt(GenericSpline(s,self.z,var.T)(r,z,grid=True))
 
-    def sigma8_z(self, **kwargs):
+    def sigma8_z(self, z=0, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""
-        return self.sigma_rz(8.,**kwargs)
+        return self.sigma_rz(8.,z=z,**kwargs)
 
     def rescale_sigma8(self, sigma8=1.):
         """Rescale power spectrum to the provided ``sigma8`` normalisation  at :math:`z = 0`."""
@@ -940,7 +940,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         xi : CorrelationFunctionInterpolator2D
         """
         k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
-        s,xi = PowerToCorrelation(k,ell=0,**(fftlog_kwargs or {}))(self(k,z=self.z,ignore_growth=True).T)
+        s,xi = PowerToCorrelation(k,**(fftlog_kwargs or {}))(self(k,z=self.z,ignore_growth=True).T)
         default_params = dict(interp_s='log',interp_order_s=self.interp_order_k,
                             interp_order_z=self.interp_order_z,extrap_z=self.extrap_z,growth_factor_sq=self.growth_factor_sq)
         default_params.update(kwargs)
@@ -1107,9 +1107,9 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         """
         return self.to_pk().sigma_r(r,**kwargs)
 
-    def sigma8(self, **kwargs):
+    def sigma8(self, z=0, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""
-        return self.sigma_rz(8.,**kwargs)
+        return self.sigma_rz(8.,z=z,**kwargs)
 
     def rescale_sigma8(self, sigma8=1.):
         """Rescale the correlation function to the provided ``sigma8`` normalisation."""
@@ -1134,7 +1134,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         pk : PowerSpectrumInterpolator1D
         """
         s = np.logspace(np.log10(self.extrap_smin),np.log10(self.extrap_smax),ns)
-        k,pk = CorrelationToPower(s,ell=0,**(fftlog_kwargs or {}))(self(s))
+        k,pk = CorrelationToPower(s,**(fftlog_kwargs or {}))(self(s))
         default_params = dict(interp_k='log',interp_order_k=self.interp_order_s)
         default_params.update(kwargs)
         return PowerSpectrumInterpolator1D(k,pk=pk,**default_params)
@@ -1285,7 +1285,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         self._rsigma8sq = 1.
         self.s, self.z = (np.atleast_1d(x) for x in [s,z])
         self.__dict__.update(self.default_params)
-        self.interp_order_z = min(len(self.z)-1,3)
+        self.interp_order_z = GenericSpline.min_spline_order(self.z)
         self.growth_factor_sq = growth_factor_sq
         self.is_from_callable = True
 
@@ -1308,7 +1308,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
             def interp(s, z=0, grid=True, islogs=False):
                 if islogs: s = np.exp(s)
-                xi = xi_callable(s,z,grid=grid) * self._rsigma8sq
+                xi = xi_callable(s,z=z,grid=grid) * self._rsigma8sq
                 return xi
 
         self.interp = interp
@@ -1392,7 +1392,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         pk : PowerSpectrumInterpolator2D
         """
         s = np.logspace(np.log10(self.extrap_smin),np.log10(self.extrap_smax),ns)
-        k,pk = CorrelationToPower(s,ell=0,**(fftlog_kwargs or {}))(self(s,self.z,ignore_growth=True).T)
+        k,pk = CorrelationToPower(s,**(fftlog_kwargs or {}))(self(s,self.z,ignore_growth=True).T)
         default_params = dict(interp_k='log',extrap_pk='log',interp_order_k=self.interp_order_s,
                         interp_order_z=self.interp_order_z,extrap_z=self.extrap_z,growth_factor_sq=self.growth_factor_sq)
         default_params.update(kwargs)
