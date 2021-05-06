@@ -12,6 +12,7 @@ from scipy import interpolate, integrate
 
 from .utils import BaseClass
 from .fftlog import PowerToCorrelation, CorrelationToPower, TophatVariance
+from . import constants
 
 
 def get_default_k_callable():
@@ -552,7 +553,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
 
     def sigma8(self, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""
-        return self.sigma_rz(8.,**kwargs)
+        return self.sigma_r(8.,**kwargs)
 
     def rescale_sigma8(self, sigma8=1.):
         """Rescale power spectrum to the provided ``sigma8`` normalisation."""
@@ -793,7 +794,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         sigmadz : array_like
         """
         if nk is None:
-            if np.isscalar(z):
+            if np.ndim(z) == 0:
                 return self.to_1d(z=z).sigma_d(epsrel=epsrel)
             return np.array([self.to_1d(z=z_).sigma_d(epsrel=epsrel) for z_ in z])
 
@@ -830,7 +831,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             Array of shape ``(r.size, z.size)`` (null dimensions are squeezed).
         """
         if nk is None:
-            if np.isscalar(z):
+            if np.ndim(z) == 0:
                 return self.to_1d(z=z).sigma_r(r,epsrel=epsrel)
             return np.array([self.to_1d(z=z_).sigma_r(r,epsrel=epsrel) for z_ in z]).T
         k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
@@ -1107,9 +1108,9 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         """
         return self.to_pk().sigma_r(r,**kwargs)
 
-    def sigma8(self, z=0, **kwargs):
+    def sigma8(self, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""
-        return self.sigma_rz(8.,z=z,**kwargs)
+        return self.sigma_r(8.,**kwargs)
 
     def rescale_sigma8(self, sigma8=1.):
         """Rescale the correlation function to the provided ``sigma8`` normalisation."""
@@ -1330,13 +1331,13 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         """
         return self.to_pk().sigma_rz(r, z=z,**kwargs)
 
-    def sigma8_z(self, **kwargs):
+    def sigma8_z(self, z=0, **kwargs):
         """
         Return the r.m.s. of perturbations in a sphere of 8 by transforming correlation function into power spectrum.
 
         See :meth:`PowerSpectrumInterpolator2D.sigma8_z()` arguments.
         """
-        return self.sigma_rz(8.,**kwargs)
+        return self.sigma_rz(8.,z=z,**kwargs)
 
     def rescale_sigma8(self, sigma8=1.):
         """Rescale correlation function to the provided ``sigma8`` normalisation  at :math:`z = 0`."""

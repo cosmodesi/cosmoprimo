@@ -44,6 +44,9 @@ def test_power_spectrum():
     assert np.allclose(pk_interp2(k,z),2*pk,rtol=1e-4)
     for iz,z_ in enumerate(z):
         assert np.allclose(pk_interp.to_1d(z=z_)(k),pk[:,iz])
+        assert np.allclose(pk_interp.sigma8_z(z_),pk_interp.to_1d(z_).sigma8(),rtol=1e-4)
+        assert np.allclose(pk_interp.sigma_dz(z_),pk_interp.to_1d(z_).sigma_d(),rtol=1e-4)
+        assert np.allclose(pk_interp.sigma_dz(z_,nk=None),pk_interp.to_1d(z_).sigma_d(),rtol=1e-4)
 
     pk_interp2 = PowerSpectrumInterpolator2D.from_callable(pk_interp.k,pk_interp.z,pk_interp)
     assert np.allclose(pk_interp2(k,z),pk_interp(k,z),rtol=1e-4)
@@ -72,12 +75,16 @@ def test_correlation_function():
     z = 0.5
     assert np.allclose(pk_interp(k,z),pk_interp2(k,z),rtol=1e-2)
 
-    for z in [0.,0.1,1.,3.]:
-        pk_interp = fo.pk_interpolator().to_1d(z=z)
+    z = np.linspace(0,4,10)
+    for z_ in z:
+        pk_interp = fo.pk_interpolator().to_1d(z=z_)
         pk_interp2 = pk_interp.to_xi().to_pk()
         assert np.allclose(pk_interp(k),pk_interp2(k),rtol=1e-2)
         pk_interp2 = pk_interp.to_xi().clone().to_pk()
         assert np.allclose(pk_interp(k),pk_interp2(k),rtol=1e-2)
+        assert np.allclose(xi_interp.sigma_dz(z_),pk_interp.sigma_d(),rtol=1e-4)
+        assert np.allclose(xi_interp.sigma8_z(z_),pk_interp.sigma8(),rtol=1e-4)
+        assert np.allclose(xi_interp.sigma8_z(z_),xi_interp.to_1d(z_).sigma8(),rtol=1e-4)
 
 
 def plot_correlation_function():
