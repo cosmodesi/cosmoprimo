@@ -6,9 +6,6 @@ with open('requirements.txt', 'r') as fh:
 extras_require = {}
 with open('requirements-extras.txt', 'r') as fh:
     extras_require['extras'] = [l.strip() for l in fh]
-    extras_require['full'] = extras_require['extras']
-
-print(extras_require)
 
 setup(name='cosmoprimo',
       version='0.0.1',
