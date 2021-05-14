@@ -1,11 +1,13 @@
 """Cosmology class"""
 
+import os
 import logging
 import functools
 import sys
 
 import numpy as np
 
+from . import utils
 from .utils import BaseClass
 from . import constants
 
@@ -168,19 +170,19 @@ def get_engine(cosmology, engine=None, set_engine=True, **extra_params):
         if cosmology.engine is None:
             raise CosmologyError('Please provide an engine')
         engine = cosmology.engine
-    elif engine == 'class':
+    elif engine in ['class','ClassEngine']:
         from .classy import ClassEngine
         engine = ClassEngine(**cosmology.params,extra_params=extra_params)
-    elif engine == 'camb':
+    elif engine in ['camb','CambEngine']:
         from .camb import CambEngine
         engine = CambEngine(**cosmology.params,extra_params=extra_params)
-    elif engine == 'eisenstein_hu':
+    elif engine in ['eisenstein_hu','EisensteinHuEngine']:
         from .eisenstein_hu import EisensteinHuEngine
         engine = EisensteinHuEngine(**cosmology.params,extra_params=extra_params)
-    elif engine == 'eisenstein_hu_nowiggle':
+    elif engine in ['eisenstein_hu_nowiggle','EisensteinHuNoWiggleEngine']:
         from .eisenstein_hu_nowiggle import EisensteinHuNoWiggleEngine
         engine = EisensteinHuNoWiggleEngine(**cosmology.params,extra_params=extra_params)
-    elif engine == 'bbks':
+    elif engine in ['bbks','BBKSEngine']:
         from .bbks import BBKSEngine
         engine = BBKSEngine(**cosmology.params,extra_params=extra_params)
     elif isinstance(engine,str):
@@ -447,6 +449,39 @@ class Cosmology(BaseEngine):
             toret.update(cls.get_default_parameters(of='calculation',include_conflicts=include_conflicts))
             return toret
         raise CosmologyError('No default parameters for {}'.format(of))
+
+    def __setstate__(self, state):
+        """Set the class state dictionary."""
+        self.params = state['params']
+        if state.get('engine',None) is not None:
+            self.set_engine(state['engine']['name'],**state['engine']['extra_params'])
+
+    def __getstate__(self):
+        """Return this class state dictionary."""
+        state = {'params':self.params,'engine':None}
+        if hasattr(self,'engine'):
+            state['engine'] = {'name':self.engine.__class__.__name__,'extra_params':self.engine.extra_params}
+        return state
+
+    @classmethod
+    def from_state(cls, state):
+        """Instantiate and initalise class with state dictionary."""
+        new = cls.__new__(cls)
+        new.__setstate__(state)
+        return new
+
+    @classmethod
+    def load(cls, filename):
+        """Load class from disk."""
+        state = np.load(filename,allow_pickle=True)[()]
+        new = cls.from_state(state)
+        return new
+
+    def save(self, filename):
+        """Save class to disk."""
+        dirname = os.path.dirname(filename)
+        utils.mkdir(dirname)
+        np.save(filename,self.__getstate__())
 
 
 class BaseSection(object):

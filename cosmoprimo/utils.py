@@ -1,6 +1,15 @@
 """Utilities for **cosmoprimo**."""
 
+import os
 import numpy as np
+
+
+def mkdir(dirname):
+    """Try to create ``dirnm`` and catch :class:`OSError`."""
+    try:
+        os.makedirs(dirname) # MPI...
+    except OSError:
+        return
 
 
 class BaseClass(object):

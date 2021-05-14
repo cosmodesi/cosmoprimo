@@ -479,16 +479,20 @@ def apply_along_last_axes(func, array, naxes=1, toret=None):
     toret.shape = newshape_bak
     return toret
 
-
 try:
     import pyfftw
+    HAVE_PYFFTW = True
+except ImportError:
+    HAVE_PYFFTW = False
+
+
+if HAVE_PYFFTW:
 
     class FFTWEngine(BaseFFTEngine):
 
         """FFT engine based on :mod:`pyfftw`."""
 
         def __init__(self, size, nparallel=1, threads=1, wisdom=None):
-
             """
             Initialise :mod:`pyfftw` engine.
 
@@ -545,9 +549,6 @@ try:
             fun.shape = self.fftw_gk.shape
             self.fftw_gk[...] = np.conj(fun)
             return self.fftw_backward_object()
-
-except ImportError:
-    pass
 
 
 def get_engine(engine, *args, **kwargs):

@@ -1,3 +1,4 @@
+import os
 import pytest
 import numpy as np
 
@@ -15,8 +16,16 @@ def test_params():
     assert cosmo['sigma8'] == 0.8
     for neutrino_hierarchy in ['normal','inverted','degenerate']:
         cosmo = Cosmology(m_ncdm=0.1,neutrino_hierarchy=neutrino_hierarchy)
-    cosmo = Cosmology(m_ncdm=[0.01,0.02,0.05])
+    m_ncdm = [0.01,0.02,0.05]
+    cosmo = Cosmology(m_ncdm=m_ncdm)
     ba_class = Background(cosmo,engine='class')
+    fo_class = Fourier(cosmo)
+
+    fn = os.path.join('_tests','cosmo.npy')
+    cosmo.save(fn)
+    cosmo = Cosmology.load(fn)
+    assert np.allclose(cosmo['m_ncdm'],m_ncdm)
+    assert cosmo.engine.__class__.__name__ == 'ClassEngine'
     fo_class = Fourier(cosmo)
 
 
@@ -114,7 +123,7 @@ def test_harmonic(params):
         for ellmax in [100,-1]:
             if not cosmo['lensing']:
                 from pyclass import ClassBadValueError
-                from cosmolib.camb import CAMBError
+                from cosmoprimo.camb import CAMBError
                 with pytest.raises(ClassBadValueError):
                     tmp_class = getattr(hr_class,name)(ellmax=ellmax)
                 with pytest.raises(CAMBError):
