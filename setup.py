@@ -14,7 +14,7 @@ setup(name='cosmoprimo',
       description='Lightweight primordial cosmology package, including wrappers to CLASS, CAMB, Eisenstein and Hu...',
       license='GPL3',
       url='http://github.com/adematti/cosmoprimo',
-      install_requires=install_requires,
-      extras_require=extras_require,
+      install_requires=['numpy','scipy'],
+      extras_require={'extras':['cython','pyclass @ git+https://github.com/adematti/pyclass','camb','pyfftw']},
       packages=['cosmoprimo']
 )

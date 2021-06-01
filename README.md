@@ -21,10 +21,13 @@ Documentation is hosted on Read the Docs, [cosmoprimo docs](https://cosmoprimo.r
 Only strict requirements are:
 - numpy
 - scipy
+
 If one wants to use CLASS:
 - pyclass
+
 If one wants to use CAMB:
 - camb
+
 For faster FFTs in the FFTlog algorithm:
 - pyfftw
 

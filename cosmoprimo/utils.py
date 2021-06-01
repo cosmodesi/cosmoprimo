@@ -18,11 +18,13 @@ class BaseClass(object):
 
     Implements a :meth:`copy()` method.
     """
-    def copy(self):
+    def __copy__(self):
         """Return shallow copy of ``self``."""
         new = self.__class__.__new__(self.__class__)
         new.__dict__.update(self.__dict__)
         return new
+
+    copy = __copy__
 
 
 class SolveLeastSquares(BaseClass):
