@@ -1,11 +1,5 @@
 from setuptools import setup
 
-with open('requirements.txt', 'r') as fh:
-    install_requires = [l.strip() for l in fh]
-
-extras_require = {}
-with open('requirements-extras.txt', 'r') as fh:
-    extras_require['extras'] = [l.strip() for l in fh]
 
 setup(name='cosmoprimo',
       version='0.0.1',
