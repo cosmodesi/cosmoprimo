@@ -258,7 +258,7 @@ class Fourier(BaseSection):
         toret = PowerSpectrumInterpolator2D.from_callable(pk_callable=pk_callable,growth_factor_sq=growth_factor_sq,**kwargs)
         if not ignore_norm:
             if 'sigma8' in self.engine.params:
-                toret.rescale_sigma8(self.engine['sigma8'])
+                toret.rescale_sigma8(self.ba.growth_rate(0)**(0.5*ntheta)*self.engine['sigma8'])
             else:
                 raise CosmologyError('A sigma8 value must be provided to normalise EH power spectrum.')
         return toret
