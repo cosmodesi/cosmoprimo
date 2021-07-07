@@ -37,8 +37,8 @@ See [cosmoprimo building](https://cosmoprimo.readthedocs.io/en/latest/user/build
 
 ## Acknowledgments
 
-Much inspired by [pyccl](https://github.com/LSSTDESC/CCL/tree/master/pyccl)
-and [nbodykit's cosmology class](https://github.com/bccp/nbodykit/blob/master/nbodykit/cosmology/cosmology.py).
+Much inspired by [pyccl](https://github.com/LSSTDESC/CCL/tree/master/pyccl) and [nbodykit's cosmology class](https://github.com/bccp/nbodykit/blob/master/nbodykit/cosmology/cosmology.py).
+Help from [mcfit](https://github.com/eelregit/mcfit), [hankl](https://github.com/minaskar/hankl), [barry](https://github.com/Samreay/Barry).
 
 ## License
 

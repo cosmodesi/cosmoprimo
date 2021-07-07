@@ -81,7 +81,7 @@ def _replace(app, docname, source):
 
 
 ultimate_replacements = {
-    '{gitrepo}' : git_repo
+    '{gitrepo}': git_repo
 }
 
 def setup(app):
