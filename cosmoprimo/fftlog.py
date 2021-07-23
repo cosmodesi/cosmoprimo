@@ -59,6 +59,14 @@ class FFTlog(object):
 
         engine_kwargs : dict
             Arguments for FFT engine.
+
+        Note
+        ----
+        Kernel definition is different from that of https://jila.colorado.edu/~ajsh/FFTLog/, which uses (eq. 10):
+
+        .. math:: U_{K}(z) = \int_{0}^{\infty} t^{z} K(t) dt
+
+        Therefore, one should use :math:`q = 1` for Bessel functions to match :math:`q = 0` in  https://jila.colorado.edu/~ajsh/FFTLog/.
         """
         self.kernel = kernel
         self.inparallel = isinstance(kernel,list)
@@ -304,10 +312,10 @@ class CorrelationToPower(FFTlog):
         else:
             kernel = [SphericalBesselJKernel(ell_) for ell_ in ell]
         FFTlog.__init__(self, s, kernel, q=q, **kwargs)
-        self.padded_prefactor *= self.padded_x**3
+        self.padded_prefactor *= self.padded_x**3 * (2*np.pi)**1.5
         phase = (1j)**np.atleast_1d(ell)
         if np.isreal(phase).all(): phase = phase.real
-        self.padded_postfactor = self.padded_postfactor * (2*np.pi)**1.5 / phase[:,None]
+        self.padded_postfactor = self.padded_postfactor / phase[:,None]
 
 
 class TophatVariance(FFTlog):

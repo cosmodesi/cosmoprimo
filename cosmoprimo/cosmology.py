@@ -562,6 +562,7 @@ def compile_params(args):
 
     set_alias('T_cmb', 'T0_cmb')
     set_alias('Omega_cdm', 'Omega0_cdm')
+    set_alias('Omega_cdm', 'Omega_c')
     set_alias('Omega_b', 'Omega0_b')
     set_alias('Omega_k', 'Omega0_k')
     set_alias('Omega_ur', 'Omega0_ur')
@@ -737,7 +738,7 @@ def find_conflicts(name):
                  #('Omega_fld', 'Omega0_fld'),
                  #('Omega_Lambda', 'Omega0_Lambda'),
                  ('N_ur', 'Omega_ur', 'omega_ur', 'Omega0_ur'),
-                 ('Omega_cdm', 'omega_cdm', 'Omega0_cdm'),
+                 ('Omega_cdm', 'omega_cdm', 'Omega0_cdm', 'Omega_c', 'omega_c'),
                  #('m_ncdm', 'Omega_ncdm', 'omega_ncdm', 'Omega0_ncdm'),
                  ('A_s', 'ln10^{10}A_s', 'sigma8'),
                  ('tau_reio','z_reio')

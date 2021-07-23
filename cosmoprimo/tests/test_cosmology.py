@@ -380,6 +380,22 @@ def benchmark():
         print('{} takes {:.3f} milliseconds'.format(key,dt))
 
 
+def test_repeats():
+
+    import timeit
+    params = {'sigma8':0.8,'Omega_cdm':0.28,'Omega_b':0.02,'h':0.8,'n_s':0.96,'m_ncdm':0.1,'neutrino_hierarchy':'normal'}
+    cosmo = Cosmology(**params)
+    fo_class = cosmo.get_fourier('class')
+    d = {}
+    for section in ['background','fourier']:
+        d['init {}'.format(section)] = {'stmt':"c = Cosmology(**params); c.get_{}('class')".format(section),'number':2}
+        d['get {}'.format(section)] = {'stmt':"cosmo.get_{}()".format(section),'number':100}
+
+    for key,value in d.items():
+        dt = timeit.timeit(**value,globals={**globals(),**locals()})/value['number']*1e3
+        print('{} takes {:.3f} milliseconds'.format(key,dt))
+
+
 if __name__ == '__main__':
 
     test_params()
@@ -391,6 +407,7 @@ if __name__ == '__main__':
         test_primordial(params)
         test_harmonic(params)
         test_fourier(params)
+    test_repeats()
     #plot_primordial_power_spectrum()
     #plot_harmonic()
     #plot_matter_power_spectrum()
