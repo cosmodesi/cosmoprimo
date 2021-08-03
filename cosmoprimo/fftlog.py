@@ -251,7 +251,7 @@ class PowerToCorrelation(FFTlog):
 
     It relies on spherical Bessel function kernels.
     """
-    def __init__(self, k, ell=0, q=1.5, **kwargs):
+    def __init__(self, k, ell=0, q=0, **kwargs):
         """
         Initialise power to correlation transform.
 
@@ -274,7 +274,7 @@ class PowerToCorrelation(FFTlog):
             kernel = SphericalBesselJKernel(ell)
         else:
             kernel = [SphericalBesselJKernel(ell_) for ell_ in ell]
-        FFTlog.__init__(self, k, kernel, q=q, **kwargs)
+        FFTlog.__init__(self, k, kernel, q=1.5+q, **kwargs)
         self.padded_prefactor *= self.padded_x**3 / (2*np.pi)**1.5
         phase = (1j)**np.atleast_1d(ell)
         if np.isreal(phase).all(): phase = phase.real
@@ -288,7 +288,7 @@ class CorrelationToPower(FFTlog):
 
     It relies on spherical Bessel function kernels.
     """
-    def __init__(self, s, ell=0, q=1.5, **kwargs):
+    def __init__(self, s, ell=0, q=0, **kwargs):
         """
         Initialise power to correlation transform.
 
@@ -311,7 +311,7 @@ class CorrelationToPower(FFTlog):
             kernel = SphericalBesselJKernel(ell)
         else:
             kernel = [SphericalBesselJKernel(ell_) for ell_ in ell]
-        FFTlog.__init__(self, s, kernel, q=q, **kwargs)
+        FFTlog.__init__(self, s, kernel, q=1.5+q, **kwargs)
         self.padded_prefactor *= self.padded_x**3 * (2*np.pi)**1.5
         phase = (1j)**np.atleast_1d(ell)
         if np.isreal(phase).all(): phase = phase.real
@@ -324,7 +324,7 @@ class TophatVariance(FFTlog):
 
     It relies on tophat kernel.
     """
-    def __init__(self, k, q=1.5, **kwargs):
+    def __init__(self, k, q=0, **kwargs):
         """
         Initialise tophat variance transform.
 
@@ -341,7 +341,7 @@ class TophatVariance(FFTlog):
             Arguments for :class:`FFTlog`.
         """
         kernel = TophatSqKernel(ndim=3)
-        FFTlog.__init__(self, k, kernel, q=q, **kwargs)
+        FFTlog.__init__(self, k, kernel, q=1.5+q, **kwargs)
         self.padded_prefactor *= self.padded_x**3 / (2 * np.pi**2)
 
 
@@ -351,7 +351,7 @@ class GaussianVariance(FFTlog):
 
     It relies on Gaussian kernel.
     """
-    def __init__(self, k, q=1.5, **kwargs):
+    def __init__(self, k, q=0, **kwargs):
         """
         Initialise Gaussian variance transform.
 
@@ -368,7 +368,7 @@ class GaussianVariance(FFTlog):
             Arguments for :class:`FFTlog`.
         """
         kernel = GaussianSqKernel()
-        FFTlog.__init__(self, k, kernel, q=q, **kwargs)
+        FFTlog.__init__(self, k, kernel, q=1.5+q, **kwargs)
         self.padded_prefactor *= self.padded_x**3 / (2 * np.pi**2)
 
 
