@@ -15,8 +15,7 @@ def mkdir(dirname):
 class BaseClass(object):
     """
     BaseClass to be used throughout the **cosmoprimo** package.
-
-    Implements a :meth:`copy()` method.
+    Implements a :meth:`copy` method.
     """
     def __copy__(self):
         """Return shallow copy of ``self``."""

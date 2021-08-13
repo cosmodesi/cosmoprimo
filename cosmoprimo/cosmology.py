@@ -68,7 +68,7 @@ class BaseEngine(BaseClass):
             rho = self['N_ur'] * 7./8. * 4./constants.c**3 * constants.Stefan_Boltzmann * self['T_ur']**4 # density, kg/m^3
             return rho/(self['h']**2*constants.rho_crit_kgph_per_mph3)
         if name == 'Omega_ncdm':
-            self.params['Omega_ncdm'] = self._get_Omega_ncdm(z=0)
+            self.params['Omega_ncdm'] = self.params.get('Omega_ncdm',self._get_Omega_ncdm(z=0))
             return self.params['Omega_ncdm']
         if name == 'Omega_m':
             return  self['Omega_b'] + self['Omega_cdm'] + self['Omega_ncdm']
@@ -85,7 +85,7 @@ class BaseEngine(BaseClass):
 
     def _get_Omega_ncdm(self, z=0, epsrel=1e-7):
         """
-        Returne nergy density of non-CDM components (massive neutrinos) by integrating over the phase-space distribution (frozen since CMB).
+        Return energy density of non-CDM components (massive neutrinos) by integrating over the phase-space distribution (frozen since CMB).
 
         Parameters
         ----------
@@ -561,6 +561,7 @@ def compile_params(args):
         params[params_name] = params.pop(args_name)
 
     set_alias('T_cmb', 'T0_cmb')
+    set_alias('Omega_m', 'Omega0_m')
     set_alias('Omega_cdm', 'Omega0_cdm')
     set_alias('Omega_cdm', 'Omega_c')
     set_alias('Omega_b', 'Omega0_b')
@@ -672,6 +673,10 @@ def compile_params(args):
             params[name] = [params[name]]
     if 0 not in params['z_pk']:
         params['z_pk'].append(0) # in order to normalise CAMB power spectrum
+
+    if 'Omega_m' in params:
+        Omega_ncdm = BaseEngine._get_Omega_ncdm(params,z=0,epsrel=1e-7) # a bit of a hack
+        params['Omega_cdm'] = params.pop('Omega_m') - params['Omega_b'] - Omega_ncdm
 
     return params
 
