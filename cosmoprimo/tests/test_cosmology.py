@@ -67,16 +67,23 @@ def test_background(params):
     for distance in ['comoving_radial','angular_diameter','comoving_angular','luminosity']:
         func = '{}_distance'.format(distance)
         assert np.allclose(getattr(ba_class,func)(z),getattr(ba_camb,func)(z),atol=0,rtol=2e-4)
-
     if not cosmo['N_ncdm']:
         for engine in ['eisenstein_hu','eisenstein_hu_nowiggle']:
-            ba_eh = Background(cosmo,engine=engine)
+            ba = Background(cosmo,engine=engine)
             for density in ['Omega']:
-                for name in ['m','Lambda']:
+                for name in ['m','de']:
                     func = '{}_{}'.format(density,name)
-                    assert np.allclose(getattr(ba_class,func)(z),getattr(ba_eh,func)(z),atol=0,rtol=1e-3)
+                    assert np.allclose(getattr(ba_class,func)(z),getattr(ba,func)(z),atol=0,rtol=1e-3)
             for name in ['efunc','hubble_function','growth_factor','growth_rate']:
-                assert np.allclose(getattr(ba_class,name)(z),getattr(ba_eh,name)(z),atol=0,rtol=2e-2)
+                assert np.allclose(getattr(ba_class,name)(z),getattr(ba,name)(z),atol=0,rtol=2e-2)
+    for engine in ['astropy']:
+        ba = Background(cosmo,engine=engine)
+        for density in ['Omega']:
+            for name in ['k','cdm','b','g','de']:
+                func = '{}_{}'.format(density,name)
+                assert np.allclose(getattr(ba_class,func)(z),getattr(ba,func)(z),atol=0,rtol=1e-3)
+        for name in ['efunc','hubble_function','time','comoving_radial_distance','luminosity_distance','angular_diameter_distance','comoving_angular_distance']:
+            assert np.allclose(getattr(ba_class,name)(z),getattr(ba,name)(z),atol=0,rtol=2e-4)
 
 
 @pytest.mark.parametrize('params',list_params)
@@ -208,12 +215,6 @@ def test_fourier(params):
             assert np.allclose(pk_class(k,z=z),pk_eh(k,z=z),rtol=rtol)
             r = np.random.uniform(1.,10.,10)
             assert np.allclose(pk_class.growth_rate_rz(r=r,z=z),pk_eh.growth_rate_rz(r=r,z=z),rtol=rtol)
-
-
-def test_registered():
-    from cosmoprimo import Planck2018FullFlatLCDM
-    cosmo = Planck2018FullFlatLCDM()
-    assert cosmo['h'] == 0.6766
 
 
 def plot_primordial_power_spectrum():
@@ -396,11 +397,38 @@ def test_repeats():
         print('{} takes {:.3f} milliseconds'.format(key,dt))
 
 
+def test_neutrinos():
+    from cosmoprimo import constants
+    from cosmoprimo.cosmology import _compute_ncdm_momenta
+
+    for m_ncdm in [0.06,0.1,0.2,0.4]:
+        T_eff = constants.TCMB*constants.TNCDM
+        #print(_compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='rho'),_compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='p'))
+        omega_ncdm = _compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='rho')/constants.rho_crit_Msunph_per_Mpcph3
+        assert np.allclose(omega_ncdm,m_ncdm/93.14,rtol=1e-3)
+        domega_over_dm = _compute_ncdm_momenta(T_eff, m_ncdm, out='drhodm', z=0)/constants.rho_crit_Msunph_per_Mpcph3
+        assert np.allclose(domega_over_dm,1./93.14,rtol=1e-3)
+
+    for m_ncdm in [0.06,0.1,0.2,0.4]:
+        cosmo = Cosmology(m_ncdm=m_ncdm)
+        #print(m_ncdm,cosmo['Omega_ncdm'],sum(cosmo['m_ncdm'])/(93.14*cosmo['h']**2))
+        assert np.allclose(cosmo['Omega_ncdm'],sum(cosmo['m_ncdm'])/(93.14*cosmo['h']**2),rtol=1e-3)
+        cosmo = Cosmology(Omega_ncdm=cosmo['Omega_ncdm'])
+        assert np.allclose(cosmo['m_ncdm'],m_ncdm)
+
+
+def test_fiducial():
+    from cosmoprimo import fiducial
+    cosmo = fiducial.Planck2018FullFlatLCDM()
+    assert cosmo['h'] == 0.6766
+    cosmo = fiducial.AbacusBaseline()
+    assert np.allclose(cosmo['omega_ncdm'],0.0006442)
+
+
 if __name__ == '__main__':
 
     test_params()
     test_engine()
-    test_registered()
     for params in list_params:
         test_background(params)
         test_thermodynamics(params)
@@ -408,6 +436,8 @@ if __name__ == '__main__':
         test_harmonic(params)
         test_fourier(params)
     test_repeats()
+    test_neutrinos()
+    test_fiducial()
     #plot_primordial_power_spectrum()
     #plot_harmonic()
     #plot_matter_power_spectrum()

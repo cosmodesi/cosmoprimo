@@ -14,7 +14,7 @@ def mkdir(dirname):
 
 class BaseClass(object):
     """
-    BaseClass to be used throughout the **cosmoprimo** package.
+    Base class to be used throughout the **cosmoprimo** package.
     Implements a :meth:`copy` method.
     """
     def __copy__(self):
@@ -24,6 +24,28 @@ class BaseClass(object):
         return new
 
     copy = __copy__
+
+
+def addproperty(*attrs):
+
+    """Add properties ``attrs`` to class ``cls`` (assumed to be internally stored as '_attr')."""
+
+    def decorator(cls):
+
+        def _make_property(name):
+
+            @property
+            def func(self):
+                return getattr(self,'_{}'.format(name))
+
+            return func
+
+        for attr in attrs:
+            setattr(cls,attr,_make_property(attr))
+
+        return cls
+
+    return decorator
 
 
 class SolveLeastSquares(BaseClass):
@@ -44,7 +66,7 @@ class SolveLeastSquares(BaseClass):
     """
     def __init__(self, gradient, precision=1.):
         """
-        Initialise :class:`SolveLeastSquares`.
+        Initialize :class:`SolveLeastSquares`.
 
         Parameters
         ----------

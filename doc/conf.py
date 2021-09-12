@@ -64,7 +64,7 @@ exclude_patterns = ['build', '**.ipynb_checkpoints']
 html_static_path = []
 
 git_repo = 'https://github.com/adematti/cosmoprimo.git'
-git_root = 'https://github.com/adematti/cosmoprimo/blob/master/'
+git_root = 'https://github.com/adematti/cosmoprimo/blob/main/'
 
 extlinks = {'root': (git_root + '%s','')}
 

@@ -2,8 +2,9 @@ import warnings
 
 import numpy as np
 
-from .cosmology import BaseEngine, BaseSection, CosmologyError
+from .cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyError
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
+from . import utils
 
 
 class EisensteinHuEngine(BaseEngine):
@@ -20,6 +21,8 @@ class EisensteinHuEngine(BaseEngine):
             warnings.warn('{} cannot cope with massive neutrinos'.format(self.__class__.__name__))
         if self['Omega_k'] != 0.:
             warnings.warn('{} cannot cope with non-zero curvature'.format(self.__class__.__name__))
+        if (self['w0_fld'], self['wa_fld']) != (-1, 0.):
+            warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
         self.compute()
 
     def _set_rsdrag(self):
@@ -82,7 +85,8 @@ class EisensteinHuEngine(BaseEngine):
         self.beta_b = 0.5 + self.frac_baryon + (3. - 2.*self.frac_baryon) * np.sqrt( (17.2*self.omega_m) ** 2 + 1)
 
 
-class Background(BaseSection):
+@utils.addproperty('Omega0_m','Omega0_de','Omega0_Lambda')
+class Background(BaseBackground):
     """
     Background quantities.
 
@@ -91,36 +95,25 @@ class Background(BaseSection):
     Does not treat neutrinos.
     """
     def __init__(self, engine):
-        self.engine = engine
-        self.H0 = self.engine['H0']
-        for name in ['cdm','b','k','g']:
-            setattr(self,'Omega0_{}'.format(name),self.engine['Omega_{}'.format(name)])
-
-    @property
-    def Omega0_m(self):
-        """Current density parameter of matter, unitless."""
-        return self.Omega0_cdm + self.Omega0_b
-
-    @property
-    def Omega0_Lambda(self):
-        """Current density parameter of cosmological constant, unitless."""
-        return 1.0 - self.Omega0_m - self.Omega0_g - self.Omega0_k
-
-    def hubble_function(self, z):
-        """Hubble function, in :math:`\mathrm{km}/\mathrm{s}/\mathrm{Mpc}`."""
-        return self.efunc(z) * self.H0
+        super(Background,self).__init__(engine=engine)
+        self._Omega0_m = self.Omega0_cdm + self.Omega0_b
+        self._Omega0_Lambda = self._Omega0_de = 1.0 - self.Omega0_m - self.Omega0_g - self.Omega0_k
 
     def efunc(self, z):
         r"""Function giving :math:`E(z)`, where the Hubble parameter is defined as :math:`H(z) = H_{0} E(z)`, unitless."""
-        return np.sqrt(self.Omega0_m * (1 + z)**3 + self.Omega0_g * (1 + z)**4 + self.Omega0_k * (1 + z)**2 + self.Omega0_Lambda)
+        return np.sqrt(self.Omega0_m * (1 + z)**3 + self.Omega0_g * (1 + z)**4 + self.Omega0_k * (1 + z)**2 + self.Omega0_de)
 
     def Omega_m(self, z):
         """Density parameter of matter, unitless."""
         return self.Omega0_m * (1+z)**3 / self.efunc(z)**2
 
+    def Omega_de(self, z):
+        """Density parameter of cosmological constant, unitless."""
+        return self.Omega0_de / self.efunc(z)**2
+
     def Omega_Lambda(self, z):
         """Density parameter of cosmological constant, unitless."""
-        return self.Omega0_Lambda / self.efunc(z)**2
+        return self.Omega0_de / self.efunc(z)**2
 
     def growth_factor(self, z):
         """
@@ -132,7 +125,7 @@ class Background(BaseSection):
         https://ui.adsabs.harvard.edu/abs/1992ARA%26A..30..499C/abstract, eq. 29
         """
         def growth(z):
-            return 1./(1.+z)*5*self.Omega_m(z)/2./(self.Omega_m(z)**(4./7.) - self.Omega_Lambda(z) + (1.+self.Omega_m(z)/2.)*(1.+self.Omega_Lambda(z)/70.))
+            return 1./(1.+z)*5*self.Omega_m(z)/2./(self.Omega_m(z)**(4./7.) - self.Omega_de(z) + (1.+self.Omega_m(z)/2.)*(1.+self.Omega_de(z)/70.))
 
         return growth(z)/growth(0)
 
@@ -147,25 +140,23 @@ class Background(BaseSection):
         return self.Omega_m(z)**0.55
 
 
+@utils.addproperty('rs_drag','z_drag')
 class Thermodynamics(BaseSection):
 
-    @property
-    def rs_drag(self):
-        r"""Comoving sound horizon at the baryon drag epoch, in :math:`\mathrm{Mpc}/h`."""
-        return self.engine.rs_drag * self.engine['h']
-
-    @property
-    def z_drag(self):
-        r"""Baryon drag redshift, unitless."""
-        return self.engine.z_drag
+    def __init__(self, engine):
+        """Initialize :class:`Thermodynamics`."""
+        self.engine = engine
+        self._rs_drag = self.engine.rs_drag * self.engine['h']
+        self._z_drag = self.engine.z_drag
 
 
+@utils.addproperty('n_s')
 class Primordial(BaseSection):
 
     def __init__(self, engine):
-        """Initialise :class:`Primordial`."""
+        """Initialize :class:`Primordial`."""
         self.engine = engine
-        self.n_s = self.engine['n_s']
+        self._n_s = self.engine['n_s']
 
 
 class Transfer(BaseSection):

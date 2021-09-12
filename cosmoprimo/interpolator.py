@@ -198,7 +198,7 @@ class GenericSpline(BaseClass):
 
     def __init__(self, x, y=0, fun=None, interp_x='log', extrap_fun='lin', extrap_xmin=1e-6, extrap_xmax=100, interp_order_x=3, interp_order_y=None, extrap_y=True):
         """
-        Initialise :class:`GenericSpline`.
+        Initialize :class:`GenericSpline`.
 
         Parameters
         ----------
@@ -397,7 +397,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
 
     def __init__(self, k, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=100, interp_order_k=3):
         """
-        Initialise :class:`PowerSpectrumInterpolator1D`.
+        Initialize :class:`PowerSpectrumInterpolator1D`.
 
         Parameters
         ----------
@@ -594,7 +594,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     def __init__(self, k, z=0, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=100,
                 interp_order_k=3, interp_order_z=None, extrap_z=True, growth_factor_sq=None):
         r"""
-        Initialise :class:`PowerSpectrumInterpolator2D`.
+        Initialize :class:`PowerSpectrumInterpolator2D`.
 
         ``growth_factor_sq`` is a callable that can be prodided to rescale the output of the base spline interpolation.
         Indeed, variations of :math:`z \rightarrow P(k,z)` are (mostly) :math:`k` scale independent, such that more accurate interpolation in ``z``
@@ -1009,7 +1009,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
 
     def __init__(self, s, xi=None, interp_s='log', interp_order_s=3):
         """
-        Initialise :class:`CorrelationFunctionInterpolator1D`.
+        Initialize :class:`CorrelationFunctionInterpolator1D`.
 
         Parameters
         ----------
@@ -1147,7 +1147,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
     def __init__(self, s, z=0, xi=None, interp_s='log', interp_order_s=3, interp_order_z=None, extrap_z=True, growth_factor_sq=None):
         r"""
-        Initialise :class:`CorrelationFunctionInterpolator2D`.
+        Initialize :class:`CorrelationFunctionInterpolator2D`.
 
         ``growth_factor_sq`` is a callable that can be prodided to rescale the output of the base spline interpolation.
         Indeed, variations of :math:`z \rightarrow \xi(k,z)` are (mostly) :math:`s` scale independent, such that more accurate interpolation in ``z``

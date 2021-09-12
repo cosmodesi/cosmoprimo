@@ -1,6 +1,7 @@
-"""Implementation of the FFTlog algorithm, very much inspired by mcfit (https://github.com/eelregit/mcfit) and implementation in
-https://github.com/sfschen/velocileptors/blob/master/velocileptors/Utils/spherical_bessel_transform_fftw.py"""
-
+"""
+Implementation of the FFTlog algorithm, very much inspired by mcfit (https://github.com/eelregit/mcfit) and implementation in
+https://github.com/sfschen/velocileptors/blob/master/velocileptors/Utils/spherical_bessel_transform_fftw.py
+"""
 
 import warnings
 import numpy as np
@@ -26,7 +27,7 @@ class FFTlog(object):
     """
     def __init__(self, x, kernel, q=0, minfolds=2, lowring=True, xy=1, check_level=0, engine='numpy', **engine_kwargs):
         """
-        Initialise :class:`FFTlog`, which can perform several transforms at once.
+        Initialize :class:`FFTlog`, which can perform several transforms at once.
 
         Parameters
         ----------
@@ -222,7 +223,7 @@ class HankelTransform(FFTlog):
     """
     def __init__(self, x, nu=0, **kwargs):
         """
-        Initialise Hankel transform.
+        Initialize Hankel transform.
 
         Parameters
         ----------
@@ -253,7 +254,7 @@ class PowerToCorrelation(FFTlog):
     """
     def __init__(self, k, ell=0, q=0, **kwargs):
         """
-        Initialise power to correlation transform.
+        Initialize power to correlation transform.
 
         Parameters
         ----------
@@ -290,7 +291,7 @@ class CorrelationToPower(FFTlog):
     """
     def __init__(self, s, ell=0, q=0, **kwargs):
         """
-        Initialise power to correlation transform.
+        Initialize power to correlation transform.
 
         Parameters
         ----------
@@ -326,7 +327,7 @@ class TophatVariance(FFTlog):
     """
     def __init__(self, k, q=0, **kwargs):
         """
-        Initialise tophat variance transform.
+        Initialize tophat variance transform.
 
         Parameters
         ----------
@@ -353,7 +354,7 @@ class GaussianVariance(FFTlog):
     """
     def __init__(self, k, q=0, **kwargs):
         """
-        Initialise Gaussian variance transform.
+        Initialize Gaussian variance transform.
 
         Parameters
         ----------
@@ -446,7 +447,7 @@ class BaseFFTEngine(object):
 
     def __init__(self, size, nparallel=1):
         """
-        Initialise FFT engine.
+        Initialize FFT engine.
 
         Parameters
         ----------
@@ -502,7 +503,7 @@ if HAVE_PYFFTW:
 
         def __init__(self, size, nparallel=1, threads=1, wisdom=None):
             """
-            Initialise :mod:`pyfftw` engine.
+            Initialize :mod:`pyfftw` engine.
 
             Parameters
             ----------
@@ -530,14 +531,14 @@ if HAVE_PYFFTW:
             else:
                 pyfftw.forget_wisdom()
             #flags = ('FFTW_DESTROY_INPUT','FFTW_MEASURE')
-            self.fftw_f = pyfftw.empty_aligned((self.nparallel,self.size), dtype='float64')
-            self.fftw_fk = pyfftw.empty_aligned((self.nparallel,self.size//2 + 1), dtype='complex128')
-            self.fftw_gk = pyfftw.empty_aligned((self.nparallel,self.size//2 + 1), dtype='complex128')
-            self.fftw_g = pyfftw.empty_aligned((self.nparallel,self.size), dtype='float64')
+            self.fftw_f = pyfftw.empty_aligned((self.nparallel,self.size),dtype='float64')
+            self.fftw_fk = pyfftw.empty_aligned((self.nparallel,self.size//2+1),dtype='complex128')
+            self.fftw_gk = pyfftw.empty_aligned((self.nparallel,self.size//2+1),dtype='complex128')
+            self.fftw_g = pyfftw.empty_aligned((self.nparallel,self.size),dtype='float64')
 
-            pyfftw.config.NUM_THREADS = threads
-            self.fftw_forward_object = pyfftw.FFTW(self.fftw_f,self.fftw_fk,direction='FFTW_FORWARD',threads=threads)
-            self.fftw_backward_object = pyfftw.FFTW(self.fftw_gk,self.fftw_g,direction='FFTW_BACKWARD',threads=threads)
+            #pyfftw.config.NUM_THREADS = threads
+            self.fftw_forward_object = pyfftw.FFTW(self.fftw_f,self.fftw_fk,direction='FFTW_FORWARD',flags=('FFTW_MEASURE',),threads=threads)
+            self.fftw_backward_object = pyfftw.FFTW(self.fftw_gk,self.fftw_g,direction='FFTW_BACKWARD',flags=('FFTW_MEASURE',),threads=threads)
 
         def forward(self, fun):
             """Forward transform of ``fun``."""
@@ -547,7 +548,7 @@ if HAVE_PYFFTW:
                 return apply_along_last_axes(self.forward,fun,naxes=1+(fun.shape[-2] == self.nparallel),toret=toret)
             fun.shape = self.fftw_f.shape
             self.fftw_f[...] = fun
-            return self.fftw_forward_object()
+            return self.fftw_forward_object(normalise_idft=True)
 
         def backward(self, fun):
             """Backward transform of ``fun``."""
@@ -556,7 +557,7 @@ if HAVE_PYFFTW:
                 return apply_along_last_axes(self.backward,fun,naxes=1+(fun.shape[-2] == self.nparallel),toret=toret)
             fun.shape = self.fftw_gk.shape
             self.fftw_gk[...] = np.conj(fun)
-            return self.fftw_backward_object()
+            return self.fftw_backward_object(normalise_idft=True)
 
 
 def get_engine(engine, *args, **kwargs):

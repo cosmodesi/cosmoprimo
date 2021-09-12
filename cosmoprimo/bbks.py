@@ -23,6 +23,8 @@ class BBKSEngine(BaseEngine):
             warnings.warn('{} cannot cope with massive neutrinos'.format(self.__class__.__name__))
         if self['Omega_k'] != 0.:
             warnings.warn('{} cannot cope with non-zero curvature'.format(self.__class__.__name__))
+        if (self['w0_fld'], self['wa_fld']) != (-1, 0.):
+            warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
         self.compute()
 
     def compute(self):

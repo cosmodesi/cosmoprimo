@@ -14,8 +14,6 @@ class ClassEngine(pyclass.ClassEngine,BaseEngine):
     def __init__(self, *args, **kwargs):
         BaseEngine.__init__(self,*args,**kwargs)
         params = self.params.copy()
-        if 'N_eff' in params and 'N_ncdm' in params:
-            params.pop('N_eff')
         lensing = params.pop('lensing')
         params['lensing'] = 'yes' if lensing else 'no'
         params['A_s'] = BaseEngine._get_A_s_fid(self)
@@ -26,12 +24,10 @@ class ClassEngine(pyclass.ClassEngine,BaseEngine):
         params['P_k_max_h/Mpc'] = params.pop('kmax_pk')
         params['l_max_scalars'] = params.pop('ellmax_cl')
         if not params['non_linear']: del params['non_linear']
+        params['N_ncdm'] = self['N_ncdm']
         if not params['N_ncdm']:
             params.pop('m_ncdm')
             params.pop('T_ncdm')
-        else:
-            #del params['T_ncdm']
-            params['T_ncdm'] = [params['T_ncdm']]*params['N_ncdm']
         if params['w0_fld'] != -1 or params['wa_fld'] != 0 or params['cs2_fld'] != 1:
             params['Omega_Lambda'] = 0. # will force non-zero Omega_fld
         else:

@@ -7,9 +7,9 @@ from scipy import interpolate
 import camb
 from camb import CAMBdata, model, CAMBError
 
-from .cosmology import BaseEngine, BaseSection, CosmologyError
+from .cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyError
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
-from . import constants
+from . import utils, constants
 
 
 def enum(*sequential, **named):
@@ -54,6 +54,8 @@ class CambEngine(BaseEngine):
     def __init__(self, *args, **kwargs):
         # Big thanks to https://github.com/LSSTDESC/CCL/blob/master/pyccl/boltzmann.py!
         super(CambEngine,self).__init__(*args,**kwargs)
+        if self.params.get('Omega_Lambda',None) is not None:
+            warnings.warn('{} cannot cope with dynamic dark energy + cosmological constant'.format(self.__class__.__name__))
         self.camb_params = camb.CAMBparams()
         self.camb_params.set_cosmology(H0=self['H0'],ombh2=self['omega_b'],omch2=self['omega_cdm'],omk=self['Omega_k'],
                                         TCMB=self['T_cmb'],tau=self.get('tau_reio',None),zrei=self.get('z_reio',None),deltazrei=self['reionization_width'],
@@ -78,11 +80,11 @@ class CambEngine(BaseEngine):
         # We are trying to get both codes to use the same neutrino temperature.
         # thus we set T_i_eff = T_i = g^(1/4) * T_nu and solve for the right
         # value of g for CAMB. We get g = (TNCDM / (11/4)^(-1/3))^4
-        g = (constants.TNCDM * (11./4)**(1./3.)) ** 4
+        g = np.array(self['T_ncdm'], dtype='f8')**4 * (4./11.)**(-4./3.)
         m_ncdm = np.array(self['m_ncdm'])
         self.camb_params.nu_mass_numbers = np.ones(self['N_ncdm'], dtype='i4')
         self.camb_params.nu_mass_fractions = m_ncdm/m_ncdm.sum()
-        self.camb_params.nu_mass_degeneracies = np.full(self['N_ncdm'], g, dtype='f8')
+        self.camb_params.nu_mass_degeneracies = g
 
         # get YHe from BBN
         self.camb_params.bbn_predictor = camb.bbn.get_predictor()
@@ -189,18 +191,18 @@ def makescalar(func):
     return wrapper
 
 
-class Background(BaseSection):
+class Background(BaseBackground):
 
     def __init__(self, engine):
-        self.engine = engine
+        super(Background,self).__init__(engine=engine)
         self.engine.compute('background')
         self.ba = self.engine.ba
         # convert RHO to 1e10 Msun/h
-        self.H0 = self.ba.Params.H0
-        self.h = self.H0 / 100
+        #self._H0 = self.ba.Params.H0
+        #self._h = self.H0 / 100
         self._RH0_ = constants.rho_crit_Msunph_per_Mpcph3 * constants.c**2 / (self.H0*1e3)**2 / 3.
-        for name in ['k','cdm','b','g','ur','ncdm','de']:
-            setattr(self,'Omega0_{}'.format(name),getattr(self,'Omega_{}'.format(name))(0.))
+        #for name in ['k','cdm','b','g','ur','ncdm','de']:
+        #    setattr(self,'Omega0_{}'.format(name),getattr(self,'Omega_{}'.format(name))(0.))
 
     def Omega_k(self, z):
         r"""Density parameter of curvature, unitless."""
@@ -325,6 +327,7 @@ class Background(BaseSection):
         return self.angular_diameter_distance(z) * (1. + z)
 
 
+@utils.addproperty('rs_drag','z_drag','rs_star','z_star')
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
@@ -332,17 +335,17 @@ class Thermodynamics(BaseSection):
         self.engine.compute('thermodynamics')
         self.th = self.engine.th
         # convert RHO to 1e10 Msun/h
-        self.h = self.th.Params.H0 / 100
+        self._h = self.th.Params.H0 / 100
 
         derived = self.th.get_derived_params()
-        self.rs_drag = derived['rdrag'] * self.h
-        self.z_drag = derived['zdrag']
-        self.rs_star = derived['rstar'] * self.h
-        self.z_star = derived['zstar']
+        self._rs_drag = derived['rdrag'] * self._h
+        self._z_drag = derived['zdrag']
+        self._rs_star = derived['rstar'] * self._h
+        self._z_star = derived['zstar']
 
     def rs_z(self, z):
         """Comoving sound horizon."""
-        return self.th.sound_horizon(z) * self.h
+        return self.th.sound_horizon(z) * self._h
 
 
 class Transfer(BaseSection):

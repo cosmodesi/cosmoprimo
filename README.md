@@ -42,4 +42,4 @@ Help from [mcfit](https://github.com/eelregit/mcfit), [hankl](https://github.com
 
 ## License
 
-**cosmoprimo** is free software distributed under a GPLv3 license. For details see the [LICENSE](https://github.com/adematti/cosmoprimo/blob/master/LICENSE).
+**cosmoprimo** is free software distributed under a GPLv3 license. For details see the [LICENSE](https://github.com/adematti/cosmoprimo/blob/main/LICENSE).

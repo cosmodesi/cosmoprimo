@@ -16,7 +16,7 @@ Extra requirements are:
 - `CAMB <https://github.com/cmbant/CAMB>`_ (for CAMB)
 - `pyfftw <https://github.com/pyFFTW/pyFFTW>`_ (for faster FFTs)
 
-PIP
+pip
 ---
 To install **cosmoprimo**, simply run::
 
@@ -31,7 +31,7 @@ pyclass with Mac OS
 Boltzmann code `CLASS <http://class-code.net>`_  will be compiled at installation time.
 
 If you wish to use clang compiler (instead of gcc), you may encounter an error related to ``-fopenmp`` flag.
-In this case, you can try to export::
+In this case, you can try to export:
 
 .. code:: bash
 
