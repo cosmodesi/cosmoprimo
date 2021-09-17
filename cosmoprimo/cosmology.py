@@ -467,11 +467,11 @@ class Cosmology(BaseEngine):
 
         Parameters
         ----------
-        engine : string
+        engine : string, default=None
             Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-            If ``None``, returns current :attr:`cosmology.engine`.
+            If ``None``, no engine is set.
 
-        extra_params : dict
+        extra_params : dict, default=None
             Extra engine parameters, typically precision parameters.
 
         params : dict
@@ -534,6 +534,36 @@ class Cosmology(BaseEngine):
             toret.update(cls.get_default_parameters(of='calculation',include_conflicts=include_conflicts))
             return toret
         raise CosmologyError('No default parameters for {}'.format(of))
+
+    def clone(self, engine=None, extra_params=None, **params):
+        """
+        Clone current cosmology instance, optionally updating engine and parameters.
+
+        Parameters
+        ----------
+        engine : string, default=None
+            Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+            If ``None``, use same engine (class) as current instance.
+
+        extra_params : dict, default=None
+            Extra engine parameters, typically precision parameters.
+
+        params : dict
+            Cosmological and calculation parameters which take priority over the current ones.
+
+        Returns
+        -------
+        new : Cosmology
+            Copy of current instance, with updated engine and parameters.
+        """
+        new = self.copy()
+        check_params(params)
+        new.params = compile_params(merge_params(self.params.copy(),params))
+        if engine is None and self.engine is not None:
+            engine = self.engine.__class__.__name__
+        if engine is not None:
+            new.set_engine(engine, **(extra_params or {}))
+        return new
 
     def __setstate__(self, state):
         """Set the class state dictionary."""
@@ -702,10 +732,13 @@ def compile_params(args):
                 return m
 
             for Omega,T in zip(Omega_ncdm,T_ncdm):
-                T_eff = params['T_cmb']*T
-                m = solve_newton(Omega*h**2, Omega*h**2*93.14, T_eff)
-                #print(m,Omega*h**2*93.14)
-                m_ncdm.append(m)
+                if Omega == 0:
+                    m_ncdm.append(0)
+                else:
+                    T_eff = params['T_cmb']*T
+                    m = solve_newton(Omega*h**2, Omega*h**2*93.14, T_eff)
+                    #print(m,Omega*h**2*93.14)
+                    m_ncdm.append(m)
 
             if single_ncdm: m_ncdm = m_ncdm[0]
 
@@ -829,6 +862,10 @@ def merge_params(args, moreargs):
     """
     Merge ``moreargs`` parameters into ``args``.
     ``moreargs`` parameters take priority over those defined in ``args``.
+
+    Note
+    ----
+    ``args`` is modified in-place.
 
     Parameters
     ----------

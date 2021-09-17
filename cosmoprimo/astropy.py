@@ -18,7 +18,7 @@ class AstropyEngine(BaseEngine):
             warnings.warn('{} cannot cope with dynamic dark energy + cosmological constant'.format(self.__class__.__name__))
         N_eff = self['N_eff']
         m_nu = self['m_ncdm']
-        m_nu += [0.]*(int(N_eff) - len(m_nu))
+        m_nu = m_nu + [0.]*(int(N_eff) - len(m_nu))
         kwargs = {'H0':self['H0'],'Om0':self['Omega_b']+self['Omega_cdm'],
                 'Tcmb0':self['T_cmb'],'Neff':N_eff,'m_nu':units.Quantity(m_nu, units.eV),'Ob0':self['Omega_b']}
         name = 'CDM'

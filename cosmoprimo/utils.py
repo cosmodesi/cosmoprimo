@@ -23,7 +23,8 @@ class BaseClass(object):
         new.__dict__.update(self.__dict__)
         return new
 
-    copy = __copy__
+    def copy(self):
+        return self.__copy__()
 
 
 def addproperty(*attrs):

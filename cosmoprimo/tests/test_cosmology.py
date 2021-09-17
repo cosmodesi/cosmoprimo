@@ -425,6 +425,22 @@ def test_fiducial():
     assert np.allclose(cosmo['omega_ncdm'],0.0006442)
 
 
+def test_clone():
+    from cosmoprimo import fiducial
+    cosmo = fiducial.Planck2018FullFlatLCDM(engine='class')
+    engine = cosmo.engine
+    for factor in [1.,1.1]:
+        cosmo_clone = cosmo.clone(omega_cdm=cosmo['omega_cdm']*factor)
+        assert type(cosmo_clone.engine) == type(cosmo.engine)
+        assert cosmo_clone.engine is not cosmo.engine
+        z = np.linspace(0.5,2.,100)
+        test = np.allclose(cosmo_clone.get_background().comoving_radial_distance(z),cosmo.get_background().comoving_radial_distance(z))
+        if factor == 1:
+            assert test
+        else:
+            assert not test
+
+
 if __name__ == '__main__':
 
     test_params()
@@ -438,6 +454,7 @@ if __name__ == '__main__':
     test_repeats()
     test_neutrinos()
     test_fiducial()
+    test_clone()
     #plot_primordial_power_spectrum()
     #plot_harmonic()
     #plot_matter_power_spectrum()
