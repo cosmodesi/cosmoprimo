@@ -101,6 +101,28 @@ def test_power_to_correlation():
     assert np.allclose(PowerToCorrelation(k,ell=ells,lowring=True,q=1.5)(pk)[-1],multipoles)
 
 
+def test_odd():
+    cosmo = Cosmology()
+    fo = cosmo.get_fourier(engine='eisenstein_hu')
+    pk_interp = fo.pk_interpolator().to_1d(z=0)
+    k = np.logspace(-5,2,1000)
+    pk = pk_interp(k)
+    s,xi = PowerToCorrelation(k,ell=1)(pk)
+    assert np.abs(xi).max() > 0.
+
+
+def test_multi():
+    cosmo = Cosmology()
+    fo = cosmo.get_fourier(engine='eisenstein_hu')
+    pk_interp = fo.pk_interpolator()
+    k = np.logspace(-5,2,1000)
+    z = np.asarray([0.5,1.0])
+    pk = pk_interp(k,z=z).T
+    s,xi = PowerToCorrelation(k,ell=0)(pk)
+    assert xi.shape == pk.shape
+    assert s.shape == (pk.shape[-1],)
+
+
 def test_sigmar():
     cosmo = Cosmology()
     fo = Fourier(cosmo,engine='eisenstein_hu')
@@ -184,6 +206,8 @@ if __name__ == '__main__':
     test_fftlog()
     test_power_to_correlation()
     test_sigmar()
+    test_odd()
+    test_multi()
     #external_test_mcfit()
     #benchmark()
     #plot()

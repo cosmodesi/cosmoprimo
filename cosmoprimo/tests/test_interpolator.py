@@ -3,6 +3,7 @@ import numpy as np
 from cosmoprimo import Cosmology, Transfer, Fourier, PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D, \
                         CorrelationFunctionInterpolator1D, CorrelationFunctionInterpolator2D
 
+
 def test_power_spectrum():
 
     cosmo = Cosmology()
@@ -12,7 +13,7 @@ def test_power_spectrum():
 
     interp = PowerSpectrumInterpolator1D(k,pk)
     assert np.allclose(interp(k),pk,atol=0,rtol=1e-5)
-    assert np.isscalar(interp(0.1))
+    assert np.ndim(interp(0.1)) == 0
     assert interp(np.ones(4)).shape == (4,)
     assert interp(np.ones((4,2))).shape == (4,2)
     interp2 = interp.clone()
@@ -24,7 +25,8 @@ def test_power_spectrum():
     assert interp(k,z=[0]).shape == (k.size,1)
     assert interp(k,z=[0]*2).shape == (k.size,2)
     assert interp(k[0],z=[0]*2).shape == (2,)
-    assert np.isscalar(interp(k[0],z=0))
+    assert np.ndim(interp(k[0],z=0)) == 0
+    assert interp([k]*3,z=0).shape == (3,) + k.shape
     interp2 = interp.clone()
     assert np.all(interp2(k,z=[0]*2) == interp(k,z=[0]*2))
 
@@ -109,8 +111,9 @@ def plot_correlation_function():
     plt.show()
 
 
+
 if __name__ == '__main__':
 
     test_power_spectrum()
-    test_correlation_function()
+    #test_correlation_function()
     #plot_correlation_function()

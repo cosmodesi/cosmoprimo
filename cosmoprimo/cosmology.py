@@ -447,7 +447,7 @@ class Cosmology(BaseEngine):
     _default_cosmological_parameters = dict(h=0.7, Omega_cdm=0.25, Omega_b=0.05, Omega_k=0., sigma8=0.8, k_pivot=0.05, n_s=0.96, alpha_s=0., r=0., T_cmb=constants.TCMB,
     m_ncdm=None, neutrino_hierarchy=None, T_ncdm=constants.TNCDM, N_eff=constants.NEFF, tau_reio=0.06, reionization_width=0.5, A_L=1.0,
     w0_fld=-1., wa_fld=0., cs2_fld=1.)
-    _default_calculaton_parameters = dict(non_linear='', modes='s', lensing=False, z_pk=None, kmax_pk=10., ellmax_cl=2500)
+    _default_calculation_parameters = dict(non_linear='', modes='s', lensing=False, z_pk=None, kmax_pk=10., ellmax_cl=2500)
 
     def __init__(self, engine=None, extra_params=None, **params):
         r"""
@@ -526,7 +526,7 @@ class Cosmology(BaseEngine):
             if include_conflicts: _include_conflicts(toret)
             return toret
         if of == 'calculation':
-            toret = cls._default_calculaton_parameters.copy()
+            toret = cls._default_calculation_parameters.copy()
             if include_conflicts: _include_conflicts(toret)
             return toret
         if of is None:

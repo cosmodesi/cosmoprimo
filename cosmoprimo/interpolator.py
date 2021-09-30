@@ -327,9 +327,11 @@ class GenericSpline(BaseClass):
                 toret = toret[0]
         else:
             if grid:
-                i_x = np.argsort(x)
-                i_y = np.argsort(y)
-                toret = self.spline(x[i_x],y[i_y],grid=grid)[np.argsort(i_x),:][:,np.argsort(i_y)]
+                i_x = np.argsort(x.flat)
+                i_y = np.argsort(y.flat)
+                toret = self.spline(x.flat[i_x],y.flat[i_y],grid=grid)[np.argsort(i_x),:][:,np.argsort(i_y)]
+                #print(toret.shape,i_x.shape,i_y.shape,x.shape,y.shape)
+                toret.shape = x.shape + y.shape
             else:
                 toret = self.spline(x,y,grid=False)
             if isscalars[0]:
@@ -411,7 +413,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
             If 'log', interpolation is performed in log-k coordinates.
 
         extrap_pk : string
-            If 'log' (and ``interp_k`` is 'log'), ``fun`` is log-log extrpolated up to ``extrap_kmin``, ``extrap_kmax``.
+            If 'log' (and ``interp_k`` is 'log'), ``fun`` is log-log extrapolated up to ``extrap_kmin``, ``extrap_kmax``.
 
         extrap_kmin : float
             Minimum extrapolation range in ``k``.
