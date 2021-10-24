@@ -10,7 +10,7 @@ def Planck2018FullFlatLCDM(engine=None, extra_params=None, **params):
     ----------
     engine : string
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`cosmology.engine`.
+        If ``None``, returns current :attr:`Cosmology.engine`.
 
     extra_params : dict
         Extra engine parameters, typically precision parameters.
@@ -41,7 +41,7 @@ def AbacusBaseline(engine=None, extra_params=None, **params):
     ----------
     engine : string
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`cosmology.engine`.
+        If ``None``, returns current :attr:`Cosmology.engine`.
 
     extra_params : dict
         Extra engine parameters, typically precision parameters.

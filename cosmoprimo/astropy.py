@@ -14,7 +14,7 @@ class AstropyEngine(BaseEngine):
 
     def __init__(self, *args, **kwargs):
         super(AstropyEngine,self).__init__(*args,**kwargs)
-        if self.params.get('Omega_Lambda',None) is not None:
+        if self._params.get('Omega_Lambda',None) is not None:
             warnings.warn('{} cannot cope with dynamic dark energy + cosmological constant'.format(self.__class__.__name__))
         N_eff = self['N_eff']
         m_nu = self['m_ncdm']
@@ -56,7 +56,7 @@ class Background(BaseBackground):
     """
     def __init__(self, engine):
         super(Background,self).__init__(engine=engine)
-        self.ba = self.engine._astropy
+        self.ba = self._engine._astropy
 
     def Omega_k(self, z):
         r"""Density parameter of curvature, unitless."""

@@ -109,7 +109,7 @@ class FFTlog(object):
         engine_kwargs : dict
             Arguments for FFT engine.
         """
-        self.engine = get_engine(engine,size=self.padded_size,nparallel=self.nparallel,**engine_kwargs)
+        self._engine = get_engine(engine,size=self.padded_size,nparallel=self.nparallel,**engine_kwargs)
 
     @property
     def nparallel(self):
@@ -196,7 +196,7 @@ class FFTlog(object):
         """
         scales = np.linspace(1.,3.,3)
         padded_fun = pad(fun,(self.padded_size_in_left,self.padded_size_in_right),axis=-1,extrap=extrap)
-        fftloged = self.engine.backward(self.engine.forward(padded_fun*self.padded_prefactor) * self.padded_u) * self.padded_postfactor
+        fftloged = self._engine.backward(self._engine.forward(padded_fun*self.padded_prefactor) * self.padded_u) * self.padded_postfactor
 
         if not keep_padding:
             y,fftloged = self.y,fftloged[...,self.padded_size_out_left:self.padded_size_out_left+self.size]

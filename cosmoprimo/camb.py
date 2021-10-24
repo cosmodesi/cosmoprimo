@@ -54,20 +54,20 @@ class CambEngine(BaseEngine):
     def __init__(self, *args, **kwargs):
         # Big thanks to https://github.com/LSSTDESC/CCL/blob/master/pyccl/boltzmann.py!
         super(CambEngine,self).__init__(*args,**kwargs)
-        if self.params.get('Omega_Lambda',None) is not None:
+        if self._params.get('Omega_Lambda',None) is not None:
             warnings.warn('{} cannot cope with dynamic dark energy + cosmological constant'.format(self.__class__.__name__))
-        self.camb_params = camb.CAMBparams()
-        self.camb_params.set_cosmology(H0=self['H0'],ombh2=self['omega_b'],omch2=self['omega_cdm'],omk=self['Omega_k'],
+        self._camb_params = camb.CAMBparams()
+        self._camb_params.set_cosmology(H0=self['H0'],ombh2=self['omega_b'],omch2=self['omega_cdm'],omk=self['Omega_k'],
                                         TCMB=self['T_cmb'],tau=self.get('tau_reio',None),zrei=self.get('z_reio',None),deltazrei=self['reionization_width'],
                                         Alens=self['A_L']) # + neutrinos
-        self.camb_params.InitPower.set_params(As=self._get_A_s_fid(),ns=self['n_s'],nrun=self['alpha_s'],pivot_scalar=self['k_pivot'],
+        self._camb_params.InitPower.set_params(As=self._get_A_s_fid(),ns=self['n_s'],nrun=self['alpha_s'],pivot_scalar=self['k_pivot'],
                                         pivot_tensor=self['k_pivot'],parameterization='tensor_param_rpivot',r=self['r'])
 
-        self.camb_params.share_delta_neff = False
-        self.camb_params.omnuh2 = self['omega_ncdm']
-        self.camb_params.num_nu_massless = self['N_ur']
-        self.camb_params.num_nu_massive = self['N_ncdm']
-        self.camb_params.nu_mass_eigenstates = self['N_ncdm']
+        self._camb_params.share_delta_neff = False
+        self._camb_params.omnuh2 = self['omega_ncdm']
+        self._camb_params.num_nu_massless = self['N_ur']
+        self._camb_params.num_nu_massive = self['N_ncdm']
+        self._camb_params.nu_mass_eigenstates = self['N_ncdm']
         delta_neff = self['N_eff'] - constants.NEFF  # used for BBN YHe comps
 
         # CAMB defines a neutrino degeneracy factor as T_i = g^(1/4)*T_nu
@@ -82,42 +82,42 @@ class CambEngine(BaseEngine):
         # value of g for CAMB. We get g = (TNCDM / (11/4)^(-1/3))^4
         g = np.array(self['T_ncdm'], dtype='f8')**4 * (4./11.)**(-4./3.)
         m_ncdm = np.array(self['m_ncdm'])
-        self.camb_params.nu_mass_numbers = np.ones(self['N_ncdm'], dtype='i4')
-        self.camb_params.nu_mass_fractions = m_ncdm/m_ncdm.sum()
-        self.camb_params.nu_mass_degeneracies = g
+        self._camb_params.nu_mass_numbers = np.ones(self['N_ncdm'], dtype='i4')
+        self._camb_params.nu_mass_fractions = m_ncdm/m_ncdm.sum()
+        self._camb_params.nu_mass_degeneracies = g
 
         # get YHe from BBN
-        self.camb_params.bbn_predictor = camb.bbn.get_predictor()
-        self.camb_params.YHe = self.camb_params.bbn_predictor.Y_He(self.camb_params.ombh2*(camb.constants.COBE_CMBTemp / self.camb_params.TCMB)**3,delta_neff)
+        self._camb_params.bbn_predictor = camb.bbn.get_predictor()
+        self._camb_params.YHe = self._camb_params.bbn_predictor.Y_He(self._camb_params.ombh2*(camb.constants.COBE_CMBTemp / self._camb_params.TCMB)**3,delta_neff)
 
-        self.camb_params.set_classes(dark_energy_model=camb.dark_energy.DarkEnergyFluid)
-        self.camb_params.DarkEnergy.set_params(w=self['w0_fld'],wa=self['wa_fld'],cs2=self['cs2_fld'])
+        self._camb_params.set_classes(dark_energy_model=camb.dark_energy.DarkEnergyFluid)
+        self._camb_params.DarkEnergy.set_params(w=self['w0_fld'],wa=self['wa_fld'],cs2=self['cs2_fld'])
 
         if self['non_linear']:
-            self.camb_params.NonLinearModel = camb.nonlinear.Halofit()
+            self._camb_params.NonLinearModel = camb.nonlinear.Halofit()
             halofit_version = self.get('halofit_version','mead')
             options = {}
             for name in ['HMCode_A_baryon','HMCode_eta_baryon','HMCode_logT_AGN']:
                 tmp = self.get(name,None)
                 if tmp is not None: options[name] = tmp
-            self.camb_params.NonLinearModel.set_params(halofit_version=halofit_version, **options)
+            self._camb_params.NonLinearModel.set_params(halofit_version=halofit_version, **options)
 
-        self.camb_params.DoLensing = self['lensing']
-        self.camb_params.Want_CMB_lensing = self['lensing']
-        self.camb_params.set_for_lmax(lmax=self['ellmax_cl'])
-        self.camb_params.set_matter_power(redshifts=self['z_pk'],kmax=self['kmax_pk']*self['h'],nonlinear=self['non_linear'],silent=True)
+        self._camb_params.DoLensing = self['lensing']
+        self._camb_params.Want_CMB_lensing = self['lensing']
+        self._camb_params.set_for_lmax(lmax=self['ellmax_cl'])
+        self._camb_params.set_matter_power(redshifts=self['z_pk'],kmax=self['kmax_pk']*self['h'],nonlinear=self['non_linear'],silent=True)
 
         if not self['non_linear']:
-            assert self.camb_params.NonLinear == camb.model.NonLinear_none
+            assert self._camb_params.NonLinear == camb.model.NonLinear_none
 
-        self.camb_params.WantScalars = 's' in self['modes']
-        self.camb_params.WantVectors = 'v' in self['modes']
-        self.camb_params.WantTensors = 't' in self['modes']
+        self._camb_params.WantScalars = 's' in self['modes']
+        self._camb_params.WantVectors = 'v' in self['modes']
+        self._camb_params.WantTensors = 't' in self['modes']
         for key,value in self.extra_params:
             if key == 'accuracy':
-                self.camb_params.set_accuracy(self.extra_params['accuracy'])
+                self._camb_params.set_accuracy(self.extra_params['accuracy'])
             else:
-                setattr(self.camb_params,key,value)
+                setattr(self._camb_params,key,value)
 
         self.ready = enum(ba=False,th=False,tr=False,le=False,hr=False,fo=False)
 
@@ -136,30 +136,30 @@ class CambEngine(BaseEngine):
         tasks = _build_task_dependency(tasks)
 
         if 'background' in tasks and not self.ready.ba:
-            self.ba = camb.get_background(self.camb_params,no_thermo=True)
+            self.ba = camb.get_background(self._camb_params,no_thermo=True)
             self.ready.ba = True
 
         if 'thermodynamics' in tasks and not self.ready.th:
-            self.ba = self.th = camb.get_background(self.camb_params,no_thermo=False)
+            self.ba = self.th = camb.get_background(self._camb_params,no_thermo=False)
             self.ready.ba = self.ready.th = True
 
         if 'transfer' in tasks and not self.ready.tr:
-            self.tr = camb.get_transfer_functions(self.camb_params)
+            self.tr = camb.get_transfer_functions(self._camb_params)
             self.ready.tr = True
 
         if 'harmonic' in tasks and not self.ready.hr:
-            #self.camb_params.Want_CMB = True
-            #self.camb_params.DoLensing = self['lensing']
-            #self.camb_params.Want_CMB_lensing = self['lensing']
+            #self._camb_params.Want_CMB = True
+            #self._camb_params.DoLensing = self['lensing']
+            #self._camb_params.Want_CMB_lensing = self['lensing']
             self.ready.hr = True
             self.ready.fo = False
 
         if 'lensing' in tasks and not self.ready.le:
-            self.camb_params.DoLensing = True
-            self.camb_params.Want_CMB_lensing = True
+            self._camb_params.DoLensing = True
+            self._camb_params.Want_CMB_lensing = True
             self.ready.le = True
             self.tr = CAMBdata()
-            self.tr.calc_power_spectra(self.camb_params)
+            self.tr.calc_power_spectra(self._camb_params)
             self.le = self.hr = self.fo = self.tr
             self.ready.fo = True
 
@@ -173,7 +173,7 @@ class CambEngine(BaseEngine):
         if hasattr(self,'_rsigma8'):
             return self._rsigma8
         self._rsigma8 = 1.
-        if 'sigma8' in self.params:
+        if 'sigma8' in self._params:
             self.compute('fourier')
             self._rsigma8 = self['sigma8']/self.fo.get_sigma8_0()
         return self._rsigma8
@@ -195,8 +195,8 @@ class Background(BaseBackground):
 
     def __init__(self, engine):
         super(Background,self).__init__(engine=engine)
-        self.engine.compute('background')
-        self.ba = self.engine.ba
+        self._engine.compute('background')
+        self.ba = self._engine.ba
         # convert RHO to 1e10 Msun/h
         #self._H0 = self.ba.Params.H0
         #self._h = self.H0 / 100
@@ -292,7 +292,7 @@ class Background(BaseBackground):
 
     def efunc(self, z):
         r"""Function giving :math:`E(z)`, where the Hubble parameter is defined as :math:`H(z) = H_{0} E(z)`, unitless."""
-        return self.hubble_function(z) / (100. * self.h)
+        return self.hubble_function(z) / (100. * self._h)
 
     def comoving_radial_distance(self, z):
         r"""
@@ -300,7 +300,7 @@ class Background(BaseBackground):
 
         See eq. 15 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_C(z)`.
         """
-        return self.ba.comoving_radial_distance(z) * self.h
+        return self.ba.comoving_radial_distance(z) * self._h
 
     def luminosity_distance(self, z):
         r"""
@@ -308,7 +308,7 @@ class Background(BaseBackground):
 
         See eq. 21 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{L}(z)`.
         """
-        return self.ba.luminosity_distance(z) * self.h
+        return self.ba.luminosity_distance(z) * self._h
 
     def angular_diameter_distance(self, z):
         r"""
@@ -316,7 +316,7 @@ class Background(BaseBackground):
 
         See eq. 18 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{A}(z)`.
         """
-        return self.ba.angular_diameter_distance(z) * self.h
+        return self.ba.angular_diameter_distance(z) * self._h
 
     def comoving_angular_distance(self, z):
         r"""
@@ -331,9 +331,9 @@ class Background(BaseBackground):
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
-        self.engine = engine
-        self.engine.compute('thermodynamics')
-        self.th = self.engine.th
+        self._engine = engine
+        self._engine.compute('thermodynamics')
+        self.th = self._engine.th
         # convert RHO to 1e10 Msun/h
         self._h = self.th.Params.H0 / 100
 
@@ -351,9 +351,9 @@ class Thermodynamics(BaseSection):
 class Transfer(BaseSection):
 
     def __init__(self, engine):
-        self.engine = engine
-        self.engine.compute('transfer')
-        self.tr = self.engine.tr
+        self._engine = engine
+        self._engine.compute('transfer')
+        self.tr = self._engine.tr
 
     def table(self):
         r"""
@@ -376,10 +376,10 @@ class Transfer(BaseSection):
 class Primordial(BaseSection):
 
     def __init__(self, engine):
-        self.engine = engine
-        self.pr = self.engine.camb_params.InitPower
-        self.h = self.engine.camb_params.h
-        self._rsigma8 = self.engine._rescale_sigma8()
+        self._engine = engine
+        self.pr = self._engine._camb_params.InitPower
+        self._h = self._engine._camb_params.h
+        self._rsigma8 = self._engine._rescale_sigma8()
 
     @property
     def A_s(self):
@@ -399,7 +399,7 @@ class Primordial(BaseSection):
     @property
     def k_pivot(self):
         r"""Primordial power spectrum pivot scale, where the primordial power is equal to :math:`A_{s}`, in :math:`h/\mathrm{Mpc}`."""
-        return self.pr.pivot_scalar  / self.h
+        return self.pr.pivot_scalar  / self._h
 
     def pk_k(self, k, mode='scalar'):
         r"""
@@ -426,7 +426,7 @@ class Primordial(BaseSection):
             The primordial power spectrum.
         """
         index = ['scalar','vector','tensor'].index(mode)
-        return self.h**3*self.engine.camb_params.primordial_power(k*self.h, index) * self._rsigma8**2
+        return self._h**3*self._engine._camb_params.primordial_power(k*self._h, index) * self._rsigma8**2
 
     def pk_interpolator(self, mode='scalar'):
         """
@@ -447,11 +447,11 @@ class Primordial(BaseSection):
 class Harmonic(BaseSection):
 
     def __init__(self, engine):
-        self.engine = engine
-        self.engine.compute('harmonic')
-        self.hr = self.engine.hr
-        self._rsigma8 = self.engine._rescale_sigma8()
-        self.ellmax_cl = self.engine['ellmax_cl']
+        self._engine = engine
+        self._engine.compute('harmonic')
+        self.hr = self._engine.hr
+        self._rsigma8 = self._engine._rescale_sigma8()
+        self.ellmax_cl = self._engine['ellmax_cl']
 
     def unlensed_cl(self, ellmax=-1):
         """Return unlensed :math:`C_{\ell}` ['tt','ee','bb','te'], unitless."""
@@ -466,10 +466,10 @@ class Harmonic(BaseSection):
 
     def lens_potential_cl(self, ellmax=-1):
         """Return potential :math:`C_{\ell}` ['pp','tp','ep'], unitless."""
-        #self.engine.compute('lensing')
+        #self._engine.compute('lensing')
         if not self.hr.Params.DoLensing:
             raise CAMBError('You asked for potential cl, but they have not been calculated. Please set lensing = True.')
-        self.hr = self.engine.hr
+        self.hr = self._engine.hr
         if ellmax < 0:
             ellmax = self.ellmax_cl + 1 + ellmax
         table = self.hr.get_lens_potential_cls(lmax=ellmax,CMB_unit=None,raw_cl=True)
@@ -496,10 +496,10 @@ class Harmonic(BaseSection):
 class Fourier(BaseSection):
 
     def __init__(self, engine):
-        self.engine = engine
-        self.engine.compute('fourier')
-        self.fo = self.engine.fo
-        self._rsigma8 = self.engine._rescale_sigma8()
+        self._engine = engine
+        self._engine.compute('fourier')
+        self.fo = self._engine.fo
+        self._rsigma8 = self._engine._rescale_sigma8()
 
     def _checkz(self, z):
         """Check that perturbations are calculated at several redshifts, else raise an error if ``z`` not close to requested redshift."""
@@ -568,8 +568,8 @@ class Fourier(BaseSection):
         for iof,of_ in enumerate(of):
             if of_ == 'theta_cb':
                 tmpof = of.copy()
-                ba = Background(self.engine)
-                Omegas = self.engine['Omega_cdm'],self.engine['Omega_b']
+                ba = Background(self._engine)
+                Omegas = self._engine['Omega_cdm'],self._engine['Omega_b']
                 Omega_tot = sum(Omegas)
                 Omega_cdm,Omega_b = (Omega/Omega_tot for Omega in Omegas)
                 if of[iof-1] == of_:
@@ -577,7 +577,7 @@ class Fourier(BaseSection):
                     pka_cdm_b = get_pk('theta_cdm','theta_b')[-1]
                     ka,za,pka_b = get_pk('theta_b','theta_b')
                     pka = Omega_cdm**2 * pka_cdm + 2.*Omega_b*Omega_cdm * pka_cdm_b + Omega_b**2 * pka_b
-                    #pka *= (ba.efunc(za) * 100 * self.engine['h'] * 1000 / (1+za) / constants.c)**2
+                    #pka *= (ba.efunc(za) * 100 * self._engine['h'] * 1000 / (1+za) / constants.c)**2
                     break
                 else:
                     tmpof[iof] = 'theta_cdm'

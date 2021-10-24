@@ -145,9 +145,9 @@ class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
         """Initialize :class:`Thermodynamics`."""
-        self.engine = engine
-        self._rs_drag = self.engine.rs_drag * self.engine['h']
-        self._z_drag = self.engine.z_drag
+        self._engine = engine
+        self._rs_drag = self._engine.rs_drag * self._engine['h']
+        self._z_drag = self._engine.z_drag
 
 
 @utils.addproperty('n_s')
@@ -155,8 +155,8 @@ class Primordial(BaseSection):
 
     def __init__(self, engine):
         """Initialize :class:`Primordial`."""
-        self.engine = engine
-        self._n_s = self.engine['n_s']
+        self._engine = engine
+        self._n_s = self._engine['n_s']
 
 
 class Transfer(BaseSection):
@@ -178,14 +178,14 @@ class Transfer(BaseSection):
         -------
         transfer : numpy.ndarray
         """
-        k = np.asarray(k) * self.engine['h'] # now in 1/Mpc
+        k = np.asarray(k) * self._engine['h'] # now in 1/Mpc
         # EH eq. 10
-        q = k / (13.41*self.engine.k_eq)
-        ks = k*self.engine.rs_drag
+        q = k / (13.41*self._engine.k_eq)
+        ks = k*self._engine.rs_drag
 
-        T_c_ln_beta = np.log(np.e + 1.8*self.engine.beta_c*q)
+        T_c_ln_beta = np.log(np.e + 1.8*self._engine.beta_c*q)
         T_c_ln_nobeta = np.log(np.e + 1.8*q);
-        T_c_C_alpha = 14.2 / self.engine.alpha_c + 386. / (1 + 69.9 * q ** 1.08)
+        T_c_C_alpha = 14.2 / self._engine.alpha_c + 386. / (1 + 69.9 * q ** 1.08)
         T_c_C_noalpha = 14.2 + 386. / (1 + 69.9 * q ** 1.08)
 
         # EH eq. 18
@@ -194,26 +194,26 @@ class Transfer(BaseSection):
         T_c = T_c_f * T0(T_c_ln_beta, T_c_C_noalpha) + (1-T_c_f) * T0(T_c_ln_beta, T_c_C_alpha)
 
         # EH eq. 22
-        s_tilde = self.engine.rs_drag * (1 + (self.engine.beta_node/ks)**3) ** (-1./3.)
+        s_tilde = self._engine.rs_drag * (1 + (self._engine.beta_node/ks)**3) ** (-1./3.)
         ks_tilde = k*s_tilde
 
         # EH eq. 21
         T_b_T0 = T0(T_c_ln_nobeta, T_c_C_noalpha)
         T_b_1 = T_b_T0 / (1 + (ks/5.2)**2 )
-        T_b_2 = self.engine.alpha_b / (1 + (self.engine.beta_b/ks)**3 ) * np.exp(-(k/self.engine.k_silk) ** 1.4)
+        T_b_2 = self._engine.alpha_b / (1 + (self._engine.beta_b/ks)**3 ) * np.exp(-(k/self._engine.k_silk) ** 1.4)
         T_b = np.sinc(ks_tilde/np.pi) * (T_b_1 + T_b_2)
 
         # EH eq. 16
-        frac_baryon = self.engine.frac_baryon if frac_baryon is None else frac_baryon
+        frac_baryon = self._engine.frac_baryon if frac_baryon is None else frac_baryon
         return frac_baryon*T_b + (1-frac_baryon)*T_c
 
 
 class Fourier(BaseSection):
 
     def __init__(self, engine):
-        self.engine = engine
-        self.tr = self.engine.get_transfer()
-        self.ba = self.engine.get_background()
+        self._engine = engine
+        self.tr = self._engine.get_transfer()
+        self.ba = self._engine.get_background()
 
     def pk_interpolator(self, of='delta_m', ignore_norm=False, **kwargs):
         """
@@ -244,12 +244,12 @@ class Fourier(BaseSection):
             def growth_factor_sq(z): return self.ba.growth_factor(z)**2
 
         def pk_callable(k):
-            return transfer(k)**2*k**self.engine['n_s']
+            return transfer(k)**2*k**self._engine['n_s']
 
         toret = PowerSpectrumInterpolator2D.from_callable(pk_callable=pk_callable,growth_factor_sq=growth_factor_sq,**kwargs)
         if not ignore_norm:
-            if 'sigma8' in self.engine.params:
-                toret.rescale_sigma8(self.ba.growth_rate(0)**(0.5*ntheta)*self.engine['sigma8'])
+            if 'sigma8' in self._engine._params:
+                toret.rescale_sigma8(self.ba.growth_rate(0)**(0.5*ntheta)*self._engine['sigma8'])
             else:
                 raise CosmologyError('A sigma8 value must be provided to normalise EH power spectrum.')
         return toret
@@ -265,4 +265,4 @@ class Fourier(BaseSection):
     @property
     def sigma8_m(self):
         r"""Current r.m.s. of matter perturbations in a sphere of :math:`8 \mathrm{Mpc}/h`, unitless."""
-        return self.engine['sigma8']
+        return self._engine['sigma8']

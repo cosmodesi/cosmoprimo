@@ -36,10 +36,10 @@ class Transfer(BaseSection):
         -------
         transfer : numpy.ndarray
         """
-        k = np.asarray(k) * self.engine['h'] # now in 1/Mpc
-        ks = k * self.engine.rs_drag
-        gamma_eff = self.engine.omega_m * (self.engine.alpha_gamma + (1 - self.engine.alpha_gamma) / (1 + (0.43*ks) ** 4))
-        q = k * self.engine.theta_cmb**2 / gamma_eff
+        k = np.asarray(k) * self._engine['h'] # now in 1/Mpc
+        ks = k * self._engine.rs_drag
+        gamma_eff = self._engine.omega_m * (self._engine.alpha_gamma + (1 - self._engine.alpha_gamma) / (1 + (0.43*ks) ** 4))
+        q = k * self._engine.theta_cmb**2 / gamma_eff
         L0 = np.log(2*np.e + 1.8 * q)
         C0 = 14.2 + 731.0 / (1 + 62.5 * q)
         return L0 / (L0 + C0 * q**2)

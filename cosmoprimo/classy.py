@@ -13,7 +13,7 @@ class ClassEngine(pyclass.ClassEngine,BaseEngine):
 
     def __init__(self, *args, **kwargs):
         BaseEngine.__init__(self,*args,**kwargs)
-        params = self.params.copy()
+        params = self._params.copy()
         lensing = params.pop('lensing')
         params['lensing'] = 'yes' if lensing else 'no'
         params['A_s'] = BaseEngine._get_A_s_fid(self)
@@ -43,7 +43,7 @@ class ClassEngine(pyclass.ClassEngine,BaseEngine):
         if hasattr(self,'_rsigma8'):
             return self._rsigma8
         self._rsigma8 = 1.
-        if 'sigma8' in self.params:
+        if 'sigma8' in self._params:
             self.compute('peturbations')
             self._rsigma8 = self['sigma8']/self.get_fourier().sigma8_m
         return self._rsigma8

@@ -12,6 +12,9 @@ from .utils import BaseClass
 from . import utils, constants
 
 
+_Sections = ['Background','Thermodynamics','Primordial','Perturbations','Transfer','Harmonic','Fourier']
+
+
 class CosmologyError(Exception):
 
     """Exception raise by :class:`Cosmology`."""
@@ -83,8 +86,13 @@ class BaseEngine(BaseClass):
         params : dict
             Engine parameters.
         """
-        self.params = params
+        self._params = params
         self.extra_params = extra_params or {}
+        self._Sections = {}
+        module = sys.modules[self.__class__.__module__]
+        for name in _Sections:
+            self._Sections[name.lower()] = getattr(module, name, None)
+        self._sections = {}
 
     def __getitem__(self, name):
         """Return an input (or easily derived) parameter."""
@@ -99,36 +107,36 @@ class BaseEngine(BaseClass):
         else:
             name,default = args
             has_default = True
-        if name in self.params:
-            return self.params[name]
+        if name in self._params:
+            return self._params[name]
         if name.startswith('omega'):
-            return self['O'+name[1:]]*self.params['h']**2
+            return self['O'+name[1:]]*self._params['h']**2
         if name == 'H0':
-            return self.params['h']*100
+            return self._params['h']*100
         if name == 'ln10^{10}A_s':
-            return np.log(10**10*self.params['As'])
+            return np.log(10**10*self._params['As'])
         #if name == 'rho_crit':
         #    return constants.rho_crit_Msunph_per_Mpcph3
         if name == 'Omega_g':
-            rho = self.params['T_cmb']**4 * 4./constants.c**3 * constants.Stefan_Boltzmann # density, kg/m^3
+            rho = self._params['T_cmb']**4 * 4./constants.c**3 * constants.Stefan_Boltzmann # density, kg/m^3
             return rho/(self['h']**2*constants.rho_crit_kgph_per_mph3)
         if name == 'T_ur':
-            return self.params['T_cmb'] * (4./11.)**(1./3.)
+            return self._params['T_cmb'] * (4./11.)**(1./3.)
         if name == 'Omega_ur':
-            rho = self.params['N_ur'] * 7./8. * self['T_ur']**4 * 4./constants.c**3 * constants.Stefan_Boltzmann # density, kg/m^3
+            rho = self._params['N_ur'] * 7./8. * self['T_ur']**4 * 4./constants.c**3 * constants.Stefan_Boltzmann # density, kg/m^3
             return rho/(self['h']**2*constants.rho_crit_kgph_per_mph3)
         if name == 'Omega_r':
-            rho = (self.params['T_cmb']**4 + self['N_ur'] * 7./8. * self['T_ur']**4) * 4./constants.c**3 * constants.Stefan_Boltzmann # density, kg/m^3
+            rho = (self._params['T_cmb']**4 + self['N_ur'] * 7./8. * self['T_ur']**4) * 4./constants.c**3 * constants.Stefan_Boltzmann # density, kg/m^3
             return rho/(self['h']**2*constants.rho_crit_kgph_per_mph3)
         if name == 'Omega_ncdm':
-            self.params['Omega_ncdm'] = self.params.get('Omega_ncdm',self._get_rho_ncdm(z=0)/constants.rho_crit_Msunph_per_Mpcph3)
-            return self.params['Omega_ncdm']
+            self._params['Omega_ncdm'] = self._params.get('Omega_ncdm',self._get_rho_ncdm(z=0)/constants.rho_crit_Msunph_per_Mpcph3)
+            return self._params['Omega_ncdm']
         if name == 'Omega_m':
             return self['Omega_b'] + self['Omega_cdm'] + self['Omega_ncdm']
         if name == 'N_ncdm':
-            return len(self.params['m_ncdm'])
+            return len(self._params['m_ncdm'])
         if name == 'N_eff':
-            return sum(T_ncdm**4 * (4./11.)**(-4./3.) for T_ncdm in self.params['T_ncdm']) + self.params['N_ur']
+            return sum(T_ncdm**4 * (4./11.)**(-4./3.) for T_ncdm in self._params['T_ncdm']) + self._params['N_ur']
         if has_default:
             return default
         raise CosmologyError('Parameter {} not found.'.format(name))
@@ -136,8 +144,8 @@ class BaseEngine(BaseClass):
     def _get_A_s_fid(self):
         """First guess for power spectrum amplitude :math:`A_{s}` (given input :math:`sigma_{8}`)."""
         # https://github.com/lesgourg/class_public/blob/4724295b527448b00faa28bce973e306e0e82ef5/source/input.c#L1161
-        if 'A_s' in self.params:
-            return self.params['A_s']
+        if 'A_s' in self._params:
+            return self._params['A_s']
         return 2.43e-9*(self['sigma8']/0.87659)**2
 
     def _get_rho_ncdm(self, z=0, epsrel=1e-7):
@@ -188,27 +196,45 @@ class BaseEngine(BaseClass):
 
     def get_background(self):
         """Return :class:`Background` calculations."""
-        return sys.modules[self.__class__.__module__].Background(self)
+        name = 'background'
+        if name not in self._sections:
+            self._sections[name] = self._Sections[name](self)
+        return self._sections[name]
 
     def get_thermodynamics(self):
         """Return :class:`Thermodynamics` calculations."""
-        return sys.modules[self.__class__.__module__].Thermodynamics(self)
+        name = 'thermodynamics'
+        if name not in self._sections:
+            self._sections[name] = self._Sections[name](self)
+        return self._sections[name]
 
     def get_primordial(self):
         """Return :class:`Primordial` calculations."""
-        return sys.modules[self.__class__.__module__].Primordial(self)
+        name = 'primordial'
+        if name not in self._sections:
+            self._sections[name] = self._Sections[name](self)
+        return self._sections[name]
 
     def get_transfer(self):
         """Return :class:`Transfer` calculations."""
-        return sys.modules[self.__class__.__module__].Transfer(self)
+        name = 'transfer'
+        if name not in self._sections:
+            self._sections[name] = self._Sections[name](self)
+        return self._sections[name]
 
     def get_harmonic(self):
-        """Return :class:`Transfer` calculations."""
-        return sys.modules[self.__class__.__module__].Harmonic(self)
+        """Return :class:`Harmonic` calculations."""
+        name = 'harmonic'
+        if name not in self._sections:
+            self._sections[name] = self._Sections[name](self)
+        return self._sections[name]
 
     def get_fourier(self):
         """Return :class:`Fourier` calculations."""
-        return sys.modules[self.__class__.__module__].Fourier(self)
+        name = 'fourier'
+        if name not in self._sections:
+            self._sections[name] = self._Sections[name](self)
+        return self._sections[name]
 
 
 def get_engine(cosmology, engine=None, set_engine=True, **extra_params):
@@ -222,7 +248,7 @@ def get_engine(cosmology, engine=None, set_engine=True, **extra_params):
 
     engine : BaseEngine, string
         Engine or one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`cosmology.engine`.
+        If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool
         Whether to attach returned engine to ``cosmology``.
@@ -236,32 +262,32 @@ def get_engine(cosmology, engine=None, set_engine=True, **extra_params):
     engine : BaseEngine
     """
     if engine is None:
-        if cosmology.engine is None:
+        if cosmology._engine is None:
             raise CosmologyError('Please provide an engine')
-        engine = cosmology.engine
+        engine = cosmology._engine
     if isinstance(engine,str):
         if engine.lower() in ['class','classengine']:
             from .classy import ClassEngine
-            engine = ClassEngine(**cosmology.params,extra_params=extra_params)
+            engine = ClassEngine(**cosmology._params,extra_params=extra_params)
         elif engine.lower() in ['camb','cambengine']:
             from .camb import CambEngine
-            engine = CambEngine(**cosmology.params,extra_params=extra_params)
+            engine = CambEngine(**cosmology._params,extra_params=extra_params)
         elif engine.lower() in ['eisenstein_hu','eisensteinhuengine']:
             from .eisenstein_hu import EisensteinHuEngine
-            engine = EisensteinHuEngine(**cosmology.params,extra_params=extra_params)
+            engine = EisensteinHuEngine(**cosmology._params,extra_params=extra_params)
         elif engine.lower() in ['eisenstein_hu_nowiggle','eisensteinhunowiggleengine']:
             from .eisenstein_hu_nowiggle import EisensteinHuNoWiggleEngine
-            engine = EisensteinHuNoWiggleEngine(**cosmology.params,extra_params=extra_params)
+            engine = EisensteinHuNoWiggleEngine(**cosmology._params,extra_params=extra_params)
         elif engine.lower() in ['bbks','bbksengine']:
             from .bbks import BBKSEngine
-            engine = BBKSEngine(**cosmology.params,extra_params=extra_params)
+            engine = BBKSEngine(**cosmology._params,extra_params=extra_params)
         elif engine.lower() in ['astropy','astropyengine']:
             from .astropy import AstropyEngine
-            engine = AstropyEngine(**cosmology.params,extra_params=extra_params)
+            engine = AstropyEngine(**cosmology._params,extra_params=extra_params)
         else:
             raise CosmologyError('Unknown engine {}'.format(engine))
     if set_engine:
-        cosmology.engine = engine
+        cosmology._engine = engine
     return engine
 
 
@@ -276,7 +302,7 @@ def Background(cosmology, engine=None, **extra_params):
 
     engine : string
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`cosmology.engine`.
+        If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool
         Whether to attach returned engine to ``cosmology``
@@ -304,7 +330,7 @@ def Thermodynamics(cosmology, engine=None, **extra_params):
 
     engine : string
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`cosmology.engine`.
+        If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool
         Whether to attach returned engine to ``cosmology``.
@@ -332,7 +358,7 @@ def Primordial(cosmology, engine=None, **extra_params):
 
     engine : string
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`cosmology.engine`.
+        If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool
         Whether to attach returned engine to ``cosmology``.
@@ -360,7 +386,7 @@ def Transfer(cosmology, engine=None, **extra_params):
 
     engine : string
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`cosmology.engine`.
+        If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool
         Whether to attach returned engine to ``cosmology``.
@@ -388,7 +414,7 @@ def Harmonic(cosmology, engine=None, **extra_params):
 
     engine : string
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`cosmology.engine`.
+        If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool
         Whether to attach returned engine to ``cosmology``.
@@ -416,7 +442,7 @@ def Fourier(cosmology, engine=None, **extra_params):
 
     engine : string
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`cosmology.engine`.
+        If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool
         Whether to attach returned engine to ``cosmology``.
@@ -440,6 +466,7 @@ def _include_conflicts(params):
             params[conf] = params[name]
 
 
+@utils.addproperty('engine','params')
 class Cosmology(BaseEngine):
 
     """Cosmology, defined as a set of parameters (and possibly a current engine attached to it)."""
@@ -478,10 +505,10 @@ class Cosmology(BaseEngine):
             Cosmological and calculation parameters which take priority over the default ones.
         """
         check_params(params)
-        self.params = compile_params(merge_params(self.__class__.get_default_parameters(include_conflicts=False),params))
-        self.engine = engine
-        if self.engine is not None:
-            self.set_engine(self.engine, **(extra_params or {}))
+        self._params = compile_params(merge_params(self.__class__.get_default_parameters(include_conflicts=False),params))
+        self._engine = engine
+        if self._engine is not None:
+            self.set_engine(self._engine, **(extra_params or {}))
 
     def set_engine(self, engine, **extra_params):
         """
@@ -491,7 +518,7 @@ class Cosmology(BaseEngine):
         ----------
         engine : string
             Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-            If ``None``, returns current :attr:`cosmology.engine`.
+            If ``None``, returns current :attr:`Cosmology.engine`.
 
         set_engine : bool
             Whether to attach returned engine to ``cosmology``.
@@ -500,7 +527,7 @@ class Cosmology(BaseEngine):
         extra_params : dict
             Extra engine parameters, typically precision parameters.
         """
-        self.engine = get_engine(self, engine, **extra_params)
+        self._engine = get_engine(self, engine, **extra_params)
 
     @classmethod
     def get_default_parameters(cls, of=None, include_conflicts=True):
@@ -558,24 +585,24 @@ class Cosmology(BaseEngine):
         """
         new = self.copy()
         check_params(params)
-        new.params = compile_params(merge_params(self.params.copy(),params))
-        if engine is None and self.engine is not None:
-            engine = self.engine.__class__.__name__
+        new._params = compile_params(merge_params(self._params.copy(),params))
+        if engine is None and self._engine is not None:
+            engine = self._engine.__class__.__name__
         if engine is not None:
             new.set_engine(engine, **(extra_params or {}))
         return new
 
     def __setstate__(self, state):
         """Set the class state dictionary."""
-        self.params = state['params']
+        self._params = state['params']
         if state.get('engine',None) is not None:
             self.set_engine(state['engine']['name'],**state['engine']['extra_params'])
 
     def __getstate__(self):
         """Return this class state dictionary."""
-        state = {'params':self.params,'engine':None}
-        if hasattr(self,'engine'):
-            state['engine'] = {'name':self.engine.__class__.__name__,'extra_params':self.engine.extra_params}
+        state = {'params':self._params,'engine':None}
+        if getattr(self,'_engine',None) is not None:
+            state['engine'] = {'name':self._engine.__class__.__name__,'extra_params':self._engine.extra_params}
         return state
 
     @classmethod
@@ -598,13 +625,42 @@ class Cosmology(BaseEngine):
         utils.mkdir(dirname)
         np.save(filename,self.__getstate__())
 
+    def __dir__(self):
+        """
+        List of all members from all sections.
+        Adapted from https://github.com/bccp/nbodykit/blob/master/nbodykit/cosmology/cosmology.py.
+        """
+        toret = super(Cosmology, self).__dir__()
+        if self._engine is None:
+            return toret
+        for Section in self._engine._Sections.values():
+            toret += dir(Section)
+        return sorted(list(set(toret)))
 
+    def __getattr__(self, name):
+        """
+        Find the proper section, initialize it, and return its attribute.
+        For example, calling ``cosmo.comoving_radial_distance`` will actually return ``cosmo.get_background().comoving_radial_distance``.
+        Adapted from https://github.com/bccp/nbodykit/blob/master/nbodykit/cosmology/cosmology.py.
+        """
+        if self._engine is None:
+            raise CosmologyError('Attribute {} not found; try setting an engine ("set_engine")?'.format(name))
+        # resolving a name from the sections : c.Omega0_m => c.get_background().Omega0_m
+        _Sections = self._engine._Sections
+        for section_name, Section in self._engine._Sections.items():
+            if hasattr(Section, name):
+                section = getattr(self._engine, 'get_{}'.format(section_name))()
+                return getattr(section, name)
+        raise CosmologyError("Attribute {} not found in any of {} engine's products".format(name, self.engine.__class__.__name__))
+
+
+@utils.addproperty('engine')
 class BaseSection(object):
 
     """Base section."""
 
     def __init__(self, engine):
-        self.engine = engine
+        self._engine = engine
 
 
 def _make_section_getter(section):
@@ -617,7 +673,7 @@ def _make_section_getter(section):
         ----------
         engine : string
             Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-            If ``None``, returns current :attr:`cosmology.engine`.
+            If ``None``, returns current :attr:`Cosmology.engine`.
 
         set_engine : bool
             Whether to attach returned engine to ``cosmology``.
@@ -635,8 +691,8 @@ def _make_section_getter(section):
     return getter
 
 
-for section in ['background','thermodynamics','primordial','perturbations','harmonic','fourier']:
-    setattr(Cosmology,'get_{}'.format(section),_make_section_getter(section))
+for section in _Sections:
+    setattr(Cosmology,'get_{}'.format(section.lower()),_make_section_getter(section.lower()))
 
 
 def compile_params(args):
@@ -942,14 +998,14 @@ class BaseBackground(BaseSection):
     """Base background engine, including a few definitions."""
 
     def __init__(self, engine):
-        self.engine = engine
-        self._H0 = self.engine['H0']
-        self._h = self.engine['h']
-        self._T0_cmb = self.engine['T_cmb']
-        self._T0_ncdm = self.engine['T_ncdm']
-        self._N_ncdm = self.engine['N_ncdm']
+        self._engine = engine
+        self._H0 = self._engine['H0']
+        self._h = self._engine['h']
+        self._T0_cmb = self._engine['T_cmb']
+        self._T0_ncdm = self._engine['T_ncdm']
+        self._N_ncdm = self._engine['N_ncdm']
         for name in ['cdm','b','k','g','ur','r']:
-            setattr(self,'_Omega0_{}'.format(name),self.engine['Omega_{}'.format(name)])
+            setattr(self,'_Omega0_{}'.format(name),self._engine['Omega_{}'.format(name)])
 
     def Omega_cdm(self, z):
         r"""Density parameter of cold dark matter, unitless."""
@@ -991,8 +1047,8 @@ class BaseBackground(BaseSection):
             return np.zeros_like(z)
         z = np.asarray(z)
         if z.ndim == 0:
-            return self.engine._get_rho_ncdm(z=z)
-        return np.asarray([self.engine._get_rho_ncdm(z=z_) for z_ in z])
+            return self._engine._get_rho_ncdm(z=z)
+        return np.asarray([self._engine._get_rho_ncdm(z=z_) for z_ in z])
 
     def p_ncdm(self, z, species=None):
         r"""Pressure of non-relative part of massive neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
@@ -1000,8 +1056,8 @@ class BaseBackground(BaseSection):
             return np.zeros_like(z)
         z = np.asarray(z)
         if z.ndim == 0:
-            return self.engine._get_p_ncdm(z=z)
-        return np.asarray([self.engine._get_p_ncdm(z=z_) for z_ in z])
+            return self._engine._get_p_ncdm(z=z)
+        return np.asarray([self._engine._get_p_ncdm(z=z_) for z_ in z])
 
     def Omega_ncdm(self, z):
         r"""Density parameter of massive neutrinos, unitless. Slow implementation."""

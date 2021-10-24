@@ -35,10 +35,10 @@ def test_engine():
     cosmo.set_engine(engine=cosmo.engine)
     ba = cosmo.get_background()
     ba = Background(cosmo)
-    assert ba.engine is cosmo.engine
+    assert ba._engine is cosmo.engine
     ba = cosmo.get_background(engine='camb',set_engine=False)
     ba = Background(cosmo,engine='camb',set_engine=False)
-    assert cosmo.engine is not ba.engine
+    assert cosmo.engine is not ba._engine
 
 
 list_params = [{},{'sigma8':1.},{'A_s':2e-9},{'lensing':True},{'m_ncdm':0.1,'neutrino_hierarchy':'normal'},{'Omega_k':0.1}]
@@ -445,6 +445,18 @@ def test_clone():
             assert not test
 
 
+def test_shortcut():
+    cosmo = Cosmology()
+    z = [0.1, 0.3]
+    with pytest.raises(CosmologyError):
+        d = cosmo.comoving_radial_distance(z)
+    assert 'tau_reio' not in dir(cosmo)
+    cosmo.set_engine('class')
+    assert 'tau_reio' in dir(cosmo)
+    d = cosmo.comoving_radial_distance(z)
+    assert np.all(d == cosmo.get_background().comoving_radial_distance(z))
+
+
 if __name__ == '__main__':
 
     test_params()
@@ -459,6 +471,7 @@ if __name__ == '__main__':
     test_neutrinos()
     test_fiducial()
     test_clone()
+    test_shortcut()
 
     #plot_primordial_power_spectrum()
     #plot_harmonic()
