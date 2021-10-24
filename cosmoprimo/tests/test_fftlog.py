@@ -98,7 +98,7 @@ def test_power_to_correlation():
         idx = (1e-2 < k2) & (k2 < 10.)
         assert np.allclose(pk2[idx],pk_interp(k2[idx]),rtol=1e-2)
         multipoles.append(xi)
-    assert np.allclose(PowerToCorrelation(k,ell=ells,lowring=True,q=1.5)(pk)[-1],multipoles)
+    assert np.allclose(PowerToCorrelation(k,ell=ells,lowring=True,q=0)(pk)[-1],multipoles)
 
 
 def test_odd():
