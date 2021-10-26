@@ -8,11 +8,11 @@ def Planck2018FullFlatLCDM(engine=None, extra_params=None, **params):
 
     Parameters
     ----------
-    engine : string
+    engine : string, default=None
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
         If ``None``, returns current :attr:`Cosmology.engine`.
 
-    extra_params : dict
+    extra_params : dict, default=None
         Extra engine parameters, typically precision parameters.
 
     params : dict
@@ -28,21 +28,21 @@ def Planck2018FullFlatLCDM(engine=None, extra_params=None, **params):
     return Cosmology(engine=engine,extra_params=extra_params,**params)
 
 
-def AbacusBaseline(engine=None, extra_params=None, **params):
+def AbacusSummitBase(engine='class', extra_params=None, **params):
     """
-    Initialize :class:`Cosmology` with baseline Abacus cosmological parameters (Planck2018, base_plikHM_TTTEEE_lowl_lowE_lensing mean).
+    Initialize :class:`Cosmology` with base AbacusSummit cosmological parameters (Planck2018, base_plikHM_TTTEEE_lowl_lowE_lensing mean).
 
     Note
     ----
-    Original Abacus initial power spectrum was computed with CLASS.
+    Original AbacusSummit initial power spectrum was computed with CLASS.
 
     Parameters
     ----------
-    engine : string
+    engine : string, default='class'
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
         If ``None``, returns current :attr:`Cosmology.engine`.
 
-    extra_params : dict
+    extra_params : dict, default=None
         Extra engine parameters, typically precision parameters.
 
     params : dict

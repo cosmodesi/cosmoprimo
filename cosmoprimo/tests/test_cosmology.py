@@ -420,14 +420,14 @@ def test_fiducial():
     from cosmoprimo import fiducial
     cosmo = fiducial.Planck2018FullFlatLCDM()
     assert cosmo['h'] == 0.6766
-    cosmo = fiducial.AbacusBaseline(engine='class')
+    cosmo = fiducial.AbacusSummitBase(engine='class')
     assert np.allclose(cosmo['omega_ncdm'],0.0006442)
     assert cosmo['N_ncdm'] == 1
-    assert np.allclose(cosmo.Omega0_ncdm*cosmo.h**2,0.0006442)
+    assert np.allclose(cosmo.Omega0_ncdm*cosmo.h**2,0.0006442,rtol=1e-9,atol=1e-9)
     sigma8 = 0.8
     r, z = 8, 0
     assert not np.allclose(cosmo.get_fourier().sigma_rz(r,z,of='delta_m'),sigma8,rtol=1e-4) # provided parameter is As
-    cosmo_sig8 = fiducial.AbacusBaseline(engine='class',sigma8=sigma8)
+    cosmo_sig8 = fiducial.AbacusSummitBase(engine='class',sigma8=sigma8)
     assert np.allclose(cosmo_sig8.get_fourier().sigma_rz(r,z,of='delta_m'),sigma8,rtol=1e-4) # interpolation error
 
 
@@ -463,6 +463,7 @@ if __name__ == '__main__':
 
     test_params()
     test_engine()
+    np.random.seed(42)
     for params in list_params:
         test_background(params)
         test_thermodynamics(params)
