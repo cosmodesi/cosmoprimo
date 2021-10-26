@@ -28,7 +28,6 @@ def Planck2018FullFlatLCDM(engine=None, extra_params=None, **params):
     return Cosmology(engine=engine,extra_params=extra_params,**params)
 
 
-
 def AbacusBaseline(engine=None, extra_params=None, **params):
     """
     Initialize :class:`Cosmology` with baseline Abacus cosmological parameters (Planck2018, base_plikHM_TTTEEE_lowl_lowE_lensing mean).
@@ -54,6 +53,6 @@ def AbacusBaseline(engine=None, extra_params=None, **params):
     cosmology : Cosmology
     """
     _default_cosmological_parameters = dict(h=0.6736, omega_cdm=0.12, omega_b=0.02237, Omega_k=0., A_s=2.083e-09, k_pivot=0.05, n_s=0.9649,
-    omega_ncdm=0.0006442, neutrino_hierarchy=None, T_ncdm=constants.TNCDM, N_ur=2.0328, tau_reio=0.0561, A_L=1.0, w0_fld=-1., wa_fld=0., cs2_fld=1.)
+    omega_ncdm=[0.0006442], neutrino_hierarchy=None, T_ncdm=constants.TNCDM, N_ur=2.0328, tau_reio=0.0561, A_L=1.0, w0_fld=-1., wa_fld=0., cs2_fld=1.)
     params = merge_params(_default_cosmological_parameters,params)
     return Cosmology(engine=engine,extra_params=extra_params,**params)

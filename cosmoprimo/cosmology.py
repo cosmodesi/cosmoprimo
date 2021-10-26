@@ -722,9 +722,15 @@ def compile_params(args):
     if 'H0' in params:
         params['h'] = params.pop('H0')/100.
 
+    h = params['h']
     for name,value in args.items():
         if name.startswith('omega'):
-            params[name.replace('omega','Omega')] = params.pop(name)/params['h']**2
+            omega = params.pop(name)
+            if isinstance(omega, list):
+                Omega = [o/h**2 for o in omega]
+            else:
+                Omega = omega/h**2
+            params[name.replace('omega','Omega')] = Omega
 
     def set_alias(params_name, args_name):
         if args_name not in args: return
@@ -750,10 +756,10 @@ def compile_params(args):
         params['A_s'] = np.exp(params.pop('ln10^{10}A_s'))*10**(-10)
 
     if 'Omega_g' in params:
-        params['T_cmb'] = (params.pop('Omega_g')*params['h']**2*constants.rho_crit_kgph_per_mph3/(4./constants.c**3 * constants.Stefan_Boltzmann))**(0.25)
+        params['T_cmb'] = (params.pop('Omega_g')*h**2*constants.rho_crit_kgph_per_mph3/(4./constants.c**3 * constants.Stefan_Boltzmann))**(0.25)
 
     def make_list(li, name):
-        if isinstance(li,(list,np.ndarray)):
+        if isinstance(li, (list,np.ndarray)):
             return list(li)
         raise TypeError('{} must be a list'.format(name))
 
@@ -873,7 +879,7 @@ def compile_params(args):
     if 'Omega_ur' in params:
         T_ur = params['T_cmb'] * (4./11.)**(1./3.)
         rho = 7./8. * 4./constants.c**3 * constants.Stefan_Boltzmann * T_ur**4 # density, kg/m^3
-        N_ur = Omega_ur / (rho/(params['h']**2*constants.rho_crit_kgph_per_mph3))
+        N_ur = Omega_ur / (rho/(h**2*constants.rho_crit_kgph_per_mph3))
 
     if N_ur is None:
         # Check which of the neutrino species are non-relativistic today

@@ -422,6 +422,8 @@ def test_fiducial():
     assert cosmo['h'] == 0.6766
     cosmo = fiducial.AbacusBaseline(engine='class')
     assert np.allclose(cosmo['omega_ncdm'],0.0006442)
+    assert cosmo['N_ncdm'] == 1
+    assert np.allclose(cosmo.Omega0_ncdm*cosmo.h**2,0.0006442)
     sigma8 = 0.8
     r, z = 8, 0
     assert not np.allclose(cosmo.get_fourier().sigma_rz(r,z,of='delta_m'),sigma8,rtol=1e-4) # provided parameter is As
