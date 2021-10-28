@@ -17,7 +17,7 @@ _Sections = ['Background','Thermodynamics','Primordial','Perturbations','Transfe
 
 class CosmologyError(Exception):
 
-    """Exception raise by :class:`Cosmology`."""
+    """Exception raised by :class:`Cosmology`."""
 
 
 def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
@@ -284,6 +284,9 @@ def get_engine(cosmology, engine=None, set_engine=True, **extra_params):
         elif engine.lower() in ['astropy','astropyengine']:
             from .astropy import AstropyEngine
             engine = AstropyEngine(**cosmology._params,extra_params=extra_params)
+        elif engine.lower() in ['tabulated','tabulatedengine']:
+            from .tabulated import TabulatedEngine
+            engine = TabulatedEngine(**cosmology._params,extra_params=extra_params)
         else:
             raise CosmologyError('Unknown engine {}'.format(engine))
     if set_engine:
@@ -491,6 +494,7 @@ class Cosmology(BaseEngine):
         and the number of massless neutrinos (:math:`m \leq 0.00017`), which are then removed from the list ``m_ncdm``.
         Parameter ``Omega_ncdm``/``omega_ncdm`` (accessed as ``cosmo['Omega_ncdm']``/``cosmo['omega_ncdm']``)
         will always provide the total energy density of neutrinos (single value).
+        The pivot scale ``k_pivot`` is in :math:`\mathrm{Mpc}^{-1}`.`
 
         Parameters
         ----------

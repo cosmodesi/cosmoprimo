@@ -34,7 +34,8 @@ def AbacusSummitBase(engine='class', extra_params=None, **params):
 
     Note
     ----
-    Original AbacusSummit initial power spectrum was computed with CLASS.
+    Original AbacusSummit initial power spectrum was computed with CLASS, with:
+    https://github.com/abacusorg/AbacusSummit/blob/master/Cosmologies/abacus_cosm000/CLASS.ini
 
     Parameters
     ----------
@@ -56,3 +57,36 @@ def AbacusSummitBase(engine='class', extra_params=None, **params):
     omega_ncdm=[0.0006442], neutrino_hierarchy=None, T_ncdm=constants.TNCDM, N_ur=2.0328, tau_reio=0.0561, A_L=1.0, w0_fld=-1., wa_fld=0., cs2_fld=1.)
     params = merge_params(_default_cosmological_parameters,params)
     return Cosmology(engine=engine,extra_params=extra_params,**params)
+
+
+DESI = AbacusSummitBase
+
+"""Tabulated cosmologies."""
+
+import os
+import numpy as np
+
+_dir_tabulated = os.path.join(os.path.dirname(__file__), 'data')
+
+
+_DESI_filename = os.path.join(_dir_tabulated, 'desi.dat')
+
+
+def TabulatedDESI():
+    """
+    Tabulated DESI cosmology.
+
+    Note
+    ----
+    Redshift interpolation range is [0, 10]; returned values outside this range are constant (no error is raised).
+    """
+    return DESI(engine='tabulated', extra_params={'filename':_DESI_filename, 'names':['efunc','comoving_radial_distance']})
+
+
+def save_TabulatedDESI():
+    cosmo = DESI()
+    bins_log = 'np.logspace(-8, 1, 40001)'
+    z = np.concatenate([[0], eval(bins_log,{'np':np})],axis=0)
+    array = np.array([z, cosmo.efunc(z), cosmo.comoving_radial_distance(z)]).T
+    header = 'z = [0] + {}\nz efunc(z) comoving_radial_distance(z) [Mpc/h]'.format(bins_log)
+    np.savetxt(_DESI_filename, array, fmt='%.18e', header=header, comments='# ')

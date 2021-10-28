@@ -15,6 +15,7 @@ class ClassEngine(pyclass.ClassEngine,BaseEngine):
         BaseEngine.__init__(self,*args,**kwargs)
         params = self._params.copy()
         lensing = params.pop('lensing')
+        params['k_pivot'] = params['k_pivot']
         params['lensing'] = 'yes' if lensing else 'no'
         params['A_s'] = BaseEngine._get_A_s_fid(self)
         if 'sigma8' in params: del params['sigma8']

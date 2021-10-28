@@ -480,4 +480,13 @@ if __name__ == '__main__':
     #plot_harmonic()
     #plot_matter_power_spectrum()
     #external_test_camb()
-    #external_test_pyccl()
+
+    HAVE_PYCCL = True
+    try:
+        import pyccl
+    except ImportError:
+        HAVE_PYCCL = False
+
+    if HAVE_PYCCL:
+        print('With pyccl')
+        external_test_pyccl()

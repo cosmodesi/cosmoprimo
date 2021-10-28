@@ -10,5 +10,6 @@ setup(name='cosmoprimo',
       url='http://github.com/adematti/cosmoprimo',
       install_requires=['numpy','scipy'],
       extras_require={'extras':['cython','pyclass @ git+https://github.com/adematti/pyclass','camb','pyfftw']},
+      package_data={'cosmoprimo': ['data/*.dat']},
       packages=['cosmoprimo']
 )
