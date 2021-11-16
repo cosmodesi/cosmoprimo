@@ -79,6 +79,8 @@ def TabulatedDESI():
     Note
     ----
     Redshift interpolation range is [0, 10]; returned values outside this range are constant (no error is raised).
+    Relative interpolation precision is 1e-7; relative difference with camb prediction is 1e-7, with astropy 1e-5 and pyccl 1e-6
+    (see tests/test_tabulated.py).
     """
     return DESI(engine='tabulated', extra_params={'filename':_DESI_filename, 'names':['efunc','comoving_radial_distance']})
 

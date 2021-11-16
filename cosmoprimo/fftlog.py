@@ -3,7 +3,9 @@ Implementation of the FFTlog algorithm, very much inspired by mcfit (https://git
 https://github.com/sfschen/velocileptors/blob/master/velocileptors/Utils/spherical_bessel_transform_fftw.py
 """
 
+import os
 import warnings
+
 import numpy as np
 
 
@@ -445,7 +447,7 @@ class BaseFFTEngine(object):
 
     """Base FFT engine."""
 
-    def __init__(self, size, nparallel=1):
+    def __init__(self, size, nparallel=1, nthreads=None):
         """
         Initialize FFT engine.
 
@@ -456,9 +458,15 @@ class BaseFFTEngine(object):
 
         nparallel : int
             Number of FFTs to be performed in parallel.
+
+        nthreads : int, default=None
+            Number of threads.
         """
         self.size = size
         self.nparallel = nparallel
+        if nthreads is not None:
+            os.environ['OMP_NUM_THREADS'] = str(nthreads)
+        self.nthreads = int(os.environ.get('OMP_NUM_THREADS',1))
 
 
 class NumpyFFTEngine(BaseFFTEngine):
@@ -488,76 +496,73 @@ def apply_along_last_axes(func, array, naxes=1, toret=None):
     toret.shape = newshape_bak
     return toret
 
-try:
-    import pyfftw
-    HAVE_PYFFTW = True
-except ImportError:
-    HAVE_PYFFTW = False
+
+try: import pyfftw
+except ImportError: pyfftw = None
 
 
-if HAVE_PYFFTW:
+class FFTWEngine(BaseFFTEngine):
 
-    class FFTWEngine(BaseFFTEngine):
+    """FFT engine based on :mod:`pyfftw`."""
 
-        """FFT engine based on :mod:`pyfftw`."""
+    def __init__(self, size, nparallel=1, nthreads=None, wisdom=None):
+        """
+        Initialize :mod:`pyfftw` engine.
 
-        def __init__(self, size, nparallel=1, threads=1, wisdom=None):
-            """
-            Initialize :mod:`pyfftw` engine.
+        Parameters
+        ----------
+        size : int
+            Array size.
 
-            Parameters
-            ----------
-            size : int
-                Array size.
+        nparallel : int
+            Number of FFTs to be performed in parallel.
 
-            nparallel : int
-                Number of FFTs to be performed in parallel.
+        nthreads : int, default=None
+            Number of threads.
 
-            threads : int
-                Number of threads.
+        wisdom : string, tuple
+            :mod:`pyfftw` wisdom, used to accelerate further FFTs.
+            If a string, should be a path to the save FFT wisdom (with :func:`numpy.save`).
+            If a tuple, directly corresponds to the wisdom.
+        """
+        if pyfftw is None:
+            raise NotImplementedError('Install pyfftw to use {}'.format(self.__class__.__name__))
+        super(FFTWEngine, self).__init__(size,nparallel=nparallel,nthreads=nthreads)
 
-            wisdom : string, tuple
-                :mod:`pyfftw` wisdom, used to accelerate further FFTs.
-                If a string, should be a path to the save FFT wisdom (with :func:`numpy.save`).
-                If a tuple, directly corresponds to the wisdom.
-            """
-            self.size = size
-            self.nparallel = nparallel
+        if isinstance(wisdom, str):
+            wisdom = tuple(np.load(wisdom))
+        if wisdom is not None:
+            pyfftw.import_wisdom(wisdom)
+        else:
+            pyfftw.forget_wisdom()
+        #flags = ('FFTW_DESTROY_INPUT','FFTW_MEASURE')
+        self.fftw_f = pyfftw.empty_aligned((self.nparallel,self.size),dtype='float64')
+        self.fftw_fk = pyfftw.empty_aligned((self.nparallel,self.size//2+1),dtype='complex128')
+        self.fftw_gk = pyfftw.empty_aligned((self.nparallel,self.size//2+1),dtype='complex128')
+        self.fftw_g = pyfftw.empty_aligned((self.nparallel,self.size),dtype='float64')
 
-            if isinstance(wisdom, str):
-                wisdom = tuple(np.load(wisdom))
-            if wisdom is not None:
-                pyfftw.import_wisdom(wisdom)
-            else:
-                pyfftw.forget_wisdom()
-            #flags = ('FFTW_DESTROY_INPUT','FFTW_MEASURE')
-            self.fftw_f = pyfftw.empty_aligned((self.nparallel,self.size),dtype='float64')
-            self.fftw_fk = pyfftw.empty_aligned((self.nparallel,self.size//2+1),dtype='complex128')
-            self.fftw_gk = pyfftw.empty_aligned((self.nparallel,self.size//2+1),dtype='complex128')
-            self.fftw_g = pyfftw.empty_aligned((self.nparallel,self.size),dtype='float64')
+        #pyfftw.config.NUM_THREADS = threads
+        self.fftw_forward_object = pyfftw.FFTW(self.fftw_f,self.fftw_fk,direction='FFTW_FORWARD',flags=('FFTW_MEASURE',),threads=self.nthreads)
+        self.fftw_backward_object = pyfftw.FFTW(self.fftw_gk,self.fftw_g,direction='FFTW_BACKWARD',flags=('FFTW_MEASURE',),threads=self.nthreads)
 
-            #pyfftw.config.NUM_THREADS = threads
-            self.fftw_forward_object = pyfftw.FFTW(self.fftw_f,self.fftw_fk,direction='FFTW_FORWARD',flags=('FFTW_MEASURE',),threads=threads)
-            self.fftw_backward_object = pyfftw.FFTW(self.fftw_gk,self.fftw_g,direction='FFTW_BACKWARD',flags=('FFTW_MEASURE',),threads=threads)
+    def forward(self, fun):
+        """Forward transform of ``fun``."""
+        if fun.ndim > 1 and fun.shape[:-1] != (self.nparallel,):
+            # if nparallel match, apply along two last axes, else only last axis (nparallel should be 1)
+            toret = np.empty_like(self.fftw_fk,shape=fun.shape[:-1] + self.fftw_fk.shape[-1:])
+            return apply_along_last_axes(self.forward,fun,naxes=1+(fun.shape[-2] == self.nparallel),toret=toret)
+        fun.shape = self.fftw_f.shape
+        self.fftw_f[...] = fun
+        return self.fftw_forward_object(normalise_idft=True)
 
-        def forward(self, fun):
-            """Forward transform of ``fun``."""
-            if fun.ndim > 1 and fun.shape[:-1] != (self.nparallel,):
-                # if nparallel match, apply along two last axes, else only last axis (nparallel should be 1)
-                toret = np.empty_like(self.fftw_fk,shape=fun.shape[:-1] + self.fftw_fk.shape[-1:])
-                return apply_along_last_axes(self.forward,fun,naxes=1+(fun.shape[-2] == self.nparallel),toret=toret)
-            fun.shape = self.fftw_f.shape
-            self.fftw_f[...] = fun
-            return self.fftw_forward_object(normalise_idft=True)
-
-        def backward(self, fun):
-            """Backward transform of ``fun``."""
-            if fun.ndim > 1 and fun.shape[:-1] != (self.nparallel,):
-                toret = np.empty_like(self.fftw_g,shape=fun.shape[:-1] + self.fftw_g.shape[-1:])
-                return apply_along_last_axes(self.backward,fun,naxes=1+(fun.shape[-2] == self.nparallel),toret=toret)
-            fun.shape = self.fftw_gk.shape
-            self.fftw_gk[...] = np.conj(fun)
-            return self.fftw_backward_object(normalise_idft=True)
+    def backward(self, fun):
+        """Backward transform of ``fun``."""
+        if fun.ndim > 1 and fun.shape[:-1] != (self.nparallel,):
+            toret = np.empty_like(self.fftw_g,shape=fun.shape[:-1] + self.fftw_g.shape[-1:])
+            return apply_along_last_axes(self.backward,fun,naxes=1+(fun.shape[-2] == self.nparallel),toret=toret)
+        fun.shape = self.fftw_gk.shape
+        self.fftw_gk[...] = np.conj(fun)
+        return self.fftw_backward_object(normalise_idft=True)
 
 
 def get_engine(engine, *args, **kwargs):
