@@ -35,19 +35,20 @@ def test_DESI():
     assert np.allclose(dcdz, dcdz_efunc, rtol=1e-2, atol=1e-10)
 
     cosmo_camb = fiducial.DESI(engine='camb')
-    assert np.allclose(cosmo_camb.comoving_radial_distance(z), cosmo.comoving_radial_distance(z), rtol=1e-7, atol=1e-10)
+    assert np.allclose(cosmo_camb.comoving_radial_distance(z), cosmo.comoving_radial_distance(z), rtol=2e-7, atol=1e-10)
+    #plt.plot(z, cosmo_camb.comoving_radial_distance(z) / cosmo.comoving_radial_distance(z))
+    #plt.show()
 
     cosmo_astropy = fiducial.DESI(engine='astropy')
-    assert np.allclose(cosmo_astropy.comoving_radial_distance(z), cosmo.comoving_radial_distance(z), rtol=1e-5, atol=1e-10)
+    assert np.allclose(cosmo_astropy.comoving_radial_distance(z), cosmo.comoving_radial_distance(z), rtol=2e-5, atol=1e-10)
+    #plt.plot(z, cosmo_astropy.comoving_radial_distance(z) / cosmo.comoving_radial_distance(z))
+    #plt.show()
 
-    HAVE_PYCCL = True
-    try:
-        import pyccl
-    except ImportError:
-        HAVE_PYCCL = False
+    try: import pyccl
+    except ImportError: pyccl = None
 
     z = np.linspace(0, 10, 100)
-    if HAVE_PYCCL:
+    if pyccl is not None:
         print('With pyccl')
         params = {'sigma8':cosmo.sigma8_m,'Omega_c':cosmo.Omega0_cdm,'Omega_b':cosmo.Omega0_b,'h':cosmo.h,'n_s':cosmo.n_s,'m_nu':cosmo['m_ncdm'][0],'m_nu_type':'single'}
         cosmo_pyccl = pyccl.Cosmology(**params)

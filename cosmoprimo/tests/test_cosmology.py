@@ -45,13 +45,14 @@ list_params = [{},{'sigma8':1.},{'A_s':2e-9},{'lensing':True},{'m_ncdm':0.1,'neu
 
 
 @pytest.mark.parametrize('params',list_params)
-def test_background(params):
+def test_background(params, seed=42):
+    rng = np.random.RandomState(seed=seed)
     cosmo = Cosmology(**params)
     ba_camb = Background(cosmo,engine='camb')
     #cosmo2 = Cosmology(engine='class')
     #Transfer(cosmo2)
     ba_class = Background(cosmo,engine='class')
-    z = np.sort(np.random.uniform(0.,1.,10))
+    z = np.sort(rng.uniform(0.,1.,10))
     for name in ['h','H0']:
         assert np.allclose(getattr(ba_class,name),getattr(ba_camb,name),atol=0,rtol=1e-6)
     for density in ['Omega','rho']:
@@ -103,13 +104,14 @@ def test_thermodynamics(params):
 
 
 @pytest.mark.parametrize('params',list_params)
-def test_primordial(params):
+def test_primordial(params, seed=42):
+    rng = np.random.RandomState(seed=seed)
     cosmo = Cosmology(**params)
     pr_class = Primordial(cosmo,engine='class')
     pr_camb = Primordial(cosmo,engine='camb')
     for name in ['A_s','ln_1e10_A_s','n_s','k_pivot']:
         assert np.allclose(getattr(pr_class,name),getattr(pr_camb,name),atol=0,rtol=2e-3)
-    k = np.random.uniform(1e-3,10.,100)
+    k = rng.uniform(1e-3,10.,100)
     for mode in ['scalar','tensor']:
         assert np.allclose(pr_class.pk_k(k,mode=mode),pr_camb.pk_k(k,mode=mode),atol=0,rtol=2e-3)
         assert np.allclose(pr_class.pk_interpolator(mode=mode)(k),pr_camb.pk_interpolator(mode=mode)(k),atol=0,rtol=2e-3)
@@ -161,35 +163,36 @@ def test_harmonic(params):
 
 
 @pytest.mark.parametrize('params',list_params)
-def test_fourier(params):
+def test_fourier(params, seed=42):
+    rng = np.random.RandomState(seed=seed)
     cosmo = Cosmology(**params)
     fo_class = Fourier(cosmo,engine='class',gauge='newtonian')
     fo_camb = Fourier(cosmo,engine='camb')
 
-    z = np.random.uniform(0.,10.,20)
-    r = np.random.uniform(1.,10.,10)
+    z = rng.uniform(0.,10.,20)
+    r = rng.uniform(1.,10.,10)
     if 'sigma8' in cosmo.params:
         assert np.allclose(fo_camb.sigma8_z(0,of='delta_m'),cosmo['sigma8'],rtol=1e-3)
     for of in ['delta_m','delta_cb',('delta_cb','theta_cb'),'theta_cb']:
         assert np.allclose(fo_class.sigma_rz(r,z,of=of),fo_camb.sigma_rz(r,z,of=of),rtol=1e-3)
         assert np.allclose(fo_class.sigma8_z(z,of=of),fo_camb.sigma8_z(z,of=of),rtol=1e-3)
 
-    z = np.random.uniform(0.,3.,1)
-    k = np.random.uniform(1e-3,1.,20)
+    z = rng.uniform(0.,3.,1)
+    k = rng.uniform(1e-3,1.,20)
 
     for of in ['delta_m','delta_cb']:
-        assert np.allclose(fo_class.pk_interpolator(nonlinear=False,of=of)(k,z=z),fo_camb.pk_interpolator(nonlinear=False,of=of)(k,z=z),rtol=2e-3)
+        assert np.allclose(fo_class.pk_interpolator(nonlinear=False,of=of)(k,z=z),fo_camb.pk_interpolator(nonlinear=False,of=of)(k,z=z),rtol=2.5e-3)
         assert np.allclose(fo_class.sigma8_z(z,of=of),fo_class.pk_interpolator(nonlinear=False,of=of).sigma8_z(z=z),rtol=1e-4)
         assert np.allclose(fo_camb.sigma8_z(z,of=of),fo_camb.pk_interpolator(nonlinear=False,of=of).sigma8_z(z=z),rtol=1e-4)
 
     z = np.array([0.,1.,2.,3.,4.])
     for of in ['theta_cb',('delta_cb','theta_cb')]:
-        assert np.allclose(fo_class.pk_interpolator(nonlinear=False,of=of)(k,z=z),fo_camb.pk_interpolator(nonlinear=False,of=of)(k,z=z),rtol=2e-3)
+        assert np.allclose(fo_class.pk_interpolator(nonlinear=False,of=of)(k,z=z),fo_camb.pk_interpolator(nonlinear=False,of=of)(k,z=z),rtol=2.5e-3)
 
     ba_class = Background(cosmo,engine='class')
     # if not cosmo['N_ncdm']:
-    z = np.random.uniform(0.,10.,20)
-    r = np.random.uniform(1.,10.,10)
+    z = rng.uniform(0.,10.,20)
+    r = rng.uniform(1.,10.,10)
     pk_class = fo_class.pk_interpolator(of='delta_cb')
     pk_camb = fo_camb.pk_interpolator(of='delta_cb')
 
@@ -213,7 +216,7 @@ def test_fourier(params):
             pk_class = fo_class.pk_interpolator(nonlinear=False,of='delta_m')
             pk_eh = fo_eh.pk_interpolator()
             assert np.allclose(pk_class(k,z=z),pk_eh(k,z=z),rtol=rtol)
-            r = np.random.uniform(1.,10.,10)
+            r = rng.uniform(1.,10.,10)
             assert np.allclose(pk_class.growth_rate_rz(r=r,z=z),pk_eh.growth_rate_rz(r=r,z=z),rtol=rtol)
 
 
@@ -463,7 +466,6 @@ if __name__ == '__main__':
 
     test_params()
     test_engine()
-    np.random.seed(42)
     for params in list_params:
         test_background(params)
         test_thermodynamics(params)
@@ -481,12 +483,9 @@ if __name__ == '__main__':
     #plot_matter_power_spectrum()
     #external_test_camb()
 
-    HAVE_PYCCL = True
-    try:
-        import pyccl
-    except ImportError:
-        HAVE_PYCCL = False
+    try: import pyccl
+    except ImportError: pyccl = None
 
-    if HAVE_PYCCL:
+    if pyccl is None:
         print('With pyccl')
         external_test_pyccl()

@@ -57,8 +57,8 @@ class FFTlog(object):
         check_level : int
             If non-zero run sanity checks on input.
 
-        engine : string
-            FFT engine.
+        engine : string, default='numpy'
+            FFT engine. See :meth:`set_engine`.
 
         engine_kwargs : dict
             Arguments for FFT engine.
@@ -102,11 +102,12 @@ class FFTlog(object):
     def set_engine(self, engine='numpy', **engine_kwargs):
         """
         Set up FFT engine.
+        See :func:`get_engine`
 
         Parameters
         ----------
-        engine : string
-            Engine name.
+        engine : BaseEngine, string, default='numpy'
+            FFT engine, or one of ['numpy', 'fftw'].
 
         engine_kwargs : dict
             Arguments for FFT engine.
@@ -505,7 +506,7 @@ class FFTWEngine(BaseFFTEngine):
 
     """FFT engine based on :mod:`pyfftw`."""
 
-    def __init__(self, size, nparallel=1, nthreads=None, wisdom=None):
+    def __init__(self, size, nparallel=1, nthreads=None, wisdom=None, plan='measure'):
         """
         Initialize :mod:`pyfftw` engine.
 
@@ -520,14 +521,24 @@ class FFTWEngine(BaseFFTEngine):
         nthreads : int, default=None
             Number of threads.
 
-        wisdom : string, tuple
-            :mod:`pyfftw` wisdom, used to accelerate further FFTs.
+        wisdom : string, tuple, default=None
+            :mod:`pyfftw` wisdom, to speed up initialization of FFTs.
             If a string, should be a path to the save FFT wisdom (with :func:`numpy.save`).
             If a tuple, directly corresponds to the wisdom.
+
+        plan : string, default='measure'
+            Choices are ['estimate', 'measure', 'patient', 'exhaustive'].
+            The increasing amount of effort spent during the planning stage to create the fastest possible transform.
+            Usually 'measure' is a good compromise.
         """
         if pyfftw is None:
             raise NotImplementedError('Install pyfftw to use {}'.format(self.__class__.__name__))
         super(FFTWEngine, self).__init__(size,nparallel=nparallel,nthreads=nthreads)
+        plan = plan.lower()
+        allowed_plans = ['estimate', 'measure', 'patient', 'exhaustive']
+        if plan not in allowed_plans:
+            raise MeshError('Plan {} unknown'.format(plan))
+        plan = 'FFTW_{}'.format(plan.upper())
 
         if isinstance(wisdom, str):
             wisdom = tuple(np.load(wisdom))
@@ -542,8 +553,8 @@ class FFTWEngine(BaseFFTEngine):
         self.fftw_g = pyfftw.empty_aligned((self.nparallel,self.size),dtype='float64')
 
         #pyfftw.config.NUM_THREADS = threads
-        self.fftw_forward_object = pyfftw.FFTW(self.fftw_f,self.fftw_fk,direction='FFTW_FORWARD',flags=('FFTW_MEASURE',),threads=self.nthreads)
-        self.fftw_backward_object = pyfftw.FFTW(self.fftw_gk,self.fftw_g,direction='FFTW_BACKWARD',flags=('FFTW_MEASURE',),threads=self.nthreads)
+        self.fftw_forward_object = pyfftw.FFTW(self.fftw_f,self.fftw_fk,direction='FFTW_FORWARD',flags=(plan,),threads=self.nthreads)
+        self.fftw_backward_object = pyfftw.FFTW(self.fftw_gk,self.fftw_g,direction='FFTW_BACKWARD',flags=(plan,),threads=self.nthreads)
 
     def forward(self, fun):
         """Forward transform of ``fun``."""
@@ -551,7 +562,7 @@ class FFTWEngine(BaseFFTEngine):
             # if nparallel match, apply along two last axes, else only last axis (nparallel should be 1)
             toret = np.empty_like(self.fftw_fk,shape=fun.shape[:-1] + self.fftw_fk.shape[-1:])
             return apply_along_last_axes(self.forward,fun,naxes=1+(fun.shape[-2] == self.nparallel),toret=toret)
-        fun.shape = self.fftw_f.shape
+        #fun.shape = self.fftw_f.shape
         self.fftw_f[...] = fun
         return self.fftw_forward_object(normalise_idft=True)
 
@@ -560,7 +571,7 @@ class FFTWEngine(BaseFFTEngine):
         if fun.ndim > 1 and fun.shape[:-1] != (self.nparallel,):
             toret = np.empty_like(self.fftw_g,shape=fun.shape[:-1] + self.fftw_g.shape[-1:])
             return apply_along_last_axes(self.backward,fun,naxes=1+(fun.shape[-2] == self.nparallel),toret=toret)
-        fun.shape = self.fftw_gk.shape
+        #fun.shape = self.fftw_gk.shape
         self.fftw_gk[...] = np.conj(fun)
         return self.fftw_backward_object(normalise_idft=True)
 
@@ -571,8 +582,8 @@ def get_engine(engine, *args, **kwargs):
 
     Parameters
     ----------
-    engine : string
-        Engine name (so far, 'numpy' or 'fftw').
+    engine : BaseFFTEngine, string
+        FFT engine, or one of ['numpy', 'fftw'].
 
     args, kwargs : tuple, dict
         Arguments for FFT engine.
@@ -581,12 +592,13 @@ def get_engine(engine, *args, **kwargs):
     -------
     engine : BaseFFTEngine
     """
-    if engine == 'numpy':
-        return NumpyFFTEngine(*args, **kwargs)
-    if engine == 'fftw':
-        return FFTWEngine(*args, **kwargs)
-    raise ValueError('FFT engine {} is unknown'.format(engine))
-
+    if isinstance(engine, str):
+        if engine.lower() == 'numpy':
+            return NumpyFFTEngine(*args, **kwargs)
+        if engine.lower() == 'fftw':
+            return FFTWEngine(*args, **kwargs)
+        raise ValueError('FFT engine {} is unknown'.format(engine))
+    return engine
 
 from scipy.special import gamma, loggamma
 

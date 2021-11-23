@@ -58,10 +58,13 @@ def test_fftlog():
     def ffun(x): return 1 / (1 + x**2)**1.5
     def gfun(y): return np.exp(-y)
 
-    for engine in ['numpy','fftw']:
+    try: import pyfftw
+    except ImportError: pyfftw = None
+
+    for kwargs in [{'engine':'numpy'}] + ([{'engine':'fftw'},{'engine':'fftw','plan':'estimate'}] if pyfftw is not None else []):
         x = np.logspace(-3, 3, num=60, endpoint=False)
         f = ffun(x)
-        hf = HankelTransform(x, nu=0, q=1, lowring=True, engine=engine)
+        hf = HankelTransform(x, nu=0, q=1, lowring=True, **kwargs)
         y, g = hf(f, extrap='log')
         assert np.allclose(g, gfun(y), rtol=1e-8, atol=1e-8)
         hf.inv()
@@ -70,7 +73,7 @@ def test_fftlog():
 
         y = np.logspace(-4, 2, num=60, endpoint=False)
         g = gfun(y)
-        hg = HankelTransform(y, nu=0, q=1, lowring=True, engine=engine)
+        hg = HankelTransform(y, nu=0, q=1, lowring=True, **kwargs)
         x, f = hg(g, extrap='log')
         assert np.allclose(f, ffun(x), rtol=1e-10, atol=1e-10)
 

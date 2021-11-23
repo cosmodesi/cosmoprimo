@@ -115,5 +115,5 @@ def plot_correlation_function():
 if __name__ == '__main__':
 
     test_power_spectrum()
-    #test_correlation_function()
+    test_correlation_function()
     #plot_correlation_function()
