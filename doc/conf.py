@@ -63,8 +63,8 @@ exclude_patterns = ['build', '**.ipynb_checkpoints']
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = []
 
-git_repo = 'https://github.com/adematti/cosmoprimo.git'
-git_root = 'https://github.com/adematti/cosmoprimo/blob/main/'
+git_repo = 'https://github.com/cosmodesi/cosmoprimo.git'
+git_root = 'https://github.com/cosmodesi/cosmoprimo/blob/main/'
 
 extlinks = {'root': (git_root + '%s','')}
 

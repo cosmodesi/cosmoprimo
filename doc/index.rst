@@ -33,7 +33,7 @@ Introduction
 Quick start-up
 ==============
 
-For a quick start-up, see the notebook `examples <https://github.com/adematti/cosmoprimo/blob/main/nb/examples.ipynb>`_.
+For a quick start-up, see the notebook `examples <https://github.com/cosmodesi/cosmoprimo/blob/main/nb/examples.ipynb>`_.
 
 
 Changelog

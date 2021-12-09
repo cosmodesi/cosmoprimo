@@ -20,11 +20,11 @@ pip
 ---
 To install **cosmoprimo**, simply run::
 
-  python -m pip install git+https://github.com/adematti/cosmoprimo
+  python -m pip install git+https://github.com/cosmodesi/cosmoprimo
 
 If you want to install extra requirements as well (pyclass, CAMB, pyfftw), run::
 
-  pip install git+https://github.com/adematti/cosmoprimo#egg=cosmoprimo[extras]
+  pip install git+https://github.com/cosmodesi/cosmoprimo#egg=cosmoprimo[extras]
 
 pyclass with Mac OS
 --------------------
