@@ -139,7 +139,7 @@ class FFTlog(object):
         if self.lowring:
             self.lnxy = np.array([delta / np.pi * np.angle(kernel(q + 1j * np.pi / delta)) for kernel,delta,q in zip(self.kernel,self.delta,self.q)])
         else:
-            self.lnxy = np.log(self.xy)
+            self.lnxy = np.log(self.xy) + self.delta
 
         self.y = np.exp(self.lnxy - self.delta)[:,None] / self.x[:,::-1]
 

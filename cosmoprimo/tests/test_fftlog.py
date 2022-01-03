@@ -38,8 +38,8 @@ def test_pad():
 
     x = np.logspace(-3, 3, num=7, endpoint=True)
     padded_x = np.logspace(-15, 16, num=32, endpoint=True)
-    y = np.logspace(-4, 2, num=7, endpoint=True)
-    padded_y = np.logspace(-17, 14, num=32, endpoint=True)
+    y = np.logspace(-3, 3, num=7, endpoint=True)
+    padded_y = np.logspace(-16, 15, num=32, endpoint=True)
 
     fftlog = HankelTransform(x, minfolds=3, xy=1, lowring=False)
 
@@ -101,7 +101,9 @@ def test_power_to_correlation():
         idx = (1e-2 < k2) & (k2 < 10.)
         assert np.allclose(pk2[idx],pk_interp(k2[idx]),rtol=1e-2)
         multipoles.append(xi)
-    assert np.allclose(PowerToCorrelation(k,ell=ells,lowring=True,q=0)(pk)[-1],multipoles)
+    assert np.allclose(PowerToCorrelation(k,ell=ells,lowring=True,q=0)(pk)[-1], multipoles)
+    s, xi = PowerToCorrelation(k,ell=0,lowring=False)(pk)
+    assert np.allclose(s[::-1]*k, 1.)
 
 
 def test_odd():
