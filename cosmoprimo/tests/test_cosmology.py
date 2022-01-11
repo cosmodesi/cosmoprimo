@@ -1,4 +1,6 @@
 import os
+import tempfile
+
 import pytest
 import numpy as np
 
@@ -21,9 +23,11 @@ def test_params():
     ba_class = Background(cosmo,engine='class')
     fo_class = Fourier(cosmo)
 
-    fn = os.path.join('_tests','cosmo.npy')
-    cosmo.save(fn)
-    cosmo = Cosmology.load(fn)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        fn = os.path.join(tmp_dir, 'cosmo.npy')
+        cosmo.save(fn)
+        cosmo = Cosmology.load(fn)
+
     assert np.allclose(cosmo['m_ncdm'],m_ncdm)
     assert cosmo.engine.__class__.__name__ == 'ClassEngine'
     fo_class = Fourier(cosmo)

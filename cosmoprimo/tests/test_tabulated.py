@@ -1,12 +1,21 @@
+import os
+import tempfile
+
 import pytest
 from matplotlib import pyplot as plt
 import numpy as np
 
-from cosmoprimo import fiducial, constants, CosmologyError
+from cosmoprimo import fiducial, constants, Cosmology, CosmologyError
 
 
 def test_DESI():
     cosmo = fiducial.DESI()
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        fn = os.path.join(tmp_dir, 'cosmo.npy')
+        cosmo.save(fn)
+        cosmo = Cosmology.load(fn)
+
     assert np.allclose(cosmo['omega_ncdm'], 0.0006442)
     assert cosmo['N_ncdm'] == 1
     assert np.allclose(cosmo.Omega0_ncdm*cosmo.h**2, 0.0006442, rtol=1e-9, atol=1e-9)
