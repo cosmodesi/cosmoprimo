@@ -93,16 +93,16 @@ def test_power_to_correlation():
     k = np.logspace(-5,2,1000)
     pk = pk_interp(k)
     multipoles = []
-    ells = [0,2,4]
+    ells = [0, 1, 2, 3, 4]
     for ell in ells:
-        s,xi = PowerToCorrelation(k,ell=ell,lowring=True)(pk)
+        s, xi = PowerToCorrelation(k, ell=ell, lowring=True, complex=False)(pk)
         assert xi.shape == (1000,)
-        k2,pk2 = CorrelationToPower(s,ell=ell,lowring=True)(xi)
+        k2, pk2 = CorrelationToPower(s, ell=ell, lowring=True, complex=False)((-1) ** ell * xi)
         idx = (1e-2 < k2) & (k2 < 10.)
-        assert np.allclose(pk2[idx],pk_interp(k2[idx]),rtol=1e-2)
+        assert np.allclose(pk2[idx], pk_interp(k2[idx]), rtol=1e-2)
         multipoles.append(xi)
-    assert np.allclose(PowerToCorrelation(k,ell=ells,lowring=True,q=0)(pk)[-1], multipoles)
-    s, xi = PowerToCorrelation(k,ell=0,lowring=False)(pk)
+    assert np.allclose(PowerToCorrelation(k, ell=ells, lowring=True, q=0, complex=False)(pk)[-1], multipoles)
+    s, xi = PowerToCorrelation(k, ell=0, lowring=False)(pk)
     assert np.allclose(s[::-1]*k, 1.)
 
 

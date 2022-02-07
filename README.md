@@ -16,7 +16,7 @@ together with routines to manipulate these results:
 
 Documentation is hosted on Read the Docs, [cosmoprimo docs](https://cosmoprimo.readthedocs.io/).
 
-# Requirements
+## Requirements
 
 Only strict requirements are:
 - numpy
