@@ -61,7 +61,7 @@ def test_fftlog():
     try: import pyfftw
     except ImportError: pyfftw = None
 
-    for kwargs in [{'engine':'numpy'}] + ([{'engine':'fftw'},{'engine':'fftw','plan':'estimate'}] if pyfftw is not None else []):
+    for kwargs in [{'engine':'numpy'}] + ([{'engine':'fftw'}, {'engine':'fftw','plan':'estimate'}] if pyfftw is not None else []):
         x = np.logspace(-3, 3, num=60, endpoint=False)
         f = ffun(x)
         hf = HankelTransform(x, nu=0, q=1, lowring=True, **kwargs)

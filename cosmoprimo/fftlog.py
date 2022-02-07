@@ -257,7 +257,7 @@ class PowerToCorrelation(FFTlog):
         \xi_{\ell}(s) = \frac{(-i)^{\ell}}{2 \pi^{2}} \int dk k^{2} P_{\ell}(k) j_{\ell}(ks)
 
     """
-    def __init__(self, k, ell=0, q=0, complex=True, **kwargs):
+    def __init__(self, k, ell=0, q=0, complex=False, **kwargs):
         """
         Initialize power to correlation transform.
 
@@ -273,7 +273,7 @@ class PowerToCorrelation(FFTlog):
         q : float, list of floats
             Power-law tilt(s) to regularise integration.
 
-        complex : bool, default=True
+        complex : bool, default=False
             ``False`` returns the real part of even poles, and the imaginary part of odd poles.
 
         kwargs : dict
@@ -304,7 +304,7 @@ class CorrelationToPower(FFTlog):
         P_{\ell}(k) = 4 \pi i^{\ell} \int ds s^{2} \xi_{\ell}(s) j_{\ell}(ks)
 
     """
-    def __init__(self, s, ell=0, q=0, complex=True, **kwargs):
+    def __init__(self, s, ell=0, q=0, complex=False, **kwargs):
         """
         Initialize power to correlation transform.
 
@@ -320,7 +320,7 @@ class CorrelationToPower(FFTlog):
         q : float, list of floats
             Power-law tilt(s) to regularise integration.
 
-        complex : bool, default=True
+        complex : bool, default=False
             ``False`` returns the real part of even poles, and the imaginary part of odd poles.
 
         kwargs : dict
@@ -496,11 +496,11 @@ class NumpyFFTEngine(BaseFFTEngine):
 
     def forward(self, fun):
         """Forward transform of ``fun``."""
-        return np.fft.rfft(fun,axis=-1)
+        return np.fft.rfft(fun, axis=-1)
 
     def backward(self, fun):
         """Backward transform of ``fun``."""
-        return np.fft.hfft(fun,n=self.size,axis=-1) / self.size
+        return np.fft.hfft(fun, n=self.size, axis=-1)/self.size
 
 
 def apply_along_last_axes(func, array, naxes=1, toret=None):

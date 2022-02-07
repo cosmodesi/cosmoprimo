@@ -580,7 +580,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         xi : CorrelationFunctionInterpolator1D
         """
         k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
-        s,xi = PowerToCorrelation(k,**(fftlog_kwargs or {}))(self(k))
+        s,xi = PowerToCorrelation(k, complex=False, **(fftlog_kwargs or {}))(self(k))
         default_params = dict(interp_s='log',interp_order_s=self.interp_order_k)
         default_params.update(kwargs)
         return CorrelationFunctionInterpolator1D(s,xi=xi,**default_params)
@@ -943,7 +943,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         xi : CorrelationFunctionInterpolator2D
         """
         k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
-        s,xi = PowerToCorrelation(k,**(fftlog_kwargs or {}))(self(k,z=self.z,ignore_growth=True).T)
+        s,xi = PowerToCorrelation(k,complex=False, **(fftlog_kwargs or {}))(self(k,z=self.z,ignore_growth=True).T)
         default_params = dict(interp_s='log',interp_order_s=self.interp_order_k,
                             interp_order_z=self.interp_order_z,extrap_z=self.extrap_z,growth_factor_sq=self.growth_factor_sq)
         default_params.update(kwargs)
@@ -1137,7 +1137,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         pk : PowerSpectrumInterpolator1D
         """
         s = np.logspace(np.log10(self.extrap_smin),np.log10(self.extrap_smax),ns)
-        k,pk = CorrelationToPower(s,**(fftlog_kwargs or {}))(self(s))
+        k,pk = CorrelationToPower(s, complex=False, **(fftlog_kwargs or {}))(self(s))
         default_params = dict(interp_k='log',interp_order_k=self.interp_order_s)
         default_params.update(kwargs)
         return PowerSpectrumInterpolator1D(k,pk=pk,**default_params)
@@ -1395,7 +1395,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         pk : PowerSpectrumInterpolator2D
         """
         s = np.logspace(np.log10(self.extrap_smin),np.log10(self.extrap_smax),ns)
-        k,pk = CorrelationToPower(s,**(fftlog_kwargs or {}))(self(s,self.z,ignore_growth=True).T)
+        k,pk = CorrelationToPower(s, complex=False, **(fftlog_kwargs or {}))(self(s,self.z,ignore_growth=True).T)
         default_params = dict(interp_k='log',extrap_pk='log',interp_order_k=self.interp_order_s,
                         interp_order_z=self.interp_order_z,extrap_z=self.extrap_z,growth_factor_sq=self.growth_factor_sq)
         default_params.update(kwargs)
