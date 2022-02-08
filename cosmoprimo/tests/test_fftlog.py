@@ -97,7 +97,7 @@ def test_power_to_correlation():
     for ell in ells:
         s, xi = PowerToCorrelation(k, ell=ell, lowring=True, complex=False)(pk)
         assert xi.shape == (1000,)
-        k2, pk2 = CorrelationToPower(s, ell=ell, lowring=True, complex=False)((-1) ** ell * xi)
+        k2, pk2 = CorrelationToPower(s, ell=ell, lowring=True, complex=False)(xi)
         idx = (1e-2 < k2) & (k2 < 10.)
         assert np.allclose(pk2[idx], pk_interp(k2[idx]), rtol=1e-2)
         multipoles.append(xi)
