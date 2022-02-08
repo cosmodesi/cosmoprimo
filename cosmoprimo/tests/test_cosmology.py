@@ -61,17 +61,23 @@ def test_background(params, seed=42):
         with pytest.raises(CosmologyError):
             cosmo['A_s']
     ba_camb = Background(cosmo,engine='camb')
-    #cosmo2 = Cosmology(engine='class')
-    #Transfer(cosmo2)
     ba_class = Background(cosmo,engine='class')
-    z = np.sort(rng.uniform(0.,1.,10))
+    for name in ['Omega0_b', 'Omega0_g', 'Omega0_cdm', 'Omega0_Lambda', 'Omega0_fld', 'Omega0_k',
+                 'Omega0_dcdm', 'Omega0_ncdm', 'Omega0_ncdm_tot', 'Omega0_pncdm', 'Omega0_pncdm_tot', 'Omega0_ur', 'Omega0_r', 'Omega0_m', 'T0_cmb', 'T0_ncdm']:
+        assert np.allclose(getattr(ba_class,name),getattr(ba_class,name.replace('0',''))(0.),atol=0,rtol=1e-6)
+
+    for name in ['Omega0_b', 'Omega0_g', 'Omega0_cdm', 'Omega0_k', 'Omega0_ncdm_tot', 'Omega0_ur', 'Omega0_r', 'Omega0_m', 'T0_cmb', 'T0_ncdm']:
+        assert np.allclose(getattr(ba_camb,name),getattr(ba_camb,name.replace('0',''))(0.),atol=0,rtol=1e-3)
+
+    z = np.sort(rng.uniform(0., 1., 10))
     for name in ['h','H0']:
         assert np.allclose(getattr(ba_class,name),getattr(ba_camb,name),atol=0,rtol=1e-6)
     for density in ['Omega','rho']:
-        for name in ['k','cdm','b','g','ur','ncdm','de']:
+        for name in ['k','cdm','b','g','ur','ncdm_tot','de']:
             func = '{}_{}'.format(density,name)
+            #print(getattr(ba_camb,func)(0.), np.array(0.), getattr(ba_camb,func)(np.array(0.)), getattr(ba_camb,func)(np.zeros(0)), getattr(ba_camb,func)([0.]))
             assert np.allclose(getattr(ba_class,func)(z),getattr(ba_camb,func)(z),atol=0,rtol=1e-4)
-    for name in ['k','cdm','b','g','ur']:
+    for name in ['k','cdm','b','g','ur','m']:
         density = 'Omega0_{}'.format(name)
         assert np.allclose(getattr(ba_class,density),cosmo['Omega_{}'.format(name)],atol=0,rtol=1e-4)
         assert np.allclose(getattr(ba_class,density),getattr(ba_camb,density),atol=0,rtol=1e-4)
@@ -90,7 +96,7 @@ def test_background(params, seed=42):
             for name in ['efunc','hubble_function','growth_factor','growth_rate']:
                 assert np.allclose(getattr(ba_class,name)(z),getattr(ba,name)(z),atol=0,rtol=2e-2)
     for engine in ['astropy']:
-        ba = Background(cosmo,engine=engine)
+        ba = Background(cosmo, engine=engine)
         for density in ['Omega']:
             for name in ['k','cdm','b','g','de']:
                 func = '{}_{}'.format(density,name)
@@ -460,6 +466,9 @@ def test_shortcut():
     assert 'tau_reio' in dir(cosmo)
     d = cosmo.comoving_radial_distance(z)
     assert np.all(d == cosmo.get_background().comoving_radial_distance(z))
+    assert cosmo.gauge == 'synchronous' # default
+    cosmo.set_engine('class', gauge='newtonian')
+    assert cosmo.gauge == 'newtonian'
 
 
 if __name__ == '__main__':

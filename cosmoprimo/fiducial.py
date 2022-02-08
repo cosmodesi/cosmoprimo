@@ -75,7 +75,8 @@ def AbacusSummitBase(engine='class', precision=None, extra_params=None, **params
                         transfer_neglect_delta_k_V_t2=100., transfer_neglect_delta_k_V_e=100., transfer_neglect_delta_k_V_b=100., transfer_neglect_delta_k_T_t2=100., transfer_neglect_delta_k_T_e=100., transfer_neglect_delta_k_T_b=100.,
                         neglect_CMB_sources_below_visibility=1.e-30, transfer_neglect_late_source=3000., halofit_k_per_decade=3000., l_switch_limber=40., accurate_lensing=1, num_mu_minus_lmax=1000., delta_l_max=1000.)
             for name in ['recfast_Nz0', 'tol_perturb_integration', 'perturb_sampling_stepsize']: prec.pop(name) # these do not exist anymore
-            for key, val in prec.items(): extra_params.setdefault(key, val)
+            prec.update(extra_params)
+            extra_params = prec
     return Cosmology(engine=engine, extra_params=extra_params, **params)
 
 

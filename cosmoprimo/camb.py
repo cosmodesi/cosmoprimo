@@ -53,6 +53,7 @@ class CambEngine(BaseEngine):
 
     def __init__(self, *args, **kwargs):
         # Big thanks to https://github.com/LSSTDESC/CCL/blob/master/pyccl/boltzmann.py!
+        # Quantities in the synchronous gauge
         super(CambEngine,self).__init__(*args,**kwargs)
         if self._params.get('Omega_Lambda',None) is not None:
             warnings.warn('{} cannot cope with dynamic dark energy + cosmological constant'.format(self.__class__.__name__))
@@ -64,7 +65,7 @@ class CambEngine(BaseEngine):
                                         pivot_tensor=self['k_pivot'],parameterization='tensor_param_rpivot',r=self['r'])
 
         self._camb_params.share_delta_neff = False
-        self._camb_params.omnuh2 = self['omega_ncdm']
+        self._camb_params.omnuh2 = self['omega_ncdm'].sum()
         self._camb_params.num_nu_massless = self['N_ur']
         self._camb_params.num_nu_massive = self['N_ncdm']
         self._camb_params.nu_mass_eigenstates = self['N_ncdm']
@@ -183,14 +184,16 @@ def makescalar(func):
 
     @functools.wraps(func)
     def wrapper(self, z):
+        z = np.array(z)
         toret = func(self, z)
-        if np.isscalar(z):
+        if z.ndim == 0:
             return toret[0]
         return toret
 
     return wrapper
 
 
+@utils.addproperty('Omega0_m', 'Omega0_ncdm_tot')
 class Background(BaseBackground):
 
     def __init__(self, engine):
@@ -201,33 +204,40 @@ class Background(BaseBackground):
         #self._H0 = self.ba.Params.H0
         #self._h = self.H0 / 100
         self._RH0_ = constants.rho_crit_Msunph_per_Mpcph3 * constants.c**2 / (self.H0*1e3)**2 / 3.
-        #for name in ['k','cdm','b','g','ur','ncdm','de']:
-        #    setattr(self,'Omega0_{}'.format(name),getattr(self,'Omega_{}'.format(name))(0.))
+        for name in ['m', 'ncdm_tot']:
+            setattr(self,'_Omega0_{}'.format(name),getattr(self,'Omega_{}'.format(name))(0.))
 
+    @makescalar
     def Omega_k(self, z):
         r"""Density parameter of curvature, unitless."""
         return self.ba.get_Omega('K',z=z)
 
+    @makescalar
     def Omega_cdm(self, z):
         r"""Density parameter of cold dark matter, unitless."""
         return self.ba.get_Omega('cdm',z=z)
 
+    @makescalar
     def Omega_b(self, z):
         r"""Density parameter of baryons, unitless."""
         return self.ba.get_Omega('baryon',z=z)
 
+    @makescalar
     def Omega_g(self, z):
         r"""Density parameter of photons, unitless."""
         return self.ba.get_Omega('photon',z=z)
 
+    @makescalar
     def Omega_ur(self, z):
         r"""Density parameter of ultra relativistic neutrinos, unitless."""
         return self.ba.get_Omega('neutrino',z=z)
 
-    def Omega_ncdm(self, z):
-        r"""Density parameter of massive neutrinos, unitless."""
+    @makescalar
+    def Omega_ncdm_tot(self, z):
+        r"""Total density parameter of massive neutrinos, unitless."""
         return self.ba.get_Omega('nu',z=z)
 
+    @makescalar
     def Omega_de(self, z):
         r"""Density of total dark energy (fluid + cosmological constant), unitless."""
         return self.ba.get_Omega('de',z=z)
@@ -266,8 +276,8 @@ class Background(BaseBackground):
         return self.ba.get_background_densities(1./(1+z),vars=['neutrino'])['neutrino'] * self._RH0_ * (1 + z)
 
     @makescalar
-    def rho_ncdm(self, z):
-        r"""Comoving density of non-relativistic part of massive neutrinos :math:`\rho_{ncdm}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+    def rho_ncdm_tot(self, z):
+        r"""Total comoving density of non-relativistic part of massive neutrinos :math:`\rho_{ncdm}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self.ba.get_background_densities(1./(1+z),vars=['nu'])['nu'] * self._RH0_ * (1 + z)
 
     @makescalar
@@ -465,7 +475,7 @@ class Harmonic(BaseSection):
         return toret
 
     def lens_potential_cl(self, ellmax=-1):
-        """Return potential :math:`C_{\ell}` ['pp','tp','ep'], unitless."""
+        r"""Return potential :math:`C_{\ell}` ['pp','tp','ep'], unitless."""
         #self._engine.compute('lensing')
         if not self.hr.Params.DoLensing:
             raise CAMBError('You asked for potential cl, but they have not been calculated. Please set lensing = True.')
@@ -480,7 +490,7 @@ class Harmonic(BaseSection):
         return toret
 
     def lensed_cl(self, ellmax=-1):
-        """Return lensed :math:`C_{\ell}` ['tt','ee','bb','te'], unitless."""
+        r"""Return lensed :math:`C_{\ell}` ['tt','ee','bb','te'], unitless."""
         if ellmax < 0:
             ellmax = self.ellmax_cl + 1 + ellmax
         if not self.hr.Params.DoLensing:

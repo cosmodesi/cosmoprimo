@@ -44,6 +44,7 @@ def test_desi():
     plot = False
     for of, fn in zip(['cb', 'cb', 'm'], ['AbacusSummitBase_CLASS_pk_cb.txt', 'abacus_cosm000_CLASSv3.1.1.00_z2_pk_cb.dat', 'abacus_cosm000_CLASSv3.1.1.00_z2_pk.dat']):
         pk = fo.pk_interpolator(of='delta_{}'.format(of)).to_1d(z=1.)
+        #pk(np.logspace(-5.99, 1.99, 1000))
         fn = os.path.join('fiducial', fn)
         kref, pkref = np.loadtxt(fn, unpack=True)
         mask = (kref >= pk.k[0]) & (kref <= pk.k[-1])
@@ -52,7 +53,7 @@ def test_desi():
             plt.plot(kref, pk(kref)/pkref)
             plt.xscale('log')
             plt.show()
-        assert np.allclose(pk(kref), pkref, rtol=2e-4 if of == 'm' else 2e-3)
+        assert np.allclose(pk(kref), pkref, rtol=5e-4)
 
 
 if __name__ == '__main__':

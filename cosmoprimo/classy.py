@@ -53,6 +53,7 @@ class ClassEngine(pyclass.ClassEngine,BaseEngine):
 Background = pyclass.Background
 Thermodynamics = pyclass.Thermodynamics
 Transfer = pyclass.Transfer
+Perturbations = pyclass.Perturbations
 
 
 class Primordial(pyclass.Primordial):
@@ -146,16 +147,16 @@ class Harmonic(pyclass.Harmonic):
         self._rsigma8 = engine._rescale_sigma8()
 
     def unlensed_table(self, ellmax=-1, of=None):
-        """
+        r"""
         Return table of unlensed :math:`C_{\ell}` (i.e. CMB power spectra without lensing and lensing potentials), unitless.
 
         Parameters
         ----------
         ellmax : int, default=-1
-            Maximum :math:`\ell` desired. If negative, is relative to the requested maximum `\ell`.
+            Maximum :math:`\ell` desired. If negative, is relative to the requested maximum :math:`\ell`.
 
         of : list, default=None
-            List of outputs, ['tt','ee','bb','te','pp','tp','ep']. If ``None``, returns all of them.
+            List of outputs, ['tt','ee','bb','te','pp','tp','ep']. If ``None``, return all computed outputs.
 
         Returns
         -------
@@ -175,16 +176,16 @@ class Harmonic(pyclass.Harmonic):
         return table
 
     def lensed_table(self, ellmax=-1, of=None):
-        """
+        r"""
         Return table of lensed :math:`C_{\ell}`, unitless.
 
         Parameters
         ----------
         ellmax : int, default=-1
-            Maximum :math:`\ell` desired. If negative, is relative to the requested maximum `\ell`.
+            Maximum :math:`\ell` desired. If negative, is relative to the requested maximum :math:`\ell`.
 
         of : list, default=None
-            List of outputs, ['tt','ee','bb','pp','te','tp']. If ``None``, returns all of them.
+            List of outputs, ['tt','ee','bb','pp','te','tp']. If ``None``, return all computed outputs.
 
         Returns
         -------

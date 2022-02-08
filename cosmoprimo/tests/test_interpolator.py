@@ -30,31 +30,50 @@ def test_power_spectrum():
     interp2 = interp.clone()
     assert np.all(interp2(k,z=[0]*2) == interp(k,z=[0]*2))
 
-    z = np.random.uniform(0.,1.,10)
+    rng = np.random.RandomState(seed=42)
+    z = rng.uniform(0.,1.,10)
     interp = PowerSpectrumInterpolator2D(k,z=z,pk=np.array([pk]*len(z)).T)
-    assert np.allclose(interp(k,z=np.random.uniform(0.,1.,10)),pk[:,None],atol=0,rtol=1e-5)
+    assert np.allclose(interp(k,z=rng.uniform(0.,1.,10)),pk[:,None],atol=0,rtol=1e-5) # ok as same pk for all z
+
+    interp = PowerSpectrumInterpolator2D(k,z=z,pk=np.array([pk]*len(z)).T,extrap_kmin=1e-6,extrap_kmax=1e2)
+    kk = np.logspace(-5,1.8,100)
+    assert kk.min() < interp.k[0] or kk.max() > interp.k[-1]
+    interp(kk,z=rng.uniform(0.,1.,10))
+    interp1d = interp.to_1d(z=z[0])
+    assert kk.min() < interp1d.k[0] or kk.max() > interp1d.k[-1]
+    interp1d(kk)
 
     cosmo = Cosmology()
-    fo = Fourier(cosmo,engine='eisenstein_hu')
-    pk_interp = fo.pk_interpolator()
-    k = np.logspace(-4,2,100)
-    z = np.linspace(0,4,10)
-    pk = pk_interp(k,z)
-    pk_interp2 = pk_interp.clone()
-    assert np.allclose(pk_interp2(k,z),pk,rtol=1e-4)
-    pk_interp2 = pk_interp.clone(pk=2*pk_interp.pk)
-    assert np.allclose(pk_interp2(k,z),2*pk,rtol=1e-4)
-    for iz,z_ in enumerate(z):
-        assert np.allclose(pk_interp.to_1d(z=z_)(k),pk[:,iz])
-        assert np.allclose(pk_interp.sigma8_z(z_),pk_interp.to_1d(z_).sigma8(),rtol=1e-4)
-        assert np.allclose(pk_interp.sigma_dz(z_),pk_interp.to_1d(z_).sigma_d(),rtol=1e-4)
-        assert np.allclose(pk_interp.sigma_dz(z_,nk=None),pk_interp.to_1d(z_).sigma_d(),rtol=1e-4)
+    for engine in ['eisenstein_hu', 'class']:
+        fo = Fourier(cosmo, engine=engine)
+        pk_interp = fo.pk_interpolator()
+        if engine == 'eisenstein_hu':
+            k = np.logspace(-4,2,100)
+        else:
+            #k = np.logspace(-5.99, 1.99, 1000)
+            k = pk_interp.k
+            k = np.geomspace(k[0]/10., k[-1]*20, 1000)
+            pk_interp = fo.pk_interpolator(extrap_kmin=k[0]/2., extrap_kmax=k[-1]*2)
+        z = np.linspace(0,4,10)
+        pk = pk_interp(k,z)
+        pk_interp2 = pk_interp.clone()
+        assert np.allclose(pk_interp2(k,z),pk,rtol=1e-4)
+        pk_interp2 = pk_interp.clone(pk=2*pk_interp.pk)
+        assert np.allclose(pk_interp2(k,z),2*pk,rtol=1e-4)
+        for iz,z_ in enumerate(z):
+            pk_interp1d = pk_interp.to_1d(z=z_)
+            assert np.allclose(pk_interp1d.extrap_kmin, pk_interp.extrap_kmin)
+            assert np.allclose(pk_interp1d.extrap_kmax, pk_interp.extrap_kmax)
+            assert np.allclose(pk_interp1d(k),pk[:,iz])
+            assert np.allclose(pk_interp.sigma8_z(z_),pk_interp.to_1d(z_).sigma8(),rtol=1e-4)
+            assert np.allclose(pk_interp.sigma_dz(z_),pk_interp.to_1d(z_).sigma_d(),rtol=1e-4)
+            assert np.allclose(pk_interp.sigma_dz(z_,nk=None),pk_interp.to_1d(z_).sigma_d(),rtol=1e-4)
 
-    pk_interp2 = PowerSpectrumInterpolator2D.from_callable(pk_interp.k,pk_interp.z,pk_interp)
-    assert np.allclose(pk_interp2(k,z),pk_interp(k,z),rtol=1e-4)
-    pk_interp_1d = pk_interp.to_1d()
-    pk_interp_1d2 = pk_interp_1d.from_callable(pk_interp_1d.k,pk_interp_1d)
-    assert np.allclose(pk_interp_1d2(k),pk_interp_1d(k),rtol=1e-4)
+        pk_interp2 = PowerSpectrumInterpolator2D.from_callable(pk_interp.k,pk_interp.z,pk_interp)
+        assert np.allclose(pk_interp2(k,z),pk_interp(k,z),rtol=1e-4)
+        pk_interp_1d = pk_interp.to_1d()
+        pk_interp_1d2 = pk_interp_1d.from_callable(pk_interp_1d.k,pk_interp_1d)
+        assert np.allclose(pk_interp_1d2(k),pk_interp_1d(k),rtol=1e-4)
 
 
 def test_correlation_function():

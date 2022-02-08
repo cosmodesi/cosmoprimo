@@ -12,7 +12,7 @@ from .utils import BaseClass
 from . import utils, constants
 
 
-_Sections = ['Background','Thermodynamics','Primordial','Perturbations','Transfer','Harmonic','Fourier']
+_Sections = ['Background', 'Thermodynamics', 'Primordial', 'Perturbations', 'Transfer', 'Harmonic', 'Fourier']
 
 
 class CosmologyError(Exception):
@@ -126,13 +126,16 @@ class BaseEngine(BaseClass):
             rho = self._params['N_ur'] * 7./8. * self['T_ur']**4 * 4./constants.c**3 * constants.Stefan_Boltzmann # density, kg/m^3
             return rho/(self['h']**2*constants.rho_crit_kgph_per_mph3)
         if name == 'Omega_r':
-            rho = (self._params['T_cmb']**4 + self['N_ur'] * 7./8. * self['T_ur']**4) * 4./constants.c**3 * constants.Stefan_Boltzmann # density, kg/m^3
-            return rho/(self['h']**2*constants.rho_crit_kgph_per_mph3)
+            rho = (self._params['T_cmb']**4 + self['N_ur'] * 7./8. * self['T_ur']**4) * 4./constants.c**3 * constants.Stefan_Boltzmann
+            return rho/(self['h']**2*constants.rho_crit_kgph_per_mph3) + self['Omega_pncdm'].sum()
         if name == 'Omega_ncdm':
             self._params['Omega_ncdm'] = self._params.get('Omega_ncdm',self._get_rho_ncdm(z=0)/constants.rho_crit_Msunph_per_Mpcph3)
             return self._params['Omega_ncdm']
+        if name == 'Omega_pncdm':
+            self._params['Omega_pncdm'] = 3. * self._params.get('Omega_pncdm',self._get_p_ncdm(z=0)/constants.rho_crit_Msunph_per_Mpcph3)
+            return self._params['Omega_pncdm']
         if name == 'Omega_m':
-            return self['Omega_b'] + self['Omega_cdm'] + self['Omega_ncdm']
+            return self['Omega_b'] + self['Omega_cdm'] + self['Omega_ncdm'].sum() - self['Omega_pncdm'].sum()
         if name == 'N_ncdm':
             return len(self._params['m_ncdm'])
         if name == 'N_eff':
@@ -150,7 +153,7 @@ class BaseEngine(BaseClass):
 
     def _get_rho_ncdm(self, z=0, epsrel=1e-7):
         r"""
-        Return energy density of non-CDM components (massive neutrinos) by integrating over the phase-space distribution (frozen since CMB),
+        Return energy density of non-CDM components (massive neutrinos) for each species by integrating over the phase-space distribution (frozen since CMB),
         including non-relativistic (contributing to :math:`\Omega_{m}`) and relativistic (contributing to :math:`\Omega_{r}`) components.
         Usually close to :math:`\sum m/(93.14 h^{2})` by definition of T_ncdm.
 
@@ -164,17 +167,14 @@ class BaseEngine(BaseClass):
 
         Returns
         -------
-        rho_ncdm : float
+        rho_ncdm : array
             Energy density, in units of :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
         """
-        toret = 0.
-        for m,T_ncdm in zip(self['m_ncdm'],self['T_ncdm']):
-            toret += _compute_ncdm_momenta(self['T_cmb'] * T_ncdm, m, z=z, epsrel=epsrel, out='rho')
-        return toret/self['h']**2
+        return np.asarray([_compute_ncdm_momenta(self['T_cmb'] * T_ncdm, m, z=z, epsrel=epsrel, out='rho') for m, T_ncdm in zip(self['m_ncdm'], self['T_ncdm'])])/self['h']**2
 
     def _get_p_ncdm(self, z=0, epsrel=1e-7):
         r"""
-        Return pressure of non-CDM components (massive neutrinos) by integrating over the phase-space distribution (frozen since CMB).
+        Return pressure of non-CDM components (massive neutrinos) for each species by integrating over the phase-space distribution (frozen since CMB).
 
         Parameters
         ----------
@@ -186,13 +186,10 @@ class BaseEngine(BaseClass):
 
         Returns
         -------
-        p_ncdm : float
+        p_ncdm : array
             Pressure, in units of :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
         """
-        toret = 0.
-        for m,T_ncdm in zip(self['m_ncdm'],self['T_ncdm']):
-            toret += _compute_ncdm_momenta(self['T_cmb'] * T_ncdm, m, z=z, epsrel=epsrel, out='p')
-        return toret/self['h']**2
+        return np.asarray([_compute_ncdm_momenta(self['T_cmb'] * T_ncdm, m, z=z, epsrel=epsrel, out='p') for m, T_ncdm in zip(self['m_ncdm'], self['T_ncdm'])])/self['h']**2
 
     def get_background(self):
         """Return :class:`Background` calculations."""
@@ -211,6 +208,13 @@ class BaseEngine(BaseClass):
     def get_primordial(self):
         """Return :class:`Primordial` calculations."""
         name = 'primordial'
+        if name not in self._sections:
+            self._sections[name] = self._Sections[name](self)
+        return self._sections[name]
+
+    def get_perturbations(self):
+        """Return :class:`Perturbations` calculations."""
+        name = 'perturbations'
         if name not in self._sections:
             self._sections[name] = self._Sections[name](self)
         return self._sections[name]
@@ -393,6 +397,34 @@ def Primordial(cosmology, engine=None, **extra_params):
     """
     engine = _get_cosmology_engine(cosmology,engine=engine,**extra_params)
     return engine.get_primordial()
+
+
+def Perturbations(cosmology, engine=None, **extra_params):
+    """
+    Return :class:`Perturbations` calculations.
+
+    Parameters
+    ----------
+    cosmology : Cosmology
+        Current cosmology.
+
+    engine : string
+        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+        If ``None``, returns current :attr:`Cosmology.engine`.
+
+    set_engine : bool
+        Whether to attach returned engine to ``cosmology``.
+        (Set ``False`` if e.g. you want to use this engine for a single calculation).
+
+    extra_params : dict
+        Extra engine parameters, typically precision parameters.
+
+    Returns
+    -------
+    engine : BaseEngine
+    """
+    engine = _get_cosmology_engine(cosmology,engine=engine,**extra_params)
+    return engine.get_perturbations()
 
 
 def Transfer(cosmology, engine=None, **extra_params):
@@ -935,7 +967,7 @@ def compile_params(args):
         params['z_pk'].append(0) # in order to normalise CAMB power spectrum with sigma8
 
     if 'Omega_m' in params:
-        nonrelativistic_ncdm = (BaseEngine._get_rho_ncdm(params,z=0) - 3*BaseEngine._get_p_ncdm(params,z=0))/constants.rho_crit_Msunph_per_Mpcph3
+        nonrelativistic_ncdm = (BaseEngine._get_rho_ncdm(params, z=0).sum() - 3*BaseEngine._get_p_ncdm(params, z=0).sum())/constants.rho_crit_Msunph_per_Mpcph3
         params['Omega_cdm'] = params.pop('Omega_m') - params['Omega_b'] - nonrelativistic_ncdm
 
     return params
@@ -1059,36 +1091,56 @@ class BaseBackground(BaseSection):
         Density parameter of relativistic (radiation-like) component, including
         relativistic part of massive neutrino and massless neutrino, unitless.
         """
-        return self.Omega_g(z) + self.Omega_ur(z) + 3*self.p_ncdm(z)/self.rho_crit(z)
+        return self.Omega_g(z) + self.Omega_ur(z) + self.Omega_pncdm_tot(z)
 
     def Omega_m(self, z):
         r"""
         Density parameter of non-relativistic (matter-like) component, including
         non-relativistic part of massive neutrino, unitless.
         """
-        return self.Omega_cdm(z) + self.Omega_b(z) + self.Omega_ncdm(z) - 3.*self.p_ncdm(z)/self.rho_crit(z)
+        return self.Omega_cdm(z) + self.Omega_b(z) + self.Omega_ncdm_tot(z) - self.Omega_pncdm_tot(z)
+
+    def Omega_ncdm_tot(self, z):
+        r"""Total density parameter of massive neutrinos, unitless. Slow implementation."""
+        return self.rho_ncdm_tot(z)/self.rho_crit(z)
+
+    def Omega_pncdm_tot(self, z):
+        r"""Total density parameter of pressure of non-relativistic part of massive neutrinos, unitless. Slow implementation."""
+        return 3 * self.p_ncdm_tot(z) / self.rho_crit(z)
 
     def rho_ncdm(self, z, species=None):
-        r"""Comoving density of non-relativistic part of massive neutrinos :math:`\rho_{ncdm}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+        r"""
+        Comoving density of non-relativistic part of massive neutrinos for each species, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
+        If ``species`` is ``None`` returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
+        Else if ``species`` is between 0 and N_ncdm, return density for this species.
+        """
         if not self.N_ncdm:
-            return np.zeros_like(z)
+            return np.zeros(0, dtype='f8')
         z = np.asarray(z)
         if z.ndim == 0:
             return self._engine._get_rho_ncdm(z=z)
-        return np.asarray([self._engine._get_rho_ncdm(z=z_) for z_ in z])
+        return np.asarray([self._engine._get_rho_ncdm(z=zz) for zz in z]).T
+
+    def rho_ncdm_tot(self, z):
+        r"""Total comoving density of non-relativistic part of massive neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+        return np.sum(self.rho_ncdm(z, species=None), axis=0)
 
     def p_ncdm(self, z, species=None):
-        r"""Pressure of non-relative part of massive neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+        r"""
+        Pressure of non-relativistic part of massive neutrinos for each species, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
+        If ``species`` is ``None`` returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
+        Else if ``species`` is between 0 and N_ncdm, return pressure for this species.
+        """
         if not self.N_ncdm:
-            return np.zeros_like(z)
+            return np.zeros(0, dtype='f8')
         z = np.asarray(z)
         if z.ndim == 0:
             return self._engine._get_p_ncdm(z=z)
-        return np.asarray([self._engine._get_p_ncdm(z=z_) for z_ in z])
+        return np.asarray([self._engine._get_p_ncdm(z=zz) for zz in z]).T
 
-    def Omega_ncdm(self, z):
-        r"""Density parameter of massive neutrinos, unitless. Slow implementation."""
-        return self.rho_ncdm(z)/self.rho_crit(z)
+    def p_ncdm_tot(self, z):
+        r"""Total pressure of non-relativistic part of massive neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+        return np.sum(self.p_ncdm(z, species=None), axis=0)
 
     def T_cmb(self, z):
         r"""The CMB temperature, in :math:`K`."""
@@ -1097,8 +1149,7 @@ class BaseBackground(BaseSection):
     def T_ncdm(self, z):
         r"""
         Return the ncdm temperature (massive neutrinos), in :math:`K`.
-
-        Returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm,len(z)).
+        Returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
         """
         if np.ndim(z) == 0:
             return self.T0_ncdm * (1 + z)
@@ -1119,7 +1170,7 @@ class BaseBackground(BaseSection):
 
               \rho_{\mathrm{crit}}(z) = \frac{3 H(z)^{2}}{8 \pi G}.
         """
-        return self.efunc(z)**2*constants.rho_crit_Msunph_per_Mpcph3
+        return self.efunc(z)**2 * constants.rho_crit_Msunph_per_Mpcph3
 
     def rho_tot(self, z):
         r"""Comoving total density :math:`\rho_{\mathrm{tot}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
