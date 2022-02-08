@@ -45,13 +45,21 @@ def test_engine():
     assert cosmo.engine is not ba._engine
 
 
-list_params = [{},{'sigma8':1.},{'A_s':2e-9},{'lensing':True},{'m_ncdm':0.1,'neutrino_hierarchy':'normal'},{'Omega_k':0.1}]
+list_params = [{}, {'sigma8':1.}, {'A_s':2e-9}, {'lensing':True}, {'m_ncdm':0.1,'neutrino_hierarchy':'normal'}, {'Omega_k':0.1}]
 
 
 @pytest.mark.parametrize('params',list_params)
 def test_background(params, seed=42):
     rng = np.random.RandomState(seed=seed)
     cosmo = Cosmology(**params)
+    if 'A_s' in params:
+        assert cosmo['A_s'] == params['A_s']
+        with pytest.raises(CosmologyError):
+            cosmo['sigma8']
+    else:
+        assert cosmo['sigma8'] == params.get('sigma8', 0.8) # sigma8 is set as default
+        with pytest.raises(CosmologyError):
+            cosmo['A_s']
     ba_camb = Background(cosmo,engine='camb')
     #cosmo2 = Cosmology(engine='class')
     #Transfer(cosmo2)
@@ -423,35 +431,23 @@ def test_neutrinos():
         assert np.allclose(cosmo['m_ncdm'],m_ncdm)
 
 
-def test_fiducial():
-    from cosmoprimo import fiducial
-    cosmo = fiducial.Planck2018FullFlatLCDM()
-    assert cosmo['h'] == 0.6766
-    cosmo = fiducial.AbacusSummitBase(engine='class')
-    assert np.allclose(cosmo['omega_ncdm'],0.0006442)
-    assert cosmo['N_ncdm'] == 1
-    assert np.allclose(cosmo.Omega0_ncdm*cosmo.h**2,0.0006442,rtol=1e-9,atol=1e-9)
-    sigma8 = 0.8
-    r, z = 8, 0
-    assert not np.allclose(cosmo.get_fourier().sigma_rz(r,z,of='delta_m'),sigma8,rtol=1e-4) # provided parameter is As
-    cosmo_sig8 = fiducial.AbacusSummitBase(engine='class',sigma8=sigma8)
-    assert np.allclose(cosmo_sig8.get_fourier().sigma_rz(r,z,of='delta_m'),sigma8,rtol=1e-4) # interpolation error
-
-
 def test_clone():
-    from cosmoprimo import fiducial
-    cosmo = fiducial.Planck2018FullFlatLCDM(engine='class')
+
+    cosmo = Cosmology(engine='class')
     engine = cosmo.engine
+
     for factor in [1.,1.1]:
         cosmo_clone = cosmo.clone(omega_cdm=cosmo['omega_cdm']*factor)
         assert type(cosmo_clone.engine) == type(cosmo.engine)
         assert cosmo_clone.engine is not cosmo.engine
-        z = np.linspace(0.5,2.,100)
-        test = np.allclose(cosmo_clone.get_background().comoving_radial_distance(z),cosmo.get_background().comoving_radial_distance(z))
+        z = np.linspace(0.5, 2., 100)
+        test = np.allclose(cosmo_clone.get_background().comoving_radial_distance(z), cosmo.get_background().comoving_radial_distance(z))
         if factor == 1:
             assert test
         else:
             assert not test
+        cosmo_clone = cosmo.clone(sigma8=cosmo.sigma8_m*factor)
+        assert np.allclose(cosmo_clone.get_fourier().sigma_rz(8, 0, of='delta_m'), cosmo.sigma8_m*factor, rtol=1e-4) # interpolation error
 
 
 def test_shortcut():
@@ -478,7 +474,6 @@ if __name__ == '__main__':
         test_fourier(params)
     test_repeats()
     test_neutrinos()
-    test_fiducial()
     test_clone()
     test_shortcut()
 

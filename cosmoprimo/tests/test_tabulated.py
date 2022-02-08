@@ -8,7 +8,7 @@ import numpy as np
 from cosmoprimo import fiducial, constants, Cosmology, CosmologyError
 
 
-def test_DESI():
+def test_desi():
     cosmo = fiducial.DESI()
 
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -18,14 +18,6 @@ def test_DESI():
 
     assert np.allclose(cosmo['omega_ncdm'], 0.0006442)
     assert cosmo['N_ncdm'] == 1
-    assert np.allclose(cosmo.Omega0_ncdm*cosmo.h**2, 0.0006442, rtol=1e-9, atol=1e-9)
-    assert np.allclose(cosmo.h, 0.6736, rtol=1e-9, atol=1e-9)
-    assert np.allclose(cosmo.Omega0_cdm*cosmo.h**2, 0.12, rtol=1e-9, atol=1e-9)
-    assert np.allclose(cosmo.Omega0_b*cosmo.h**2, 0.02237, rtol=1e-9, atol=1e-9)
-    assert np.allclose(cosmo.k_pivot*cosmo.h, 0.05, rtol=1e-9, atol=1e-9)
-    assert np.allclose(cosmo.A_s, 2.083e-09, rtol=1e-9, atol=1e-9)
-    assert np.allclose(cosmo.n_s, 0.9649, rtol=1e-9, atol=1e-9)
-    assert np.allclose(cosmo.tau_reio, 0.0561, rtol=1e-9, atol=1e-9)
 
     cosmo_tabulated = fiducial.TabulatedDESI()
 
@@ -72,4 +64,4 @@ def test_DESI():
 if __name__ == '__main__':
 
     #fiducial.save_TabulatedDESI()
-    test_DESI()
+    test_desi()

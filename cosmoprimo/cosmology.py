@@ -236,8 +236,47 @@ class BaseEngine(BaseClass):
             self._sections[name] = self._Sections[name](self)
         return self._sections[name]
 
+def get_engine(engine):
+    """
+    Return engine (class) for cosmological calculation.
 
-def get_engine(cosmology, engine=None, set_engine=True, **extra_params):
+    Parameters
+    ----------
+    engine : BaseEngine, string
+        Engine or one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+
+    Returns
+    -------
+    engine : BaseEngine
+    """
+    if isinstance(engine, str):
+        if engine.lower() in ['class', 'classengine']:
+            from .classy import ClassEngine
+            engine = ClassEngine
+        elif engine.lower() in ['camb', 'cambengine']:
+            from .camb import CambEngine
+            engine = CambEngine
+        elif engine.lower() in ['eisenstein_hu', 'eisensteinhuengine']:
+            from .eisenstein_hu import EisensteinHuEngine
+            engine = EisensteinHuEngine
+        elif engine.lower() in ['eisenstein_hu_nowiggle', 'eisensteinhunowiggleengine']:
+            from .eisenstein_hu_nowiggle import EisensteinHuNoWiggleEngine
+            engine = EisensteinHuNoWiggleEngine
+        elif engine.lower() in ['bbks', 'bbksengine']:
+            from .bbks import BBKSEngine
+            engine = BBKSEngine
+        elif engine.lower() in ['astropy', 'astropyengine']:
+            from .astropy import AstropyEngine
+            engine = AstropyEngine
+        elif engine.lower() in ['tabulated', 'tabulatedengine']:
+            from .tabulated import TabulatedEngine
+            engine = TabulatedEngine
+        else:
+            raise CosmologyError('Unknown engine {}'.format(engine))
+    return engine
+
+
+def _get_cosmology_engine(cosmology, engine=None, set_engine=True, **extra_params):
     """
     Return engine for cosmological calculation.
 
@@ -265,30 +304,8 @@ def get_engine(cosmology, engine=None, set_engine=True, **extra_params):
         if cosmology._engine is None:
             raise CosmologyError('Please provide an engine')
         engine = cosmology._engine
-    if isinstance(engine,str):
-        if engine.lower() in ['class','classengine']:
-            from .classy import ClassEngine
-            engine = ClassEngine(**cosmology._params,extra_params=extra_params)
-        elif engine.lower() in ['camb','cambengine']:
-            from .camb import CambEngine
-            engine = CambEngine(**cosmology._params,extra_params=extra_params)
-        elif engine.lower() in ['eisenstein_hu','eisensteinhuengine']:
-            from .eisenstein_hu import EisensteinHuEngine
-            engine = EisensteinHuEngine(**cosmology._params,extra_params=extra_params)
-        elif engine.lower() in ['eisenstein_hu_nowiggle','eisensteinhunowiggleengine']:
-            from .eisenstein_hu_nowiggle import EisensteinHuNoWiggleEngine
-            engine = EisensteinHuNoWiggleEngine(**cosmology._params,extra_params=extra_params)
-        elif engine.lower() in ['bbks','bbksengine']:
-            from .bbks import BBKSEngine
-            engine = BBKSEngine(**cosmology._params,extra_params=extra_params)
-        elif engine.lower() in ['astropy','astropyengine']:
-            from .astropy import AstropyEngine
-            engine = AstropyEngine(**cosmology._params,extra_params=extra_params)
-        elif engine.lower() in ['tabulated','tabulatedengine']:
-            from .tabulated import TabulatedEngine
-            engine = TabulatedEngine(**cosmology._params,extra_params=extra_params)
-        else:
-            raise CosmologyError('Unknown engine {}'.format(engine))
+    elif not isinstance(engine, BaseEngine):
+        engine = get_engine(engine)(**cosmology._params, extra_params=extra_params)
     if set_engine:
         cosmology._engine = engine
     return engine
@@ -318,7 +335,7 @@ def Background(cosmology, engine=None, **extra_params):
     -------
     engine : BaseEngine
     """
-    engine = get_engine(cosmology,engine=engine,**extra_params)
+    engine = _get_cosmology_engine(cosmology,engine=engine,**extra_params)
     return engine.get_background()
 
 
@@ -346,7 +363,7 @@ def Thermodynamics(cosmology, engine=None, **extra_params):
     -------
     engine : BaseEngine
     """
-    engine = get_engine(cosmology,engine=engine,**extra_params)
+    engine = _get_cosmology_engine(cosmology,engine=engine,**extra_params)
     return engine.get_thermodynamics()
 
 
@@ -374,7 +391,7 @@ def Primordial(cosmology, engine=None, **extra_params):
     -------
     engine : BaseEngine
     """
-    engine = get_engine(cosmology,engine=engine,**extra_params)
+    engine = _get_cosmology_engine(cosmology,engine=engine,**extra_params)
     return engine.get_primordial()
 
 
@@ -402,7 +419,7 @@ def Transfer(cosmology, engine=None, **extra_params):
     -------
     engine : BaseEngine
     """
-    engine = get_engine(cosmology,engine=engine,**extra_params)
+    engine = _get_cosmology_engine(cosmology,engine=engine,**extra_params)
     return engine.get_transfer()
 
 
@@ -430,7 +447,7 @@ def Harmonic(cosmology, engine=None, **extra_params):
     -------
     engine : BaseEngine
     """
-    engine = get_engine(cosmology,engine=engine,**extra_params)
+    engine = _get_cosmology_engine(cosmology,engine=engine,**extra_params)
     return engine.get_harmonic()
 
 
@@ -458,7 +475,7 @@ def Fourier(cosmology, engine=None, **extra_params):
     -------
     engine : BaseEngine
     """
-    engine = get_engine(cosmology,engine=engine,**extra_params)
+    engine = _get_cosmology_engine(cosmology,engine=engine,**extra_params)
     return engine.get_fourier()
 
 
@@ -531,7 +548,7 @@ class Cosmology(BaseEngine):
         extra_params : dict
             Extra engine parameters, typically precision parameters.
         """
-        self._engine = get_engine(self, engine, **extra_params)
+        self._engine = _get_cosmology_engine(self, engine, **extra_params)
 
     @classmethod
     def get_default_parameters(cls, of=None, include_conflicts=True):
@@ -686,7 +703,7 @@ def _make_section_getter(section):
         extra_params : dict
             Extra engine parameters, typically precision parameters.
         """.format(section)
-        engine = get_engine(self,engine=engine,set_engine=set_engine,**extra_params)
+        engine = _get_cosmology_engine(self,engine=engine,set_engine=set_engine,**extra_params)
         toret = getattr(engine,'get_{}'.format(section),None)
         if toret is None:
             raise CosmologyError('Engine {} does not provide {}'.format(engine.__class__.__name__,section))

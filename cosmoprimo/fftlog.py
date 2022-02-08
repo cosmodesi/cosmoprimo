@@ -58,7 +58,7 @@ class FFTlog(object):
             If non-zero run sanity checks on input.
 
         engine : string, default='numpy'
-            FFT engine. See :meth:`set_engine`.
+            FFT engine. See :meth:`set_fft_engine`.
 
         engine_kwargs : dict
             Arguments for FFT engine.
@@ -97,12 +97,12 @@ class FFTlog(object):
         self.minfolds = minfolds
         self.lowring = lowring
         self.setup()
-        self.set_engine(engine,**engine_kwargs)
+        self.set_fft_engine(engine,**engine_kwargs)
 
-    def set_engine(self, engine='numpy', **engine_kwargs):
+    def set_fft_engine(self, engine='numpy', **engine_kwargs):
         """
         Set up FFT engine.
-        See :func:`get_engine`
+        See :func:`get_fft_engine`
 
         Parameters
         ----------
@@ -112,7 +112,7 @@ class FFTlog(object):
         engine_kwargs : dict
             Arguments for FFT engine.
         """
-        self._engine = get_engine(engine,size=self.padded_size,nparallel=self.nparallel,**engine_kwargs)
+        self._engine = get_fft_engine(engine,size=self.padded_size,nparallel=self.nparallel,**engine_kwargs)
 
     @property
     def nparallel(self):
@@ -500,7 +500,7 @@ class NumpyFFTEngine(BaseFFTEngine):
 
     def backward(self, fun):
         """Backward transform of ``fun``."""
-        return np.fft.hfft(fun, n=self.size, axis=-1)/self.size
+        return np.fft.irfft(fun.conj(), n=self.size, axis=-1)
 
 
 def apply_along_last_axes(func, array, naxes=1, toret=None):
@@ -596,7 +596,7 @@ class FFTWEngine(BaseFFTEngine):
         return self.fftw_backward_object(normalise_idft=True)
 
 
-def get_engine(engine, *args, **kwargs):
+def get_fft_engine(engine, *args, **kwargs):
     """
     Return FFT engine.
 

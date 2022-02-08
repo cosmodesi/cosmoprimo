@@ -113,7 +113,7 @@ class CambEngine(BaseEngine):
         self._camb_params.WantScalars = 's' in self['modes']
         self._camb_params.WantVectors = 'v' in self['modes']
         self._camb_params.WantTensors = 't' in self['modes']
-        for key,value in self.extra_params:
+        for key,value in self.extra_params.items():
             if key == 'accuracy':
                 self._camb_params.set_accuracy(self.extra_params['accuracy'])
             else:
