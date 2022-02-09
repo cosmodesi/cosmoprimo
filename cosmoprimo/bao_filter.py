@@ -49,7 +49,7 @@ class BasePowerSpectrumBAOFilter(BaseClass):
         nk : int
             Number of wavenumbers.
         """
-        self.k = np.logspace(np.log10(self.pk_interpolator.extrap_kmin),np.log10(self.pk_interpolator.extrap_kmax),nk)
+        self.k = np.geomspace(self.pk_interpolator.extrap_kmin, self.pk_interpolator.extrap_kmax, nk)
 
     @property
     def wiggles(self):
@@ -373,7 +373,7 @@ class BaseCorrelationFunctionBAOFilter(BaseClass):
         ns : int
             Number of separations.
         """
-        self.s = np.logspace(np.log10(self.xi_interpolator.extrap_smin),np.log10(self.xi_interpolator.extrap_smax),ns)
+        self.s = np.geomspace(self.xi_interpolator.extrap_smin, self.xi_interpolator.extrap_smax, ns)
 
     def smooth_xi_interpolator(self, **kwargs):
         """

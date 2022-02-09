@@ -14,7 +14,7 @@ def test_planck():
     assert cosmo['h'] == 0.6766
 
 
-def test_desi():
+def test_desi(plot=False):
 
     cosmo = fiducial.DESI(precision='base', z_pk=np.linspace(0., 2., 11))
 
@@ -41,7 +41,6 @@ def test_desi():
     assert np.allclose(cosmo.get_thermodynamics().tau_reio, 0.0544, rtol=1e-9, atol=1e-9)
 
     fo = cosmo.get_fourier()
-    plot = False
     for of, fn in zip(['cb', 'cb', 'm'], ['AbacusSummitBase_CLASS_pk_cb.txt', 'abacus_cosm000_CLASSv3.1.1.00_z2_pk_cb.dat', 'abacus_cosm000_CLASSv3.1.1.00_z2_pk.dat']):
         pk = fo.pk_interpolator(of='delta_{}'.format(of)).to_1d(z=1.)
         #pk(np.logspace(-5.99, 1.99, 1000))
@@ -59,4 +58,4 @@ def test_desi():
 if __name__ == '__main__':
 
     test_planck()
-    test_desi()
+    test_desi(plot=False)

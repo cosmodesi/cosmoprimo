@@ -54,8 +54,8 @@ def _pad_log(k, pk, extrap_kmin=1e-5, extrap_kmax=100):
         if padlowk[1] == padlowk[0]:
             logk = logk[1:]
             logpk = logpk[1:]
-            padlowk = padlowk[:1]
-            padlowpk = padlowpk[:1]
+            padlowk = padlowk[:-1]
+            padlowpk = padlowpk[:-1]
     logk = np.hstack([padlowk,logk,padhighk])
     s = [logpk]
     if padlowpk is not None: s = [padlowpk] + s
@@ -263,8 +263,7 @@ class GenericSpline(BaseClass):
         if interp_order_y is None:
             self.interp_order_y = min(len(y)-1,3)
         if self.interp_order_y == 0:
-            #print('DEF',x[-3],x[-2],x[-1],self.interp_x,fun)
-            self.spline = interpolate.UnivariateSpline(x,fun,k=self.interp_order_x,s=0)
+            self.spline = interpolate.UnivariateSpline(x,fun,k=self.interp_order_x,s=0,ext=3)
         else:
             self.spline = interpolate.RectBivariateSpline(x,self.y,fun,kx=self.interp_order_x,ky=self.interp_order_y,s=0)
 
@@ -293,7 +292,7 @@ class GenericSpline(BaseClass):
         """Maximum (interpolated) ``y`` coordinate."""
         return self.y[-1]
 
-    def __call__(self, x, y=0, grid=True, islogx=False):
+    def __call__(self, x, y=0, grid=True, islogx=False, bounds_error=True):
         """
         Evaluate spline (or its nu-th derivative) at positions x (and y in 2D case).
 
@@ -310,22 +309,33 @@ class GenericSpline(BaseClass):
 
         islogx : bool
             Whether input ``x`` is already in log space.
+
+        bounds_error : bool
+            If ``True``, raise a :class:`ValueError` for out-of-range values
+            Else, set out-of-range values to the boundary value.
+
+        Returns
+        -------
+        toret : array
         """
         x,y = (np.asarray(x_) for x_ in [x,y])
         isscalars = tuple(x_.ndim == 0 for x_ in [x,y])
         x,y = (np.atleast_1d(x_) for x_ in [x,y])
+        if bounds_error and (np.any(x < self.extrap_xmin) or np.any(x > self.extrap_xmax)):
+            raise ValueError('Input x outside of extrapolation range')
         if self.interp_x == 'log' and not islogx:
             x = np.log(x)
-        y_ = y
-        if self.interp_order_y != 0 and self.extrap_y:
-            y_ = np.clip(y_,self.ymin,self.ymax)
         if self.interp_order_y == 0:
-            toret = self.spline(x,ext=2)
+            toret = self.spline(x,ext=3)
             if grid and not isscalars[-1]:
                 toret = np.repeat(toret[:,None],y.size,axis=-1)
             if isscalars[0]:
                 toret = toret[0]
         else:
+            if self.interp_order_y != 0 and self.extrap_y:
+                y = np.clip(y,self.ymin,self.ymax)
+            elif bounds_error and (np.any(y < self.ymin) or np.any(y > self.ymax)):
+                raise ValueError('Input y outside of interpolation range')
             if grid:
                 i_x = np.argsort(x.flat)
                 i_y = np.argsort(y.flat)
@@ -432,8 +442,8 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         self.interp_order_k = self.spline.interp_order_x
         self.is_from_callable = False
 
-        def interp(k, islogk=False):
-            return self.spline(k,islogx=islogk) * self._rsigma8sq
+        def interp(k, islogk=False, **kwargs):
+            return self.spline(k,islogx=islogk, **kwargs) * self._rsigma8sq
 
         self.interp = interp
 
@@ -455,7 +465,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         ----------
         k : array_like
             Array of wavenumbers where the provided ``pk_callable`` can be trusted.
-            It will be used if ``:attr:pk`` is requested.
+            It will be used if :attr:`pk` is requested.
             Must be strictly increasing.
 
         pk_callable : callable
@@ -518,7 +528,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         """
         if nk is None:
             return _sigma_d(self,kmin=self.extrap_kmin,kmax=self.extrap_kmax,epsrel=epsrel)
-        k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
+        k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
         sigmasq = 1./6./constants.pi**2*integrate.trapz(self(k),x=k,axis=-1)
         return np.sqrt(sigmasq)
 
@@ -549,7 +559,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         """
         if nk is None:
             return _sigma_r(r,self,kmin=self.extrap_kmin,kmax=self.extrap_kmax,epsrel=epsrel)
-        k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
+        k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
         s,var = TophatVariance(k)(self(k))
         return np.sqrt(GenericSpline(s,[0],var[:,None])(r))
 
@@ -579,7 +589,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         -------
         xi : CorrelationFunctionInterpolator1D
         """
-        k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
+        k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
         s,xi = PowerToCorrelation(k, complex=False, **(fftlog_kwargs or {}))(self(k))
         default_params = dict(interp_s='log',interp_order_s=self.interp_order_k)
         default_params.update(kwargs)
@@ -651,8 +661,8 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         self.interp_order_k,self.interp_order_z = self.spline.interp_order_x, self.spline.interp_order_y
         self.is_from_callable = False
 
-        def interp(k, z=0, grid=True, islogk=False, ignore_growth=False):
-            toret = self.spline(k,z,grid=grid,islogx=islogk)
+        def interp(k, z=0, islogk=False, ignore_growth=False, **kwargs):
+            toret = self.spline(k, z, islogx=islogk, **kwargs)
             if self.growth_factor_sq is not None and not ignore_growth:
                 toret = toret*self.growth_factor_sq(z)
             return toret * self._rsigma8sq
@@ -693,7 +703,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         ----------
         k : array_like
             Array of wavenumbers where the provided ``pk_callable`` can be trusted.
-            It will be used if ``:attr:pk`` is requested.
+            It will be used if :attr:`pk` is requested.
             Must be strictly increasing.
 
         z : array_like
@@ -800,7 +810,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
                 return self.to_1d(z=z).sigma_d(epsrel=epsrel)
             return np.array([self.to_1d(z=z_).sigma_d(epsrel=epsrel) for z_ in z])
 
-        k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
+        k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
         sigmasq = 1./6./constants.pi**2*integrate.trapz(self(k,z),x=k,axis=0)
         return np.sqrt(sigmasq)
 
@@ -836,7 +846,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             if np.ndim(z) == 0:
                 return self.to_1d(z=z).sigma_r(r,epsrel=epsrel)
             return np.array([self.to_1d(z=z_).sigma_r(r,epsrel=epsrel) for z_ in z]).T
-        k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
+        k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
         s,var = TophatVariance(k)(self(k,z=self.z).T)
         return np.sqrt(GenericSpline(s,self.z,var.T)(r,z,grid=True))
 
@@ -942,7 +952,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         -------
         xi : CorrelationFunctionInterpolator2D
         """
-        k = np.logspace(np.log10(self.extrap_kmin),np.log10(self.extrap_kmax),nk)
+        k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
         s,xi = PowerToCorrelation(k,complex=False, **(fftlog_kwargs or {}))(self(k,z=self.z,ignore_growth=True).T)
         default_params = dict(interp_s='log',interp_order_s=self.interp_order_k,
                             interp_order_z=self.interp_order_z,extrap_z=self.extrap_z,growth_factor_sq=self.growth_factor_sq)
@@ -1034,8 +1044,8 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         self.interp_order_s = self.spline.interp_order_x
         self.is_from_callable = False
 
-        def interp(k, islogs=False):
-            return self.spline(k,islogx=islogs) * self._rsigma8sq
+        def interp(k, islogs=False, **kwargs):
+            return self.spline(k, islogx=islogs, **kwargs) * self._rsigma8sq
 
         self.interp = interp
 
@@ -1136,7 +1146,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         -------
         pk : PowerSpectrumInterpolator1D
         """
-        s = np.logspace(np.log10(self.extrap_smin),np.log10(self.extrap_smax),ns)
+        s = np.geomspace(self.extrap_smin, self.extrap_smax, ns)
         k,pk = CorrelationToPower(s, complex=False, **(fftlog_kwargs or {}))(self(s))
         default_params = dict(interp_k='log',interp_order_k=self.interp_order_s)
         default_params.update(kwargs)
@@ -1193,8 +1203,8 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         self.interp_order_s,self.interp_order_z = self.spline.interp_order_x, self.spline.interp_order_y
         self.is_from_callable = False
 
-        def interp(s, z=0, grid=True, islogs=False, ignore_growth=False):
-            toret = self.spline(s,z,grid=grid,islogx=islogs)
+        def interp(s, z=0, islogs=False, ignore_growth=False, **kwargs):
+            toret = self.spline(s, z, islogx=islogs, **kwargs)
             if self.growth_factor_sq is not None and not ignore_growth:
                 toret = toret*self.growth_factor_sq(z)
             return toret * self._rsigma8sq
@@ -1394,7 +1404,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         -------
         pk : PowerSpectrumInterpolator2D
         """
-        s = np.logspace(np.log10(self.extrap_smin),np.log10(self.extrap_smax),ns)
+        s = np.geomspace(self.extrap_smin, self.extrap_smax, ns)
         k,pk = CorrelationToPower(s, complex=False, **(fftlog_kwargs or {}))(self(s,self.z,ignore_growth=True).T)
         default_params = dict(interp_k='log',extrap_pk='log',interp_order_k=self.interp_order_s,
                         interp_order_z=self.interp_order_z,extrap_z=self.extrap_z,growth_factor_sq=self.growth_factor_sq)
