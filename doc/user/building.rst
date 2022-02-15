@@ -22,9 +22,9 @@ To install **cosmoprimo**, simply run::
 
   python -m pip install git+https://github.com/cosmodesi/cosmoprimo
 
-If you want to install extra requirements as well (pyclass, CAMB, pyfftw), run::
+If you want to install extra requirements as well (pyclass, CAMB, astropy, pyfftw), run::
 
-  python -m pip install git+https://github.com/cosmodesi/cosmoprimo#egg=cosmoprimo[extras]
+  python -m pip install git+https://github.com/cosmodesi/cosmoprimo#egg=cosmoprimo[class,camb,astropy,extras]
 
 pyclass can be installed independently through::
 

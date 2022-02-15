@@ -17,7 +17,7 @@ setup(name=package_basename,
       license='BSD3',
       url='http://github.com/cosmodesi/cosmoprimo',
       install_requires=['numpy', 'scipy'],
-      extras_require={'extras':['cython', 'pyclass @ git+https://github.com/adematti/pyclass@1.0.0', 'camb', 'pyfftw']},
+      extras_require={'class':['cython', 'pyclass @ git+https://github.com/adematti/pyclass@1.0.0'], 'camb':['camb'], 'astropy':['astropy'], 'extras':['pyfftw']},
       package_data={'cosmoprimo': ['data/*.dat']},
       packages=['cosmoprimo']
 )
