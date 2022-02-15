@@ -7,14 +7,14 @@ Requirements
 ------------
 Only strict requirements are:
 
-- numpy
-- scipy
+  - numpy
+  - scipy
 
 Extra requirements are:
 
-- `pyclass <https://github.com/adematti/pyclass>`_ (for CLASS)
-- `CAMB <https://github.com/cmbant/CAMB>`_ (for CAMB)
-- `pyfftw <https://github.com/pyFFTW/pyFFTW>`_ (for faster FFTs)
+  - `pyclass <https://github.com/adematti/pyclass>`_ (for CLASS)
+  - `CAMB <https://github.com/cmbant/CAMB>`_ (for CAMB)
+  - `pyfftw <https://github.com/pyFFTW/pyFFTW>`_ (for faster FFTs)
 
 pip
 ---
@@ -24,7 +24,12 @@ To install **cosmoprimo**, simply run::
 
 If you want to install extra requirements as well (pyclass, CAMB, pyfftw), run::
 
-  pip install git+https://github.com/cosmodesi/cosmoprimo#egg=cosmoprimo[extras]
+  python -m pip install git+https://github.com/cosmodesi/cosmoprimo#egg=cosmoprimo[extras]
+
+pyclass can be installed independently through::
+
+  python -m pip install git+https://github.com/adematti/pyclass
+
 
 pyclass with Mac OS
 --------------------
