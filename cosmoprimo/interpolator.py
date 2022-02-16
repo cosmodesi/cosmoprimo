@@ -29,12 +29,12 @@ def get_default_z_callable():
 
 def _pad_log(k, pk, extrap_kmin=1e-5, extrap_kmax=100):
     """Pad ``pk`` and ``k`` in log-log space between ``extrap_kmin`` and ``k[0]`` and ``k[-1]`` and ``extrap_kmax``."""
-    logk = np.log(k)
-    logpk = np.log(pk)
+    logk = np.log10(k)
+    logpk = np.log10(pk)
     padlowk,padhighk = [],[]
     padlowpk,padhighpk = None,None
-    log_extrap_kmax = np.log(extrap_kmax)
-    log_extrap_kmin = np.log(extrap_kmin)
+    log_extrap_kmax = np.log10(extrap_kmax)
+    log_extrap_kmin = np.log10(extrap_kmin)
     if log_extrap_kmax > logk[-1]:
         dlogpkdlogk = (logpk[-1] - logpk[-2]) / (logk[-1] - logk[-2])
         padhighk = [logk[-1] * 0.1 + log_extrap_kmax * 0.9, log_extrap_kmax]
@@ -250,15 +250,15 @@ class GenericSpline(BaseClass):
 
         x = self.x
         if self.interp_x == 'log':
-            x = np.log(self.x)
+            x = np.log10(self.x)
         fun = self.fun
 
         if self.extrap_fun == 'log':
             if self.interp_x != 'log':
                 raise ValueError('log-log extrapolation requires log-x interpolation')
             x,fun = _pad_log(self.x,self.fun,extrap_kmin=extrap_xmin,extrap_kmax=extrap_xmax)
-            self.extrap_xmin = np.exp(x[0])
-            self.extrap_xmax = np.exp(x[-1])
+            self.extrap_xmin = 10**x[0]
+            self.extrap_xmax = 10**x[-1]
 
         if interp_order_y is None:
             self.interp_order_y = min(len(y)-1,3)
@@ -324,7 +324,7 @@ class GenericSpline(BaseClass):
         if bounds_error and (np.any(x < self.extrap_xmin) or np.any(x > self.extrap_xmax)):
             raise ValueError('Input x outside of extrapolation range (min:{} v.s. {}; max:{} v.s. {})'.format(x.min(), self.extrap_xmin, x.max(), self.extrap_xmax))
         if self.interp_x == 'log' and not islogx:
-            x = np.log(x)
+            x = np.log10(x)
         if self.interp_order_y == 0:
             toret = self.spline(x,ext=3)
             if grid and not isscalars[-1]:
@@ -351,7 +351,7 @@ class GenericSpline(BaseClass):
             if all(isscalars):
                 toret = toret.flat[0]
         if self.extrap_fun == 'log':
-            toret = np.exp(toret)
+            toret = 10**toret
         return toret
 
 
@@ -484,7 +484,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         self.is_from_callable = True
 
         def interp(k, islogk=False, **kwargs):
-            if islogk: k = np.exp(k)
+            if islogk: k = 10**k
             return pk_callable(k,**kwargs) * self._rsigma8sq
 
         self.interp = interp
@@ -736,7 +736,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         if self.growth_factor_sq is not None:
 
             def interp(k, z=0, grid=True, islogk=False, ignore_growth=False):
-                if islogk: k = np.exp(k)
+                if islogk: k = 10**k
                 toret = pk_callable(k) * self._rsigma8sq
                 if not ignore_growth:
                     growth = self.growth_factor_sq(z)
@@ -751,7 +751,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         else:
 
             def interp(k, z=0, grid=True, islogk=False):
-                if islogk: k = np.exp(k)
+                if islogk: k = 10**k
                 pk = pk_callable(k,z=z,grid=grid) * self._rsigma8sq
                 return pk
 
@@ -1084,7 +1084,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         self.s = np.atleast_1d(s)
 
         def interp(s, islogs=False, **kwargs):
-            if islogs: s = np.exp(s)
+            if islogs: s = 10**s
             return xi_callable(s, **kwargs) * self._rsigma8sq
 
         self.interp = interp
@@ -1305,7 +1305,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         if self.growth_factor_sq is not None:
 
             def interp(s, z=0, grid=True, islogs=False, ignore_growth=False):
-                if islogs: s = np.exp(s)
+                if islogs: s = 10**s
                 toret = pk_callable(s) * self._rsigma8sq
                 if not ignore_growth:
                     growth = self.growth_factor_sq(z)
@@ -1320,7 +1320,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         else:
 
             def interp(s, z=0, grid=True, islogs=False):
-                if islogs: s = np.exp(s)
+                if islogs: s = 10**s
                 xi = xi_callable(s,z=z,grid=grid) * self._rsigma8sq
                 return xi
 
