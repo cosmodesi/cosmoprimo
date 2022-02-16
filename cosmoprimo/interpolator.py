@@ -229,7 +229,7 @@ class GenericSpline(BaseClass):
 
         interp_order_y : int
             Interpolation order, i.e. degree of smoothing spline along ``y``.
-            If ``None``, the maximum order given ``y`` size (see :meth:`min_spline_order()`) is considered.
+            If ``None``, the maximum order given ``y`` size (see :meth:`min_spline_order`) is considered.
 
         extrap_y : bool
             If ``True``, clip out-of-bounds ``y`` input corrdinates in the 2D case.
@@ -322,7 +322,7 @@ class GenericSpline(BaseClass):
         isscalars = tuple(x_.ndim == 0 for x_ in [x,y])
         x,y = (np.atleast_1d(x_) for x_ in [x,y])
         if bounds_error and (np.any(x < self.extrap_xmin) or np.any(x > self.extrap_xmax)):
-            raise ValueError('Input x outside of extrapolation range')
+            raise ValueError('Input x outside of extrapolation range (min:{} v.s. {}; max:{} v.s. {})'.format(x.min(), self.extrap_xmin, x.max(), self.extrap_xmax))
         if self.interp_x == 'log' and not islogx:
             x = np.log(x)
         if self.interp_order_y == 0:
@@ -373,9 +373,9 @@ class _BasePowerSpectrumInterpolator(BaseClass):
     def clone(self, **kwargs):
         """
         Clone interpolator, i.e. return a deepcopy with (possibly) other attributes in ``kwargs``
-        (:meth:`clone()` witout arguments is the same as :meth:`deepcopy()`).
+        (:meth:`clone` witout arguments is the same as :meth:`deepcopy`).
 
-        See :meth:`deepcopy()` doc for warning about interpolators built from callables.
+        See :meth:`deepcopy` doc for warning about interpolators built from callables.
         """
         return self.__class__(**{**self.as_dict(),**kwargs})
 
@@ -404,7 +404,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
     """
     1D power spectrum interpolator, broadly adapted from CAMB's P(k) interpolator by Antony Lewis
     in https://github.com/cmbant/CAMB/blob/master/camb/results.py, providing extra useful methods,
-    such as :meth:`sigma_r()` or :meth:`to_xi()`.
+    such as :meth:`sigma_r` or :meth:`to_xi`.
     """
 
     def __init__(self, k, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=100, interp_order_k=3):
@@ -600,7 +600,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     """
     2D power spectrum interpolator, broadly adapted from CAMB's P(k) interpolator by Antony Lewis
     in https://github.com/cmbant/CAMB/blob/master/camb/results.py, providing extra useful methods,
-    such as :meth:`sigma_rz()` or :meth:`to_xi()`.
+    such as :meth:`sigma_rz` or :meth:`to_xi`.
     """
 
     def __init__(self, k, z=0, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=100,
@@ -641,7 +641,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
 
         interp_order_z : int
             Interpolation order, i.e. degree of smoothing spline along ``z``.
-            If ``None``, the maximum order given ``z`` size (see :meth:`GenericSpline.min_spline_order()`) is considered.
+            If ``None``, the maximum order given ``z`` size (see :meth:`GenericSpline.min_spline_order`) is considered.
 
         extrap_z : bool
             If ``True``, clip out-of-bounds ``z`` input coordinates in the 2D case (assuming extrapolation will be provided by ``growth_factor_sq``)
@@ -978,9 +978,9 @@ class _BaseCorrelationFunctionInterpolator(BaseClass):
     def clone(self, **kwargs):
         """
         Clone interpolator, i.e. return a deepcopy with (possibly) other attributes in ``kwargs``
-        (:meth:`clone()` witout arguments is the same as :meth:`deepcopy()`).
+        (:meth:`clone` witout arguments is the same as :meth:`deepcopy`).
 
-        See :meth:`deepcopy()` doc for warning about interpolators built from callables.
+        See :meth:`deepcopy` doc for warning about interpolators built from callables.
         """
         return self.__class__(**{**self.as_dict(),**kwargs})
 
@@ -1108,7 +1108,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         """
         Return the r.m.s. of the displacement field by transforming correlation function into power spectrum.
 
-        See :meth:`PowerSpectrumInterpolator1D.sigma_d()` arguments.
+        See :meth:`PowerSpectrumInterpolator1D.sigma_d` arguments.
         """
         return self.to_pk().sigma_d(**kwargs)
 
@@ -1116,7 +1116,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         """
         Return the r.m.s. of perturbations in a sphere of :math:`r` by transforming correlation function into power spectrum.
 
-        See :meth:`PowerSpectrumInterpolator1D.sigma_r()` arguments.
+        See :meth:`PowerSpectrumInterpolator1D.sigma_r` arguments.
         """
         return self.to_pk().sigma_r(r,**kwargs)
 
@@ -1185,7 +1185,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
         interp_order_z : int
             Interpolation order, i.e. degree of smoothing spline along ``z``.
-            If ``None``, the maximum order given ``z`` size (see :meth:`GenericSpline.min_spline_order()`) is considered.
+            If ``None``, the maximum order given ``z`` size (see :meth:`GenericSpline.min_spline_order`) is considered.
 
         extrap_z : bool
             If ``True``, clip out-of-bounds ``z`` input coordinates in the 2D case (assuming extrapolation will be provided by ``growth_factor_sq``)
@@ -1331,7 +1331,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         """
         Return the r.m.s. of the displacement field by transforming correlation function into power spectrum.
 
-        See :meth:`PowerSpectrumInterpolator2D.sigma_dz()` arguments.
+        See :meth:`PowerSpectrumInterpolator2D.sigma_dz` arguments.
         """
         return self.to_pk().sigma_dz(z=z,**kwargs)
 
@@ -1339,7 +1339,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         """
         Return the r.m.s. of perturbations in a sphere of :math:`r` by transforming correlation function into power spectrum.
 
-        See :meth:`PowerSpectrumInterpolator2D.sigma_rz()` arguments.
+        See :meth:`PowerSpectrumInterpolator2D.sigma_rz` arguments.
         """
         return self.to_pk().sigma_rz(r, z=z,**kwargs)
 
@@ -1347,7 +1347,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         """
         Return the r.m.s. of perturbations in a sphere of 8 by transforming correlation function into power spectrum.
 
-        See :meth:`PowerSpectrumInterpolator2D.sigma8_z()` arguments.
+        See :meth:`PowerSpectrumInterpolator2D.sigma8_z` arguments.
         """
         return self.sigma_rz(8.,z=z,**kwargs)
 
@@ -1360,7 +1360,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         r"""
         Evaluate the growth rate at the log-derivative of perturbations in a sphere of :math:`r` by transforming correlation function into power spectrum.
 
-        See :meth:`PowerSpectrumInterpolator2D.growth_rate_rz()` arguments.
+        See :meth:`PowerSpectrumInterpolator2D.growth_rate_rz` arguments.
         """
         return self.to_pk().growth_rate_rz(r, z=z,**kwargs)
 

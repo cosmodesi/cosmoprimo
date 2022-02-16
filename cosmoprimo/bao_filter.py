@@ -28,7 +28,7 @@ class BasePowerSpectrumBAOFilter(BaseClass):
             Cosmology instance, which may be used to tune filter settings (depending on ``rs_drag``).
 
         kwargs : dict
-            Arguments for :meth:`set_k()`.
+            Arguments for :meth:`set_k`.
         """
         self.pk_interpolator = pk_interpolator
         self.is2d = isinstance(pk_interpolator,PowerSpectrumInterpolator2D)
@@ -198,7 +198,7 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
             Cosmology instance, used to compute the Eisenstein & Hu no-wiggle power spectrum.
 
         kwargs : dict
-            Arguments for :meth:`set_k()`.
+            Arguments for :meth:`set_k`.
         """
         self.kbox = kbox
         self.dampkbox = dampkbox
@@ -352,7 +352,7 @@ class BaseCorrelationFunctionBAOFilter(BaseClass):
             Cosmology instance, which may be used to tune filter settings (depending on ``rs_drag``).
 
         kwargs : dict
-            Arguments for :meth:`set_s()`.
+            Arguments for :meth:`set_s`.
         """
         self.xi_interpolator = xi_interpolator
         self.is2d = isinstance(xi_interpolator,CorrelationFunctionInterpolator2D)
@@ -454,7 +454,7 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
             Cosmology instance, used to compute the Eisenstein & Hu no-wiggle power spectrum.
 
         kwargs : dict
-            Arguments for :meth:`set_s()`.
+            Arguments for :meth:`set_s`.
         """
         self.sbox_left = sbox_left
         self.sbox_right = sbox_right
