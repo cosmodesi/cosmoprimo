@@ -34,7 +34,7 @@ class Transfer(BaseSection):
 
         Returns
         -------
-        transfer : numpy.ndarray
+        transfer : array
         """
         k = np.asarray(k) * self._engine['h'] # now in 1/Mpc
         ks = k * self._engine.rs_drag

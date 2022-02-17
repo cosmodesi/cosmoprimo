@@ -42,19 +42,19 @@ class FFTlog(object):
             .. math:: U_{K}(z) = \int_{0}^{\infty} t^{z-1} K(t) dt
             If a list of kernels is provided, will perform all transforms at once.
 
-        q : float, list of floats
+        q : float, list of floats, default=0
             Power-law tilt(s) to regularise integration.
 
-        minfolds : int
+        minfolds : int, default=2
             The c is chosen with minimum :math:`n` chosen such that ``2**n > minfolds * x.size``.
 
-        lowring : bool
+        lowring : bool, default=True
             If ``True`` set output coordinates according to the low-ringing condition, otherwise set it with ``xy``.
 
-        xy : float, list of floats
+        xy : float, list of floats, default=1
             Enforce the reciprocal product (i.e. ``x[0] * y[-1]``) of the input ``x`` and output ``y`` coordinates.
 
-        check_level : int
+        check_level : int, default=0
             If non-zero run sanity checks on input.
 
         engine : string, default='numpy'
@@ -178,23 +178,23 @@ class FFTlog(object):
             Last dimensions should match (:attr:`nparallel`,len(x)) where ``len(x)`` is the size of the input x-coordinates.
             (if :attr:`nparallel` is 1, the only requirement is the last dimension to be (len(x))).
 
-        extrap : float, string
+        extrap : float, string, default=0
             How to extrapolate function outside of  ``x`` range to fit the integration range.
             If 'log', performs a log-log extrapolation.
             If 'edge', pad ``fun`` with its edge values.
             Else, pad ``fun`` with the provided value.
             Pass a tuple to differentiate between left and right sides.
 
-        keep_padding : bool
+        keep_padding : bool, default=False
             Whether to return function padded to the number of points in the integral.
             By default, crop it to its original size.
 
         Returns
         -------
-        y : numpy.ndarray
+        y : array
             Array of new coordinates.
 
-        fftloged : numpy.ndarray
+        fftloged : array
             Transformed function.
         """
         scales = np.linspace(1.,3.,3)
@@ -234,7 +234,7 @@ class HankelTransform(FFTlog):
             Input log-spaced coordinates.
             If 1D, is broadcast to the number of provided ``nu``.
 
-        nu : int, list of int
+        nu : int, list of int, default=0
             Order of Bessel functions.
             If a list is provided, will perform all transforms at once.
 
@@ -267,10 +267,10 @@ class PowerToCorrelation(FFTlog):
             Input log-spaced wavenumbers.
             If 1D, is broadcast to the number of provided ``ell``.
 
-        ell : int, list of int
+        ell : int, list of int, default=0
             Poles. If a list is provided, will perform all transforms at once.
 
-        q : float, list of floats
+        q : float, list of floats, default=0
             Power-law tilt(s) to regularise integration.
 
         complex : bool, default=False
@@ -316,10 +316,10 @@ class CorrelationToPower(FFTlog):
             Input log-spaced separations.
             If 1D, is broadcast to the number of provided ``ell``.
 
-        ell : int, list of int
+        ell : int, list of int, default=0
             Poles. If a list is provided, will perform all transforms at once.
 
-        q : float, list of floats
+        q : float, list of floats, default=0
             Power-law tilt(s) to regularise integration.
 
         complex : bool, default=False
@@ -360,7 +360,7 @@ class TophatVariance(FFTlog):
             Input log-spaced wavenumbers.
             If 1D, is broadcast to the number of provided ``ell``.
 
-        q : float, list of floats
+        q : float, list of floats, default=0
             Power-law tilt(s) to regularise integration.
 
         kwargs : dict
@@ -387,7 +387,7 @@ class GaussianVariance(FFTlog):
             Input log-spaced wavenumbers.
             If 1D, is broadcast to the number of provided ``ell``.
 
-        q : float, list of floats
+        q : float, list of floats, default=0
             Power-law tilt(s) to regularise integration.
 
         kwargs : dict
@@ -411,10 +411,10 @@ def pad(array, pad_width, axis=-1, extrap=0):
         Number of points to be added on both sides of the array.
         Pass a tuple to differentiate between left and right sides.
 
-    axis : int
+    axis : int, default=-1
         Axis along which padding is to be applied.
 
-    extrap : string, float
+    extrap : string, float, default=0
         If 'log', performs a log-log extrapolation.
         If 'edge', pad ``array`` with its edge values.
         Else, pad ``array`` with the provided value.
@@ -422,7 +422,7 @@ def pad(array, pad_width, axis=-1, extrap=0):
 
     Returns
     -------
-    array : numpy.ndarray
+    array : array
         Padded array.
     """
     array = np.asarray(array)
@@ -479,7 +479,7 @@ class BaseFFTEngine(object):
         size : int
             Array size.
 
-        nparallel : int
+        nparallel : int, default=1
             Number of FFTs to be performed in parallel.
 
         nthreads : int, default=None
@@ -537,7 +537,7 @@ class FFTWEngine(BaseFFTEngine):
         size : int
             Array size.
 
-        nparallel : int
+        nparallel : int, default=1
             Number of FFTs to be performed in parallel.
 
         nthreads : int, default=None

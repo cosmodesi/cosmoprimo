@@ -170,13 +170,13 @@ class Transfer(BaseSection):
         k : array_like
             Wavenumbers.
 
-        frac_baryon : float
+        frac_baryon : float, default=None
             If not ``None``, scale the baryon transfer function w.r.t. to the CDM one.
             May be useful to remove BAO.
 
         Returns
         -------
-        transfer : numpy.ndarray
+        transfer : array
         """
         k = np.asarray(k) * self._engine['h'] # now in 1/Mpc
         # EH eq. 10

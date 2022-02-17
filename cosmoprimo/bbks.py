@@ -46,7 +46,7 @@ class Transfer(BaseSection):
 
         Returns
         -------
-        transfer : numpy.ndarray
+        transfer : array
         """
         q = np.asarray(k) * self._engine['h'] / self._engine.gamma
         x = 2.34*q

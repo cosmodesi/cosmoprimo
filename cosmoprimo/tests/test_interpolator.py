@@ -32,7 +32,7 @@ def test_power_spectrum():
     assert np.all(interp2(k,z=[0]*2) == interp(k,z=[0]*2))
 
     rng = np.random.RandomState(seed=42)
-    z = rng.uniform(0.,1.,10)
+    z = np.linspace(1.,0.,10)
     interp = PowerSpectrumInterpolator2D(k,z=z,pk=np.array([pk]*len(z)).T)
     assert np.allclose(interp(k,z=rng.uniform(0.,1.,10)),pk[:,None],atol=0,rtol=1e-5) # ok as same pk for all z
 
@@ -183,11 +183,11 @@ def test_extrap_2d(plot=False):
         pk_interp_tab(k_eval/2., z_eval)
     with pytest.raises(ValueError):
         pk_interp_tab(k_eval*2., z_eval)
-    pk_interp_tab(k_eval, z_eval*2.)
-    pk_interp_noextrapz = PowerSpectrumInterpolator2D(k, z, pk_interp_callable(k, z), extrap_kmin=k_extrap[0], extrap_kmax=k_extrap[-1], extrap_z=False)
-    assert np.allclose(pk_interp_noextrapz(k_eval, z_eval[-1]*2., bounds_error=False), pk_interp_noextrapz(k_eval, z_eval[-1], bounds_error=False), atol=0.)
     with pytest.raises(ValueError):
-        pk_interp_noextrapz(k_eval, z_eval[-1]*2.)
+        pk_interp_tab(k_eval, z_eval*2.)
+    assert np.allclose(pk_interp_tab(k_eval, z_eval[-1]*2., bounds_error=False), pk_interp_tab(k_eval, z_eval[-1], bounds_error=False), atol=0.)
+    pk_interp_extrapz = PowerSpectrumInterpolator2D(k, z, pk_interp_callable(k, z), extrap_kmin=k_extrap[0], extrap_kmax=k_extrap[-1], extrap_z=True)
+    assert np.allclose(pk_interp_extrapz(k_eval, z_eval[-1]*2.), pk_interp_tab(k_eval, z_eval[-1], bounds_error=False), atol=0.)
 
     if plot:
         plt.loglog(k_eval, pk_interp_callable(k_eval, z_eval), linestyle='-')
@@ -204,11 +204,11 @@ def test_extrap_2d(plot=False):
         xi_interp_tab(s_eval/2., z_eval)
     with pytest.raises(ValueError):
         xi_interp_tab(s_eval*2., z_eval)
-    xi_interp_tab(s_eval, z_eval*2.)
-    xi_interp_noextrapz = pk_interp_noextrapz.to_xi()
-    assert np.allclose(xi_interp_noextrapz(s_eval, z_eval[-1]*2., bounds_error=False), xi_interp_noextrapz(s_eval, z_eval[-1], bounds_error=False), atol=0.)
     with pytest.raises(ValueError):
-        xi_interp_noextrapz(s_eval, z_eval[-1]*2.)
+        xi_interp_tab(s_eval, z_eval*2.)
+    assert np.allclose(xi_interp_tab(s_eval, z_eval[-1]*2., bounds_error=False), xi_interp_tab(s_eval, z_eval[-1], bounds_error=False), atol=0.)
+    xi_interp_extrapz = pk_interp_extrapz.to_xi()
+    assert np.allclose(xi_interp_extrapz(s_eval, z_eval[-1]*2.), xi_interp_tab(s_eval, z_eval[-1], bounds_error=False), atol=0.)
 
     assert np.allclose(xi_interp_tab(s_eval, z_eval), xi_interp_callable(s_eval, z_eval), rtol=0.1)
     if plot:

@@ -24,14 +24,14 @@ class BasePowerSpectrumBAOFilter(BaseClass):
         pk_interpolator : PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
             Input power spectrum to remove BAO wiggles from.
 
-        cosmo : Cosmology
+        cosmo : Cosmology, default=None
             Cosmology instance, which may be used to tune filter settings (depending on ``rs_drag``).
 
         kwargs : dict
             Arguments for :meth:`set_k`.
         """
         self.pk_interpolator = pk_interpolator
-        self.is2d = isinstance(pk_interpolator,PowerSpectrumInterpolator2D)
+        self.is2d = isinstance(pk_interpolator, PowerSpectrumInterpolator2D)
         self._cosmo = cosmo
         self.set_k(**kwargs)
         if self.is2d:
@@ -46,7 +46,7 @@ class BasePowerSpectrumBAOFilter(BaseClass):
 
         Parameters
         ----------
-        nk : int
+        nk : int, default=1024
             Number of wavenumbers.
         """
         self.k = np.geomspace(self.pk_interpolator.extrap_kmin, self.pk_interpolator.extrap_kmax, nk)
@@ -111,25 +111,28 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     https://github.com/Samreay/Barry/blob/master/barry/cosmology/power_spectrum_smoothing.py
     """
 
-    def __init__(self, *args, degree=13, sigma=1, weight=0.5, **kwargs):
+    def __init__(self, pk_interpolator, degree=13, sigma=1, weight=0.5, **kwargs):
         """
         Run BAO filter.
 
         Parameters
-        ---------
-        degree : int
+        ----------
+        pk_interpolator : PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
+            Input power spectrum to remove BAO wiggles from.
+
+        degree : int, default=13
             Polynomial degree.
 
-        sigma : float
+        sigma : float, default=1
             Standard deviation of the Gaussian kernel that downweights the maximum of the power spectrum relative to the edges.
 
-        weight : float
+        weight : float, default=0.5
             Normalisation of the Gaussian kernel.
         """
         self.degree = degree
         self.sigma = sigma
         self.weight = weight
-        super(Hinton2017PowerSpectrumBAOFilter,self).__init__(*args,**kwargs)
+        super(Hinton2017PowerSpectrumBAOFilter,self).__init__(pk_interpolator, **kwargs)
 
     def compute(self):
         """Run filter."""
@@ -174,27 +177,30 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
 
     """Remove BAO wiggles using the Eisenstein & Hu no-wiggle analytic formula, emulated with a 6-th order polynomial."""
 
-    def __init__(self, *args, kbox=(5e-3, 0.5), dampkbox=(1e-2, 0.4), dampsigma=10, rescale_kbox=True, **kwargs):
+    def __init__(self, pk_interpolator, kbox=(5e-3, 0.5), dampkbox=(1e-2, 0.4), dampsigma=10, rescale_kbox=True, cosmo=None, **kwargs):
         """
         Run BAO filter.
 
         Parameters
         ----------
-        kbox : tuple
+        pk_interpolator : PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
+            Input power spectrum to remove BAO wiggles from.
+
+        kbox : tuple, default=(5e-3, 0.5)
             k-range to fit the Eisenstein & Hu no-wiggle power spectrum to the input one :attr:`pk_interpolator`.
 
-        dampkbox : tuple
+        dampkbox : tuple, default=(1e-2, 0.4)
             k-range to interpolate between the Eisenstein & Hu no-wiggle power spectrum and the input one :attr:`pk_interpolator`
             with an Gaussian damping factor.
 
-        dampsigma : float
+        dampsigma : float, default=10
             Standard deviation of the Gaussian damping factor.
 
-        rescale_kbox : bool
+        rescale_kbox : bool, default=True
             Whether to rescale ``kbox`` and ``dampkbox`` by the ratio of ``rs_drag`` relative to the fiducial cosmology
             (may help robustify the procedure for cosmologies far from the fiducial one).
 
-        cosmo : Cosmology
+        cosmo : Cosmology, default=None
             Cosmology instance, used to compute the Eisenstein & Hu no-wiggle power spectrum.
 
         kwargs : dict
@@ -204,7 +210,7 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         self.dampkbox = dampkbox
         self.dampsigma = dampsigma
         self.rescale_kbox = rescale_kbox
-        super(EHNoWigglePolyPowerSpectrumBAOFilter,self).__init__(*args,**kwargs)
+        super(EHNoWigglePolyPowerSpectrumBAOFilter,self).__init__(pk_interpolator, cosmo=cosmo, **kwargs)
 
     def compute(self):
         """Run filter."""
@@ -240,7 +246,6 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
 
 
 class Wallish2018PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
-
     """
     Filter BAO wiggles by sine-transforming the power spectrum to real space (where the BAO is better localised),
     cutting the peak and interpolating with a spline.
@@ -348,18 +353,18 @@ class BaseCorrelationFunctionBAOFilter(BaseClass):
         xi_interpolator : CorrelationFunctionInterpolator1D, CorrelationFunctionInterpolator2D
             Input correlation function to remove BAO peak from.
 
-        cosmo : Cosmology
+        cosmo : Cosmology, default=None
             Cosmology instance, which may be used to tune filter settings (depending on ``rs_drag``).
 
         kwargs : dict
             Arguments for :meth:`set_s`.
         """
         self.xi_interpolator = xi_interpolator
-        self.is2d = isinstance(xi_interpolator,CorrelationFunctionInterpolator2D)
+        self.is2d = isinstance(xi_interpolator, CorrelationFunctionInterpolator2D)
         self._cosmo = cosmo
         self.set_s(**kwargs)
         if self.is2d:
-            self.xi = self.xi_interpolator(self.s,self.xi_interpolator.z,ignore_growth=True)
+            self.xi = self.xi_interpolator(self.s, self.xi_interpolator.z, ignore_growth=True)
         else:
             self.xi = self.xi_interpolator(self.s)
         self.compute()
@@ -370,7 +375,7 @@ class BaseCorrelationFunctionBAOFilter(BaseClass):
 
         Parameters
         ----------
-        ns : int
+        ns : int, default=1024
             Number of separations.
         """
         self.s = np.geomspace(self.xi_interpolator.extrap_smin, self.xi_interpolator.extrap_smax, ns)
@@ -430,13 +435,15 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
     https://arxiv.org/abs/1301.3456
     https://github.com/igmhub/picca/blob/master/bin/picca_compute_pk_pksb.py
     """
-
-    def __init__(self, *args,  sbox_left=(50.,82.), sbox_right=(150.,190.), rescale_sbox=True, **kwargs):
+    def __init__(self, xi_interpolator,  sbox_left=(50.,82.), sbox_right=(150.,190.), rescale_sbox=True, cosmo=None, **kwargs):
         """
         Run BAO filter.
 
         Parameters
         ----------
+        xi_interpolator : CorrelationFunctionInterpolator1D, CorrelationFunctionInterpolator2D
+            Input correlation function to remove BAO peak from.
+
         sbox_left : tuple
             s-range to fit the polynomial on the left-hand side of the BAO peak.
 
@@ -459,7 +466,7 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
         self.sbox_left = sbox_left
         self.sbox_right = sbox_right
         self.rescale_sbox = rescale_sbox
-        super(Kirkby2013CorrelationFunctionBAOFilter,self).__init__(*args,**kwargs)
+        super(Kirkby2013CorrelationFunctionBAOFilter,self).__init__(xi_interpolator, cosmo=cosmo, **kwargs)
 
     def compute(self):
         """Run filter."""

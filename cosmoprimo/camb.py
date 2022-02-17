@@ -432,7 +432,7 @@ class Primordial(BaseSection):
 
         Returns
         -------
-        pk : numpy.ndarray
+        pk : array
             The primordial power spectrum.
         """
         index = ['scalar','vector','tensor'].index(mode)
@@ -539,7 +539,7 @@ class Fourier(BaseSection):
         return {'delta_m':'delta_tot','delta_cb':'delta_nonu','theta_cdm':'v_newtonian_cdm','theta_b':'v_newtonian_baryon'}[of]
 
     def table(self, nonlinear=False, of='m'):
-        """
+        r"""
         Return power spectrum table, in :math:`(\mathrm{Mpc}/h)^{3}`.
 
         Parameters
@@ -554,13 +554,13 @@ class Fourier(BaseSection):
 
         Returns
         -------
-        k : numpy.ndarray
+        k : array
             Wavenumbers.
 
-        z : numpy.ndarray
+        z : array
             Redshifts.
 
-        pk : numpy.ndarray
+        pk : array
             Power spectrum array of shape (len(k),len(z)).
         """
         if not isinstance(of,(tuple,list)):
@@ -604,7 +604,7 @@ class Fourier(BaseSection):
         return ka,za,pka
 
     def pk_interpolator(self, nonlinear=False, of='delta_m', **kwargs):
-        """
+        r"""
         Return :class:`PowerSpectrumInterpolator2D` instance.
 
         Parameters
@@ -624,7 +624,7 @@ class Fourier(BaseSection):
         return PowerSpectrumInterpolator2D(ka,za,pka,**kwargs)
 
     def pk_kz(self, k, z, nonlinear=False, of='delta_m'):
-        """
+        r"""
         Return power spectrum, in :math:`(\mathrm{Mpc}/h)^{3}`.
 
         Parameters
@@ -644,7 +644,7 @@ class Fourier(BaseSection):
 
         Returns
         -------
-        pk : numpy.ndarray
+        pk : array
             Power spectrum array of shape (len(k),len(z)).
         """
         self._checkz(z)

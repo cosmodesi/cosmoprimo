@@ -28,7 +28,31 @@ def get_default_z_callable():
 
 
 def _pad_log(k, pk, extrap_kmin=1e-5, extrap_kmax=100):
-    """Pad ``pk`` and ``k`` in log-log space between ``extrap_kmin`` and ``k[0]`` and ``k[-1]`` and ``extrap_kmax``."""
+    """
+    Pad ``pk`` and ``k`` in log10-log10-space between ``extrap_kmin`` and ``k[0]`` and ``k[-1]`` and ``extrap_kmax``.
+
+    Parameters
+    ----------
+    k : array_like
+        Wavenumbers.
+
+    pk : array_like
+        Power spectrum.
+
+    extrap_kmin : float, default=1e-5
+        Minimum wavenumber of extrapolation range.
+
+    extrap_kmax : float, default=100
+        Maximum wavenumber of extrapolation range.
+
+    Returns
+    -------
+    logk : array
+        log10 of wavenumbers.
+
+    logpk : array
+        log10 of power spectrum.
+    """
     logk = np.log10(k)
     logpk = np.log10(pk)
     padlowk,padhighk = [],[]
@@ -97,16 +121,16 @@ def _sigma_d(pk, kmin=1e-6, kmax=100, epsrel=1e-5):
 
     Parameters
     ----------
-    pk : array_like
+    pk : callable
         Power spectrum.
 
-    kmin : float
+    kmin : float, default=1e-6
         Minimum wavenumber.
 
-    kmax : float
+    kmax : float, default=100
         Maximum wavenumber.
 
-    epsrel : float
+    epsrel : float, default1e-5
         Relative precision (for :meth:`scipy.integrate.quad` integration)
 
     Returns
@@ -137,16 +161,16 @@ def _sigma_r(r, pk, kmin=1e-6, kmax=100, epsrel=1e-5):
     r : float
         Sphere radius.
 
-    pk : array_like
+    pk : callable
         Power spectrum.
 
-    kmin : float
+    kmin : float, default=1e-6
         Minimum wavenumber.
 
-    kmax : float
+    kmax : float, default=100
         Maximum wavenumber.
 
-    epsrel : float
+    epsrel : float, default=1e-5
         Relative precision (for :meth:`scipy.integrate.quad` integration).
 
     Returns
@@ -171,10 +195,10 @@ def _get_default_kwargs(func, start=0, remove=()):
     func : callable
         Function.
 
-    start : int
+    start : int, default=0
         Ignore ``start`` first arguments.
 
-    remove : tuple
+    remove : tuple, default=()
         Remove these arguments.
 
     Returns
@@ -196,7 +220,7 @@ class GenericSpline(BaseClass):
 
     """Base class that handles 1D and 2D splines."""
 
-    def __init__(self, x, y=0, fun=None, interp_x='log', extrap_fun='lin', extrap_xmin=1e-6, extrap_xmax=100, interp_order_x=3, interp_order_y=None, extrap_y=True):
+    def __init__(self, x, y=0, fun=None, interp_x='log', extrap_fun='lin', extrap_xmin=1e-6, extrap_xmax=100, interp_order_x=3, interp_order_y=None, extrap_y=False):
         """
         Initialize :class:`GenericSpline`.
 
@@ -205,34 +229,34 @@ class GenericSpline(BaseClass):
         x : array_like
             x-coordinates.
 
-        y : array_like, float
+        y : array_like, float, default=0
             y-coordinates.
 
-        fun : array_like
+        fun : array_like, default=None
             Data to be interpolated.
             If ``y`` is scalar, should be 1D; else 2D, with shape ``(x.size, y.size)``.
 
-        interp_x : string
+        interp_x : string, default='log'
             If 'log', interpolation is performed in log-x coordinates.
 
-        extrap_fun : string
+        extrap_fun : string, default='lin'
             If 'log' (and ``interp_x`` is 'log'), ``fun`` is log-log extrpolated up to ``extrap_xmin``, ``extrap_xmax``.
 
-        extrap_xmin : float
+        extrap_xmin : float, default=1e-6
             Minimum extrapolation range in ``x``.
 
-        extrap_xmin : float
+        extrap_xmax : float, default=100
             Maximum extrapolation range in ``y``.
 
-        interp_order_x : int
+        interp_order_x : int, default=3
             Interpolation order, i.e. degree of smoothing spline along ``x``.
 
-        interp_order_y : int
+        interp_order_y : int, default=None
             Interpolation order, i.e. degree of smoothing spline along ``y``.
             If ``None``, the maximum order given ``y`` size (see :meth:`min_spline_order`) is considered.
 
-        extrap_y : bool
-            If ``True``, clip out-of-bounds ``y`` input corrdinates in the 2D case.
+        extrap_y : bool, default=False
+            If ``True``, clip out-of-bounds ``y`` input coordinates in the 2D case.
         """
         #  Check order
         if np.ndim(y) == 0:
@@ -270,7 +294,7 @@ class GenericSpline(BaseClass):
     @staticmethod
     def min_spline_order(x):
         """Return maximum spline order given ``x`` size."""
-        return min(len(x)-1,3)
+        return min(len(x)-1, 3)
 
     @property
     def xmin(self):
@@ -301,28 +325,28 @@ class GenericSpline(BaseClass):
         x : array_like
             1D array of points where to evaluate the spline.
 
-        y : array_like
+        y : array_like, default=0
             1D array of points where to evaluate the spline (2D case).
 
-        grid : bool
+        grid : bool, default=True
             Whether ``x``, ``y`` coordinates should be interpreted as a grid, in which case the output will be of shape ``(x.size, y.size)``.
 
-        islogx : bool
-            Whether input ``x`` is already in log space.
+        islogx : bool, default=False
+            Whether input ``x`` is already in log10-space.
 
-        bounds_error : bool
-            If ``True``, raise a :class:`ValueError` for out-of-range values
+        bounds_error : bool, default=True
+            If ``True``, raise a :class:`ValueError` for out-of-range values.
             Else, set out-of-range values to the boundary value.
 
         Returns
         -------
         toret : array
         """
-        x,y = (np.asarray(x_) for x_ in [x,y])
+        x, y = (np.asarray(x_) for x_ in [x,y])
         isscalars = tuple(x_.ndim == 0 for x_ in [x,y])
-        x,y = (np.atleast_1d(x_) for x_ in [x,y])
+        x, y = (np.atleast_1d(x_) for x_ in [x,y])
         if bounds_error and (np.any(x < self.extrap_xmin) or np.any(x > self.extrap_xmax)):
-            raise ValueError('Input x outside of extrapolation range (min:{} v.s. {}; max:{} v.s. {})'.format(x.min(), self.extrap_xmin, x.max(), self.extrap_xmax))
+            raise ValueError('Input x outside of extrapolation range (min: {} vs. {}; max: {} vs. {})'.format(x.min(), self.extrap_xmin, x.max(), self.extrap_xmax))
         if self.interp_x == 'log' and not islogx:
             x = np.log10(x)
         if self.interp_order_y == 0:
@@ -333,9 +357,9 @@ class GenericSpline(BaseClass):
                 toret = toret[0]
         else:
             if self.interp_order_y != 0 and self.extrap_y:
-                y = np.clip(y,self.ymin,self.ymax)
+                y = np.clip(y, self.ymin, self.ymax)
             elif bounds_error and (np.any(y < self.ymin) or np.any(y > self.ymax)):
-                raise ValueError('Input y outside of interpolation range')
+                raise ValueError('Input y outside of interpolation range (min: {} vs. {}; max: {} vs. {})'.format(y.min(), self.ymin, y.max(), self.ymax))
             if grid:
                 i_x = np.argsort(x.flat)
                 i_y = np.argsort(y.flat)
@@ -407,7 +431,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
     such as :meth:`sigma_r` or :meth:`to_xi`.
     """
 
-    def __init__(self, k, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=100, interp_order_k=3):
+    def __init__(self, k, pk, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=100, interp_order_k=3):
         """
         Initialize :class:`PowerSpectrumInterpolator1D`.
 
@@ -419,19 +443,19 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         pk : array_like
             Power spectrum to be interpolated.
 
-        interp_k : string
+        interp_k : string, default='log'
             If 'log', interpolation is performed in log-k coordinates.
 
-        extrap_pk : string
+        extrap_pk : string, default='log'
             If 'log' (and ``interp_k`` is 'log'), ``fun`` is log-log extrapolated up to ``extrap_kmin``, ``extrap_kmax``.
 
-        extrap_kmin : float
+        extrap_kmin : float, default=1e-6
             Minimum extrapolation range in ``k``.
 
-        extrap_kmin : float
+        extrap_kmax : float, default=100
             Maximum extrapolation range in ``k``.
 
-        interp_order_k : int
+        interp_order_k : int, default=3
             Interpolation order, i.e. degree of smoothing spline along ``k``.
         """
         self._rsigma8sq = 1.
@@ -463,17 +487,17 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
 
         Parameters
         ----------
-        k : array_like
+        k : array_like, default=None
             Array of wavenumbers where the provided ``pk_callable`` can be trusted.
             It will be used if :attr:`pk` is requested.
             Must be strictly increasing.
 
-        pk_callable : callable
+        pk_callable : callable, default=None
             Power spectrum callable.
 
         Returns
         -------
-        self : PowerSpectrumInterpolator1D
+        new : PowerSpectrumInterpolator1D
         """
         if k is None: k = get_default_k_callable()
         self = cls.__new__(cls)
@@ -485,13 +509,13 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
 
         def interp(k, islogk=False, **kwargs):
             if islogk: k = 10**k
-            return pk_callable(k,**kwargs) * self._rsigma8sq
+            return pk_callable(k, **kwargs) * self._rsigma8sq
 
         self.interp = interp
 
         return self
 
-    def __call__(self, k, **kwargs):
+    def __call__(self, k, islogk=False, **kwargs):
         """
         Evaluate power spectrum at wavenumbers ``k``.
 
@@ -500,10 +524,10 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         k : array_like
             Wavenumbers where to evaluate the power spectrum.
 
-        islogk : bool
-            Whether input ``k`` is already in log space.
+        islogk : bool, default=False
+            Whether input ``k`` is already in log10-space.
         """
-        return self.interp(k,**kwargs)
+        return self.interp(k, **kwargs)
 
     def sigma_d(self, nk=1024, epsrel=1e-5):
         r"""
@@ -515,11 +539,11 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
 
         Parameters
         ----------
-        nk : int
+        nk : int, default=1024
             If not ``None``, performs trapezoidal integration with ``nk`` points between :attr:`extrap_kmin` and :attr:`extrap_kmax`.
             Else, uses `scipy.integrate.quad`.
 
-        epsrel : float
+        epsrel : float, default=1e-5
             Relative precision (for :meth:`scipy.integrate.quad` integration).
 
         Returns
@@ -545,11 +569,11 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         r : array_like
             Sphere radii.
 
-        nk : int
+        nk : int, default=1024
             If not ``None``, performs trapezoidal integration with ``nk`` points between :attr:`extrap_kmin` and :attr:`extrap_kmax`.
             Else, uses `scipy.integrate.quad`.
 
-        epsrel : float
+        epsrel : float, default=1e-5
             Relative precision (for :meth:`scipy.integrate.quad` integration).
 
         Returns
@@ -576,10 +600,10 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         """
         Transform power spectrum into correlation function using :class:`FFTlog`.
 
-        nk : int
+        nk : int, default=1024
             Number of wavenumbers used in FFTlog transform.
 
-        fftlog_kwargs : dict
+        fftlog_kwargs : dict, default=None
             Arguments for :class:`FFTlog`.
 
         kwargs : dict
@@ -604,7 +628,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     """
 
     def __init__(self, k, z=0, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=100,
-                interp_order_k=3, interp_order_z=None, extrap_z=True, growth_factor_sq=None):
+                interp_order_k=3, interp_order_z=None, extrap_z=None, growth_factor_sq=None):
         r"""
         Initialize :class:`PowerSpectrumInterpolator2D`.
 
@@ -617,44 +641,47 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         k : array_like
             Wavenumbers.
 
-        z : array_like, float
+        z : array_like, float, default=0
             Redshifts.
 
         pk : array_like
             Power spectrum to be interpolated.
             If ``z`` is scalar, should be 1D; else 2D, with shape ``(k.size, z.size)``.
 
-        interp_k : string
+        interp_k : string, default='log'
             If 'log', interpolation is performed in log-k coordinates.
 
-        extrap_pk : string
+        extrap_pk : string, default='log'
             If 'log' (and ``interp_k`` is 'log'), ``fun`` is log-log extrpolated up to ``extrap_kmin``, ``extrap_kmax``.
 
-        extrap_kmin : float
+        extrap_kmin : float, default=1e-6
             Minimum extrapolation range in ``k``.
 
-        extrap_kmin : float
+        extrap_kmax : float, default=100
             Maximum extrapolation range in ``k``.
 
-        interp_order_k : int
+        interp_order_k : int, default=3
             Interpolation order, i.e. degree of smoothing spline along ``k``.
 
-        interp_order_z : int
+        interp_order_z : int, default=None
             Interpolation order, i.e. degree of smoothing spline along ``z``.
             If ``None``, the maximum order given ``z`` size (see :meth:`GenericSpline.min_spline_order`) is considered.
 
-        extrap_z : bool
-            If ``True``, clip out-of-bounds ``z`` input coordinates in the 2D case (assuming extrapolation will be provided by ``growth_factor_sq``)
+        extrap_z : bool, default=None
+            If ``True``, clip out-of-bounds ``z`` input coordinates.
+            If ``None``, and ``growth_factor_sq`` is provided, defaults to ``True``
+            (hence assuming ``growth_factor_sq`` will provide the extrapolation to out-of-bounds ``z`` input coordinates).
 
-        growth_factor_sq : callable
-            Function that takes ``z`` as argument and returns the growth factor at that redshift.
+        growth_factor_sq : callable, default=None
+            Function that takes ``z`` as argument and returns the growth factor squared at that redshift.
             This will rescale the output of the base spline interpolation.
             Therefore, make sure that provided ``pk`` does not contain the redundant ``z`` variations.
         """
         self._rsigma8sq = 1.
         self.growth_factor_sq = growth_factor_sq
+        if extrap_z is None: extrap_z = self.growth_factor_sq is not None
         self.spline = GenericSpline(k,y=z,fun=pk,interp_x=interp_k,extrap_fun=extrap_pk,extrap_xmin=extrap_kmin,extrap_xmax=extrap_kmax,
-                                interp_order_x=interp_order_k,interp_order_y=interp_order_z,extrap_y=extrap_z)
+                                    interp_order_x=interp_order_k,interp_order_y=interp_order_z,extrap_y=extrap_z)
         self.k, self.z = self.spline.x, self.spline.y
         self.extrap_kmin, self.extrap_kmax = self.spline.extrap_xmin, self.spline.extrap_xmax
         self.interp_k, self.extrap_pk, self.extrap_z = self.spline.interp_x, self.spline.extrap_fun, self.spline.extrap_y
@@ -701,21 +728,22 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
 
         Parameters
         ----------
-        k : array_like
+        k : array_like, default=None
             Array of wavenumbers where the provided ``pk_callable`` can be trusted.
             It will be used if :attr:`pk` is requested.
             Must be strictly increasing.
 
-        z : array_like
+        z : array_like, default=None
             Array of redshifts where the provided ``pk_callable`` can be trusted.
             Same remark as for ``k``.
 
-        pk_callable : callable
+        pk_callable : callable, default=None
             Power spectrum callable.
             If ``growth_factor_sq`` is not provided, should take ``k``, ``z``, ``grid`` as arguments (see :meth:`__call__`)
             else, should take ``k`` as arguments.
 
-        growth_factor_sq : callable
+        growth_factor_sq : callable, default=None
+            Function that takes ``z`` as argument and returns the growth factor squared at that redshift.
             See remark above.
 
         Returns
@@ -758,7 +786,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         self.interp = interp
         return self
 
-    def __call__(self, k, z=0, **kwargs):
+    def __call__(self, k, z=0, grid=True, islogk=False, **kwargs):
         """
         Evaluate power spectrum at wavenumbers ``k`` and redshifts ``z``.
 
@@ -767,19 +795,19 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         k : array_like
             Wavenumbers where to evaluate the power spectrum.
 
-        z : array_like
+        z : array_like, default=0
             Redshifts where to evaluate the power spectrum.
 
-        grid : bool
+        grid : bool, default=True
             Whether ``k``, ``z`` coordinates should be interpreted as a grid, in which case the output will be of shape ``(k.size, z.size)``.
 
-        islogk : bool
-            Whether input ``k`` is already in log space.
+        islogk : bool, default=False
+            Whether input ``k`` is already in log10-space.
 
-        ignore_growth : bool
+        ignore_growth : bool, default=False
             Whether to ignore multiplication by growth function (if provided).
         """
-        return self.interp(k,z=z,**kwargs)
+        return self.interp(k, z=z, grid=grid, islogk=islogk, **kwargs)
 
     def sigma_dz(self, z=0, nk=1024, epsrel=1e-5):
         r"""
@@ -791,14 +819,14 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
 
         Parameters
         ----------
-        z : array_like
+        z : array_like, default=0
             Redshifts.
 
-        nk : int
+        nk : int, default=1024
             If not ``None``, performs trapezoidal integration with ``nk`` points between :attr:`extrap_kmin` and :attr:`extrap_kmax`.
             Else, uses `scipy.integrate.quad`.
 
-        epsrel : float
+        epsrel : float, default=1e-5
             Relative precision (for :meth:`scipy.integrate.quad` integration).
 
         Returns
@@ -827,14 +855,14 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         r : array_like
             Sphere radii.
 
-        z : array_like
+        z : array_like, default=0
             Redshifts.
 
-        nk : int
+        nk : int, default=1024
             If not ``None``, performs trapezoidal integration with ``nk`` points between :attr:`extrap_kmin` and :attr:`extrap_kmax`.
             Else, uses `scipy.integrate.quad`.
 
-        epsrel : float
+        epsrel : float, default=1e-5
             Relative precision (for :meth:`scipy.integrate.quad` integration).
 
         Returns
@@ -874,17 +902,17 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         r : array_like
             Sphere radii.
 
-        z : array_like
+        z : array_like, default=0
             Redshifts.
 
-        dz : float
+        dz : float, default=1e-3
             ``z`` interval used for finite differentiation.
 
-        nk : int
+        nk : int, default=1024
             If not ``None``, performs trapezoidal integration with ``nk`` points between :attr:`extrap_kmin` and :attr:`extrap_kmax`.
             Else, uses `scipy.integrate.quad`.
 
-        epsrel : float
+        epsrel : float, default=1e-5
             Relative precision (for :meth:`scipy.integrate.quad` integration).
         """
         if self.interp_order_z == 0 and self.growth_factor_sq is None:
@@ -918,7 +946,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
 
         Parameters
         ----------
-        z : float
+        z : float, default=0
             Redshift.
 
         kwargs : dict
@@ -930,7 +958,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         interp : PowerSpectrumInterpolator1D
         """
         if self.is_from_callable:
-            return PowerSpectrumInterpolator1D.from_callable(self.k,pk_callable=lambda k: self.interp(k,z=z))
+            return PowerSpectrumInterpolator1D.from_callable(self.k, pk_callable=lambda k: self.interp(k,z=z))
         default_params = dict(extrap_pk=self.extrap_pk,extrap_kmin=self.extrap_kmin,extrap_kmax=self.extrap_kmax,interp_order_k=self.interp_order_k)
         default_params.update(kwargs)
         return PowerSpectrumInterpolator1D(self.k,self(self.k,z=z),**default_params)
@@ -939,10 +967,10 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         """
         Transform power spectrum into correlation function using :class:`FFTlog`.
 
-        nk : int
+        nk : int, default=1024
             Number of wavenumbers used in FFTlog transform.
 
-        fftlog_kwargs : dict
+        fftlog_kwargs : dict, default=None
             Arguments for :class:`FFTlog`.
 
         kwargs : dict
@@ -1019,7 +1047,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
 
     """1D correlation funcion interpolator."""
 
-    def __init__(self, s, xi=None, interp_s='log', interp_order_s=3):
+    def __init__(self, s, xi, interp_s='log', interp_order_s=3):
         """
         Initialize :class:`CorrelationFunctionInterpolator1D`.
 
@@ -1031,10 +1059,10 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         xi : array_like
             Correlation function to be interpolated.
 
-        interp_s : string
+        interp_s : string, default='log'
             If 'log', interpolation is performed in log-s coordinates.
 
-        interp_order_s : int
+        interp_order_s : int, default=3
             Interpolation order, i.e. degree of smoothing spline along ``s``.
         """
         self._rsigma8sq = 1.
@@ -1065,7 +1093,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
 
         Parameters
         ----------
-        s : array_like
+        s : array_like, default=None
             Array of separations where the provided ``xi_callable`` can be trusted.
             It will be used if ``:attr:xi`` is requested.
             Must be strictly increasing.
@@ -1090,7 +1118,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         self.interp = interp
         return self
 
-    def __call__(self, s, **kwargs):
+    def __call__(self, s, islogs=False, **kwargs):
         """
         Evaluate correlation function at separations ``s``.
 
@@ -1099,10 +1127,10 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         s : array_like
             Separations where to evaluate the correlation function.
 
-        islogs : bool
-            Whether input ``s`` is already in log space.
+        islogs : bool, default=False
+            Whether input ``s`` is already in log10-space.
         """
-        return self.interp(s,**kwargs)
+        return self.interp(s, islogs=islogs, **kwargs)
 
     def sigma_d(self, **kwargs):
         """
@@ -1133,10 +1161,10 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         """
         Transform correlation function into power spectrum using :class:`FFTlog`.
 
-        ns : int
+        ns : int, default=1024
             Number of separations used in FFTlog transform.
 
-        fftlog_kwargs : dict
+        fftlog_kwargs : dict, default=None
             Arguments for :class:`FFTlog`.
 
         kwargs : dict
@@ -1157,7 +1185,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
     """2D correlation function interpolator."""
 
-    def __init__(self, s, z=0, xi=None, interp_s='log', interp_order_s=3, interp_order_z=None, extrap_z=True, growth_factor_sq=None):
+    def __init__(self, s, z=0, xi=None, interp_s='log', interp_order_s=3, interp_order_z=None, extrap_z=None, growth_factor_sq=None):
         r"""
         Initialize :class:`CorrelationFunctionInterpolator2D`.
 
@@ -1170,33 +1198,36 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         s : array_like
             Separations.
 
-        z : array_like, float
+        z : array_like, float, default=0
             Redshifts.
 
         xi : array_like
             Correlation function to be interpolated.
             If ``z`` is scalar, should be 1D; else 2D, with shape ``(s.size, z.size)``.
 
-        interp_s : string
+        interp_s : string, default='log'
             If 'log', interpolation is performed in log-s coordinates.
 
-        interp_order_s : int
+        interp_order_s : int, default=3
             Interpolation order, i.e. degree of smoothing spline along ``s``.
 
-        interp_order_z : int
+        interp_order_z : int, default=None
             Interpolation order, i.e. degree of smoothing spline along ``z``.
             If ``None``, the maximum order given ``z`` size (see :meth:`GenericSpline.min_spline_order`) is considered.
 
-        extrap_z : bool
-            If ``True``, clip out-of-bounds ``z`` input coordinates in the 2D case (assuming extrapolation will be provided by ``growth_factor_sq``)
+        extrap_z : bool, default=None
+            If ``True``, clip out-of-bounds ``z`` input coordinates.
+            If ``None``, and ``growth_factor_sq`` is provided, defaults to ``True``
+            (hence assuming ``growth_factor_sq`` will provide the extrapolation to out-of-bounds ``z`` input coordinates).
 
-        growth_factor_sq : callable
-            Function that takes ``z`` as argument and returns the growth factor at that redshift.
+        growth_factor_sq : callable, default=None
+            Function that takes ``z`` as argument and returns the growth factor squared at that redshift.
             This will rescale the output of the base spline interpolation.
-            Therefore, make sure that provided ``xi`` does not contain the redundant ``z`` variations.
+            Therefore, make sure that provided ``pk`` does not contain the redundant ``z`` variations.
         """
         self._rsigma8sq = 1.
         self.growth_factor_sq = growth_factor_sq
+        if extrap_z is None: extrap_z = self.growth_factor_sq is not None
         self.spline = GenericSpline(s,y=z,fun=xi,interp_x=interp_s,interp_order_x=interp_order_s,interp_order_y=interp_order_z,extrap_y=extrap_z)
         self.s, self.z = self.spline.x, self.spline.y
         self.interp_s, self.extrap_z = self.spline.interp_x, self.spline.extrap_y
@@ -1240,7 +1271,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         """Maximum (spline-interpolated) redshift."""
         return self.z[-1]
 
-    def __call__(self, s, z=0, **kwargs):
+    def __call__(self, s, z=0, grid=True, islogs=False, **kwargs):
         """
         Evaluate correlation function at separations ``s`` and redshifts ``z``.
 
@@ -1249,19 +1280,19 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         s : array_like
             Separations where to evaluate the correlation function.
 
-        z : array_like
+        z : array_like, default=0
             Redshifts where to evaluate the correlation function.
 
-        grid : bool
+        grid : bool, default=True
             Whether ``s``, ``z`` coordinates should be interpreted as a grid, in which case the output will be of shape ``(s.size, z.size)``.
 
-        islogs : bool
-            Whether input ``s`` is already in log space.
+        islogs : bool, default=False
+            Whether input ``s`` is already in log10-space.
 
-        ignore_growth : bool
+        ignore_growth : bool, default=False
             Whether to ignore multiplication by growth function (if provided).
         """
-        return self.interp(s,z=z,**kwargs)
+        return self.interp(s, z=z, grid=grid, islogs=islogs, **kwargs)
 
     @classmethod
     def from_callable(cls, s=None, z=None, xi_callable=None, growth_factor_sq=None):
@@ -1270,21 +1301,21 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
         Parameters
         ----------
-        s : array_like
+        s : array_like, default=None
             Array of separations where the provided ``xi_callable`` can be trusted.
             It will be used if ``:attr:xi`` is requested.
             Must be strictly increasing.
 
-        z : array_like
+        z : array_like, default=None
             Array of redshifts where the provided ``xi_callable`` can be trusted.
             Same remark as for ``s``.
 
-        xi_callable : callable
+        xi_callable : callable, default=None
             Correlation function callable.
             If ``growth_factor_sq`` is not provided, should take ``s``, ``z``, ``grid`` as arguments (see :meth:`__call__`)
             else, should take ``s`` as arguments.
 
-        growth_factor_sq : callable
+        growth_factor_sq : callable, default=None
             See remark above.
 
         Returns
@@ -1370,7 +1401,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
         Parameters
         ----------
-        z : float
+        z : float, default=0
             Redshift.
 
         kwargs : dict
@@ -1391,10 +1422,10 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         """
         Transform correlation function into power spectrum using :class:`FFTlog`.
 
-        ns : int
+        ns : int, default=1024
             Number of separations used in FFTlog transform.
 
-        fftlog_kwargs : dict
+        fftlog_kwargs : dict, default=None
             Arguments for :class:`FFTlog`.
 
         kwargs : dict

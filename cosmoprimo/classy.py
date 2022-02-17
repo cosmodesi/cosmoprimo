@@ -93,7 +93,7 @@ class Primordial(pyclass.Primordial):
 
         Returns
         -------
-        pk : numpy.ndarray, dict
+        pk : array, dict
             The primordial power spectrum if only one type of initial conditions (typically adiabatic),
             else dictionary of primordial power spectra corresponding to the tuples of initial conditions.
         """
@@ -131,7 +131,7 @@ class Primordial(pyclass.Primordial):
 
         Returns
         -------
-        data : numpy.ndarray
+        data : array
             Structured array containing thermodynamics data.
         """
         table = super(Primordial,self).table()
@@ -160,7 +160,7 @@ class Harmonic(pyclass.Harmonic):
 
         Returns
         -------
-        cell : numpy.ndarray
+        cell : array
             Structured array.
 
         Note
@@ -189,7 +189,7 @@ class Harmonic(pyclass.Harmonic):
 
         Returns
         -------
-        cell : numpy.ndarray
+        cell : array
             Structured array.
         """
         table = super(Harmonic,self).lensed_table(ellmax=ellmax,of=of)
@@ -244,7 +244,7 @@ class Fourier(pyclass.Fourier):
 
         Returns
         -------
-        pk : numpy.ndarray
+        pk : array
             Power spectrum array of shape (len(k),len(z)).
         """
         return super(Fourier,self).pk_kz(k,z,nonlinear=nonlinear,of=of) * self._rsigma8**2
@@ -266,13 +266,13 @@ class Fourier(pyclass.Fourier):
 
         Returns
         -------
-        k : numpy.ndarray
+        k : array
             Wavenumbers.
 
-        z : numpy.ndarray
+        z : array
             Redshifts.
 
-        pk : numpy.ndarray
+        pk : array
             Power spectrum array of shape (len(k),len(z)).
         """
         k,z,pk = super(Fourier,self).table(nonlinear=nonlinear,of=of)

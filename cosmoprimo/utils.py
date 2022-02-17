@@ -66,7 +66,7 @@ class SolveLeastSquares(BaseClass):
     0.0
     """
     def __init__(self, gradient, precision=1.):
-        """
+        r"""
         Initialize :class:`SolveLeastSquares`.
 
         Parameters
