@@ -81,9 +81,9 @@ class CambEngine(BaseEngine):
         # We are trying to get both codes to use the same neutrino temperature.
         # thus we set T_i_eff = T_i = g^(1/4) * T_nu and solve for the right
         # value of g for CAMB. We get g = (TNCDM / (11/4)^(-1/3))^4
-        g = np.array(self['T_ncdm'], dtype='f8')**4 * (4./11.)**(-4./3.)
+        g = np.array(self['T_ncdm_over_cmb'], dtype=np.float64)**4 * (4./11.)**(-4./3.)
         m_ncdm = np.array(self['m_ncdm'])
-        self._camb_params.nu_mass_numbers = np.ones(self['N_ncdm'], dtype='i4')
+        self._camb_params.nu_mass_numbers = np.ones(self['N_ncdm'], dtype=np.int32)
         self._camb_params.nu_mass_fractions = m_ncdm/m_ncdm.sum()
         self._camb_params.nu_mass_degeneracies = g
 
@@ -92,7 +92,7 @@ class CambEngine(BaseEngine):
         self._camb_params.YHe = self._camb_params.bbn_predictor.Y_He(self._camb_params.ombh2*(camb.constants.COBE_CMBTemp / self._camb_params.TCMB)**3,delta_neff)
 
         self._camb_params.set_classes(dark_energy_model=camb.dark_energy.DarkEnergyFluid)
-        self._camb_params.DarkEnergy.set_params(w=self['w0_fld'],wa=self['wa_fld'],cs2=self['cs2_fld'])
+        self._camb_params.DarkEnergy.set_params(w=self['w0_fld'],wa=self['wa_fld'])
 
         if self['non_linear']:
             self._camb_params.NonLinearModel = camb.nonlinear.Halofit()
@@ -180,20 +180,7 @@ class CambEngine(BaseEngine):
         return self._rsigma8
 
 
-def makescalar(func):
-
-    @functools.wraps(func)
-    def wrapper(self, z):
-        z = np.array(z)
-        toret = func(self, z)
-        if z.ndim == 0:
-            return toret[0]
-        return toret
-
-    return wrapper
-
-
-@utils.addproperty('Omega0_m', 'Omega0_ncdm_tot')
+#@utils.addproperty('Omega0_m', 'Omega0_ncdm_tot')
 class Background(BaseBackground):
 
     def __init__(self, engine):
@@ -203,107 +190,99 @@ class Background(BaseBackground):
         # convert RHO to 1e10 Msun/h
         #self._H0 = self.ba.Params.H0
         #self._h = self.H0 / 100
+        # camb densities are 8 pi G a^4 rho in Mpc unit
         self._RH0_ = constants.rho_crit_Msunph_per_Mpcph3 * constants.c**2 / (self.H0*1e3)**2 / 3.
-        for name in ['m', 'ncdm_tot']:
-            setattr(self,'_Omega0_{}'.format(name),getattr(self,'Omega_{}'.format(name))(0.))
+        #for name in ['m', 'ncdm_tot']:
+        #    setattr(self,'_Omega0_{}'.format(name),getattr(self,'Omega_{}'.format(name))(0.))
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def Omega_k(self, z):
         r"""Density parameter of curvature, unitless."""
         return self.ba.get_Omega('K',z=z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def Omega_cdm(self, z):
         r"""Density parameter of cold dark matter, unitless."""
         return self.ba.get_Omega('cdm',z=z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def Omega_b(self, z):
         r"""Density parameter of baryons, unitless."""
         return self.ba.get_Omega('baryon',z=z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def Omega_g(self, z):
         r"""Density parameter of photons, unitless."""
         return self.ba.get_Omega('photon',z=z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def Omega_ur(self, z):
         r"""Density parameter of ultra relativistic neutrinos, unitless."""
         return self.ba.get_Omega('neutrino',z=z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def Omega_ncdm_tot(self, z):
         r"""Total density parameter of massive neutrinos, unitless."""
         return self.ba.get_Omega('nu',z=z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def Omega_de(self, z):
-        r"""Density of total dark energy (fluid + cosmological constant), unitless."""
+        r"""Total density of dark energy (fluid + cosmological constant), unitless."""
         return self.ba.get_Omega('de',z=z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def rho_k(self, z):
-        r"""
-        Comoving density of curvature :math:`\rho_{k}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
-
-        This is defined such that:
-
-        .. math::
-
-            \rho_{\mathrm{crit}} = \rho_\mathrm{tot} + \rho_k
-        """
+        r"""Comoving density of curvature :math:`\rho_{k}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self.ba.get_background_densities(1./(1+z),vars=['K'])['K'] * self._RH0_ * (1 + z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def rho_cdm(self, z):
         r"""Comoving density of cold dark matter :math:`\rho_{cdm}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self.ba.get_background_densities(1./(1+z),vars=['cdm'])['cdm'] * self._RH0_ * (1 + z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def rho_b(self, z):
         r"""Density parameter of baryons, unitless."""
         return self.ba.get_background_densities(1./(1+z),vars=['baryon'])['baryon'] * self._RH0_ * (1 + z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def rho_g(self, z):
         r"""Comoving density of photons :math:`\rho_{g}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self.ba.get_background_densities(1./(1+z),vars=['photon'])['photon'] * self._RH0_ * (1 + z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def rho_ur(self, z):
         r"""Comoving density of ultra-relativistic radiation (massless neutrinos) :math:`\rho_{ur}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self.ba.get_background_densities(1./(1+z),vars=['neutrino'])['neutrino'] * self._RH0_ * (1 + z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def rho_ncdm_tot(self, z):
         r"""Total comoving density of non-relativistic part of massive neutrinos :math:`\rho_{ncdm}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self.ba.get_background_densities(1./(1+z),vars=['nu'])['nu'] * self._RH0_ * (1 + z)
 
-    @makescalar
+    @utils.flatarray(dtype=np.float64)
     def rho_de(self, z):
-        r"""Comoving total density of dark energy :math:`\rho_{\mathrm{de}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
-
-        This is defined as:
-
-        .. math::
-
-              \rho_{\mathrm{de}}(z) = \rho_{\mathrm{fld}}(z) + \rho_{\mathrm{\Lambda}}(z).
-        """
+        r"""Comoving total density of dark energy :math:`\rho_{\mathrm{de}}` (fluid + cosmological constant), in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self.ba.get_background_densities(1./(1+z),vars=['de'])['de'] * self._RH0_ * (1 + z)
 
-    def time(self, z):
-        r"""Proper time (age of universe), in :math:`\mathrm{Gy}`."""
-        return np.vectorize(self.ba.physical_time)(z)
-
-    def hubble_function(self, z):
-        r"""Hubble function, in :math:`\mathrm{km}/\mathrm{s}/\mathrm{Mpc}`."""
-        return self.ba.hubble_parameter(z)
-
+    @utils.flatarray(dtype=np.float64)
     def efunc(self, z):
         r"""Function giving :math:`E(z)`, where the Hubble parameter is defined as :math:`H(z) = H_{0} E(z)`, unitless."""
         return self.hubble_function(z) / (100. * self._h)
 
+    @utils.flatarray(dtype=np.float64)
+    def hubble_function(self, z):
+        r"""Hubble function, in :math:`\mathrm{km}/\mathrm{s}/\mathrm{Mpc}`."""
+        return self.ba.hubble_parameter(z)
+
+    @utils.flatarray(dtype=np.float64)
+    def time(self, z):
+        r"""Proper time (age of universe), in :math:`\mathrm{Gy}`."""
+        if z.size:
+            return np.vectorize(self.ba.physical_time)(z)
+        return np.zeros_like(z)
+
+    @utils.flatarray(dtype=np.float64)
     def comoving_radial_distance(self, z):
         r"""
         Comoving radial distance, in :math:`mathrm{Mpc}/h`.
@@ -312,6 +291,7 @@ class Background(BaseBackground):
         """
         return self.ba.comoving_radial_distance(z) * self._h
 
+    @utils.flatarray(dtype=np.float64)
     def luminosity_distance(self, z):
         r"""
         Luminosity distance, in :math:`\mathrm{Mpc}/h`.
@@ -320,6 +300,7 @@ class Background(BaseBackground):
         """
         return self.ba.luminosity_distance(z) * self._h
 
+    @utils.flatarray(dtype=np.float64)
     def angular_diameter_distance(self, z):
         r"""
         Proper angular diameter distance, in :math:`\mathrm{Mpc}/h`.
@@ -328,6 +309,7 @@ class Background(BaseBackground):
         """
         return self.ba.angular_diameter_distance(z) * self._h
 
+    @utils.flatarray(dtype=np.float64)
     def comoving_angular_distance(self, z):
         r"""
         Comoving angular distance, in :math:`\mathrm{Mpc}/h`.
@@ -337,7 +319,7 @@ class Background(BaseBackground):
         return self.angular_diameter_distance(z) * (1. + z)
 
 
-@utils.addproperty('rs_drag','z_drag','rs_star','z_star')
+@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star')
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
@@ -353,6 +335,7 @@ class Thermodynamics(BaseSection):
         self._rs_star = derived['rstar'] * self._h
         self._z_star = derived['zstar']
 
+    @utils.flatarray(dtype=np.float64)
     def rs_z(self, z):
         """Comoving sound horizon."""
         return self.th.sound_horizon(z) * self._h
@@ -375,7 +358,7 @@ class Transfer(BaseSection):
             Dictionary of perturbed quantities (in array of shape (k size, z size)).
         """
         data = self.tr.get_matter_transfer_data()
-        dtype = [(name,'f8') for name in model.transfer_names]
+        dtype = [(name,np.float64) for name in model.transfer_names]
         # shape (k, z)
         toret = np.empty(data.transfer.shape[1:],dtype=dtype)
         for name in model.transfer_names:
@@ -469,7 +452,7 @@ class Harmonic(BaseSection):
             ellmax = self.ellmax_cl + 1 + ellmax
         table = self.hr.get_unlensed_total_cls(lmax=ellmax,CMB_unit=None,raw_cl=True)
         names = ['tt', 'ee', 'bb', 'te']
-        toret = np.empty(table.shape[0],[('ell','i8')] + [(name,'f8') for name in names])
+        toret = np.empty(table.shape[0],[('ell','i8')] + [(name,np.float64) for name in names])
         for iname,name in enumerate(names): toret[name] = table[:,iname] * self._rsigma8**2
         toret['ell'] = np.arange(table.shape[0])
         return toret
@@ -484,7 +467,7 @@ class Harmonic(BaseSection):
             ellmax = self.ellmax_cl + 1 + ellmax
         table = self.hr.get_lens_potential_cls(lmax=ellmax,CMB_unit=None,raw_cl=True)
         names = ['pp','tp','ep']
-        toret = np.empty(table.shape[0],[('ell','i8')] + [(name,'f8') for name in names])
+        toret = np.empty(table.shape[0],[('ell','i8')] + [(name,np.float64) for name in names])
         for iname,name in enumerate(names): toret[name] = table[:,iname] * self._rsigma8**2
         toret['ell'] = np.arange(table.shape[0])
         return toret
@@ -497,7 +480,7 @@ class Harmonic(BaseSection):
             raise CAMBError('You asked for lensed cl, but they have not been calculated. Please set lensing = True.')
         table = self.hr.get_total_cls(lmax=ellmax,CMB_unit=None,raw_cl=True)
         names = ['tt', 'ee', 'bb', 'te']
-        toret = np.empty(table.shape[0],[('ell','i8')] + [(name,'f8') for name in names])
+        toret = np.empty(table.shape[0],[('ell','i8')] + [(name,np.float64) for name in names])
         for iname,name in enumerate(names): toret[name] = table[:,iname] * self._rsigma8**2
         toret['ell'] = np.arange(table.shape[0])
         return toret

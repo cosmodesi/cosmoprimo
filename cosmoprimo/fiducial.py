@@ -23,7 +23,7 @@ def Planck2018FullFlatLCDM(engine=None, extra_params=None, **params):
     cosmology : Cosmology
     """
     _default_cosmological_parameters = dict(h=0.6766, omega_cdm=0.11933, omega_b=0.02242, Omega_k=0., sigma8=0.8102, k_pivot=0.05, n_s=0.9665,
-    m_ncdm=[0.06], neutrino_hierarchy=None, T_ncdm=constants.TNCDM, N_eff=constants.NEFF, tau_reio=0.0561, A_L=1.0, w0_fld=-1., wa_fld=0., cs2_fld=1.)
+    m_ncdm=[0.06], neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF, tau_reio=0.0561, A_L=1.0, w0_fld=-1., wa_fld=0.)
     params = merge_params(_default_cosmological_parameters,params)
     return Cosmology(engine=engine,extra_params=extra_params,**params)
 
@@ -57,7 +57,7 @@ def AbacusSummitBase(engine='class', precision=None, extra_params=None, **params
     cosmology : Cosmology
     """
     _default_cosmological_parameters = dict(h=0.6736, omega_cdm=0.12, omega_b=0.02237, Omega_k=0., A_s=2.083e-09, k_pivot=0.05, n_s=0.9649,
-    omega_ncdm=[0.0006442], neutrino_hierarchy=None, T_ncdm=constants.TNCDM, N_ur=2.0328, tau_reio=0.0544, A_L=1.0, w0_fld=-1., wa_fld=0., cs2_fld=1.)
+    omega_ncdm=[0.0006442], neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_ur=2.0328, tau_reio=0.0544, A_L=1.0, w0_fld=-1., wa_fld=0.)
     params = merge_params(_default_cosmological_parameters, params)
     if extra_params is None: extra_params = {}
     engine = get_engine(engine)

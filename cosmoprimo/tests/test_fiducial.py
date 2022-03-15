@@ -37,6 +37,7 @@ def test_desi(plot=False):
     assert np.allclose(cosmo.get_background().h, 0.6736, rtol=1e-9, atol=1e-9)
     assert np.allclose(cosmo.get_background().Omega0_cdm*cosmo.h**2, 0.12, rtol=1e-9, atol=1e-9)
     assert np.allclose(cosmo.get_background().Omega0_b*cosmo.h**2, 0.02237, rtol=1e-9, atol=1e-9)
+    assert np.allclose(cosmo['k_pivot'], 0.05, rtol=1e-9, atol=1e-9)
     assert np.allclose(cosmo.get_primordial().k_pivot*cosmo.h, 0.05, rtol=1e-9, atol=1e-9)
     assert np.allclose(cosmo.get_thermodynamics().tau_reio, 0.0544, rtol=1e-9, atol=1e-9)
 

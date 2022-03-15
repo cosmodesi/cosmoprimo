@@ -1,6 +1,8 @@
 """Utilities for **cosmoprimo**."""
 
 import os
+import functools
+
 import numpy as np
 
 
@@ -47,6 +49,31 @@ def addproperty(*attrs):
         return cls
 
     return decorator
+
+
+def flatarray(dtype=None):
+    """Decorator that flattens input array and reshapes the output in the same form."""
+    def make_wrapper(func):
+
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            toret_dtype = getattr(args[0], 'dtype', np.float64)
+            input_dtype = dtype
+            if not np.issubdtype(toret_dtype, np.floating):
+                toret_dtype = np.float64
+            if input_dtype is None:
+                input_dtype = toret_dtype
+            array = np.asarray(args[0], dtype=input_dtype)
+            shape = array.shape
+            array.shape = (-1,)
+            toret = func(self, array, *args[1:], **kwargs)
+            array.shape = shape
+            toret.shape = toret.shape[:-1] + shape
+            return toret.astype(dtype=toret_dtype, copy=False)
+
+        return wrapper
+
+    return make_wrapper
 
 
 class SolveLeastSquares(BaseClass):

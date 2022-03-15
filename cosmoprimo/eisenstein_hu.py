@@ -21,7 +21,7 @@ class EisensteinHuEngine(BaseEngine):
             warnings.warn('{} cannot cope with massive neutrinos'.format(self.__class__.__name__))
         if self['Omega_k'] != 0.:
             warnings.warn('{} cannot cope with non-zero curvature'.format(self.__class__.__name__))
-        if (self['w0_fld'], self['wa_fld']) != (-1, 0.):
+        if self._has_fld:
             warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
         self.compute()
 
@@ -85,7 +85,6 @@ class EisensteinHuEngine(BaseEngine):
         self.beta_b = 0.5 + self.frac_baryon + (3. - 2.*self.frac_baryon) * np.sqrt( (17.2*self.omega_m) ** 2 + 1)
 
 
-@utils.addproperty('Omega0_m','Omega0_de','Omega0_Lambda')
 class Background(BaseBackground):
     """
     Background quantities.
@@ -94,27 +93,7 @@ class Background(BaseBackground):
     ----
     Does not treat neutrinos.
     """
-    def __init__(self, engine):
-        super(Background,self).__init__(engine=engine)
-        self._Omega0_m = self.Omega0_cdm + self.Omega0_b
-        self._Omega0_Lambda = self._Omega0_de = 1.0 - self.Omega0_m - self.Omega0_g - self.Omega0_k
-
-    def efunc(self, z):
-        r"""Function giving :math:`E(z)`, where the Hubble parameter is defined as :math:`H(z) = H_{0} E(z)`, unitless."""
-        return np.sqrt(self.Omega0_m * (1 + z)**3 + self.Omega0_g * (1 + z)**4 + self.Omega0_k * (1 + z)**2 + self.Omega0_de)
-
-    def Omega_m(self, z):
-        """Density parameter of matter, unitless."""
-        return self.Omega0_m * (1+z)**3 / self.efunc(z)**2
-
-    def Omega_de(self, z):
-        """Density parameter of cosmological constant, unitless."""
-        return self.Omega0_de / self.efunc(z)**2
-
-    def Omega_Lambda(self, z):
-        """Density parameter of cosmological constant, unitless."""
-        return self.Omega0_de / self.efunc(z)**2
-
+    @utils.flatarray()
     def growth_factor(self, z):
         """
         Approximation of growth factor.
@@ -125,10 +104,11 @@ class Background(BaseBackground):
         https://ui.adsabs.harvard.edu/abs/1992ARA%26A..30..499C/abstract, eq. 29
         """
         def growth(z):
-            return 1./(1.+z)*5*self.Omega_m(z)/2./(self.Omega_m(z)**(4./7.) - self.Omega_de(z) + (1.+self.Omega_m(z)/2.)*(1.+self.Omega_de(z)/70.))
+            return 1./(1 + z)*5*self.Omega_m(z)/2./(self.Omega_m(z)**(4./7.) - self.Omega_de(z) + (1.+self.Omega_m(z)/2.)*(1.+self.Omega_de(z)/70.))
 
-        return growth(z)/growth(0)
+        return growth(z)/growth(0.)
 
+    @utils.flatarray()
     def growth_rate(self, z):
         """
         Approximation of growth rate.
@@ -137,7 +117,8 @@ class Background(BaseBackground):
         ----------
         https://arxiv.org/abs/astro-ph/0507263
         """
-        return self.Omega_m(z)**0.55
+        wz1 = self.w0_fld + (1. - 0.5) * self.wa_fld
+        return self.Omega_m(z)**(0.55 + 0.05 * (1 + wz1))
 
 
 @utils.addproperty('rs_drag','z_drag')

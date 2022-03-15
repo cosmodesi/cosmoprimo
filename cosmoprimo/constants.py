@@ -12,6 +12,6 @@ rho_crit_kgph_per_mph3 = 3.0 * (100.*1e3/megaparsec)**2 / (8 * constants.pi * co
 # h^2 * kg/m^3 / msun / Mpc^3 = Msun/h / (Mpc/h)^3
 rho_crit_Msunph_per_Mpcph3 = rho_crit_kgph_per_mph3 / (1e10*msun) * megaparsec**3
 # T_ncdm, N_ur as taken from CLASS, explanatory.ini
-TNCDM = 0.71611
+TNCDM_OVER_CMB = 0.71611
 NEFF = 3.044
 TCMB = 2.7255

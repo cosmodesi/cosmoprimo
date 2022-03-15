@@ -7,12 +7,12 @@ from .cosmology import BaseEngine
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 
 
-class ClassEngine(pyclass.ClassEngine,BaseEngine):
+class ClassEngine(pyclass.ClassEngine, BaseEngine):
 
     """Engine for the Boltzmann code CLASS."""
 
     def __init__(self, *args, **kwargs):
-        BaseEngine.__init__(self,*args,**kwargs)
+        BaseEngine.__init__(self, *args, **kwargs)
         params = self._params.copy()
         lensing = params.pop('lensing')
         params['k_pivot'] = params['k_pivot']
@@ -26,17 +26,16 @@ class ClassEngine(pyclass.ClassEngine,BaseEngine):
         params['l_max_scalars'] = params.pop('ellmax_cl')
         if not params['non_linear']: del params['non_linear']
         params['N_ncdm'] = self['N_ncdm']
+        params['T_ncdm'] = params.pop('T_ncdm_over_cmb')
         if not params['N_ncdm']:
             params.pop('m_ncdm')
             params.pop('T_ncdm')
-        if params['w0_fld'] != -1 or params['wa_fld'] != 0 or params['cs2_fld'] != 1:
+        if self._has_fld:
             params['Omega_Lambda'] = 0. # will force non-zero Omega_fld
         else:
-            del params['w0_fld']
-            del params['wa_fld']
-            del params['cs2_fld']
+            for name in ['w0_fld', 'wa_fld']: del params[name]
         params.update(self.extra_params)
-        super(ClassEngine,self).__init__(params=params)
+        super(ClassEngine, self).__init__(params=params)
         #print(self.get_params_str())
 
     def _rescale_sigma8(self):

@@ -18,7 +18,7 @@ def test_params():
     assert cosmo['sigma8'] == 0.8
     for neutrino_hierarchy in ['normal','inverted','degenerate']:
         cosmo = Cosmology(m_ncdm=0.1,neutrino_hierarchy=neutrino_hierarchy)
-    m_ncdm = [0.01,0.02,0.05]
+    m_ncdm = [0.01, 0.02, 0.05]
     cosmo = Cosmology(m_ncdm=m_ncdm)
     ba_class = Background(cosmo,engine='class')
     fo_class = Fourier(cosmo)
@@ -45,11 +45,11 @@ def test_engine():
     assert cosmo.engine is not ba._engine
 
 
-list_params = [{}, {'sigma8':1.}, {'A_s':2e-9}, {'lensing':True}, {'m_ncdm':0.1,'neutrino_hierarchy':'normal'}, {'Omega_k':0.1}]
-
+list_params = [{}, {'sigma8':1.}, {'A_s':2e-9}, {'lensing':True}, {'m_ncdm':0.1,'neutrino_hierarchy':'normal'}, {'Omega_k':0.1}, {'w0_fld':-0.9, 'wa_fld':0.1}]
 
 @pytest.mark.parametrize('params',list_params)
 def test_background(params, seed=42):
+
     rng = np.random.RandomState(seed=seed)
     cosmo = Cosmology(**params)
     if 'A_s' in params:
@@ -60,65 +60,74 @@ def test_background(params, seed=42):
         assert cosmo['sigma8'] == params.get('sigma8', 0.8) # sigma8 is set as default
         with pytest.raises(CosmologyError):
             cosmo['A_s']
-    ba_camb = Background(cosmo,engine='camb')
-    ba_class = Background(cosmo,engine='class')
-    for name in ['Omega0_b', 'Omega0_g', 'Omega0_cdm', 'Omega0_Lambda', 'Omega0_fld', 'Omega0_k',
-                 'Omega0_dcdm', 'Omega0_ncdm', 'Omega0_ncdm_tot', 'Omega0_pncdm', 'Omega0_pncdm_tot', 'Omega0_ur', 'Omega0_r', 'Omega0_m', 'T0_cmb', 'T0_ncdm']:
-        assert np.allclose(getattr(ba_class,name),getattr(ba_class,name.replace('0',''))(0.),atol=0,rtol=1e-6)
 
-    for name in ['Omega0_b', 'Omega0_g', 'Omega0_cdm', 'Omega0_k', 'Omega0_ncdm_tot', 'Omega0_ur', 'Omega0_r', 'Omega0_m', 'T0_cmb', 'T0_ncdm']:
-        assert np.allclose(getattr(ba_camb,name),getattr(ba_camb,name.replace('0',''))(0.),atol=0,rtol=1e-3)
+    for engine in ['class', 'camb', 'astropy', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks']:
+        ba = cosmo.get_background(engine=engine)
+        for name in ['T0_cmb', 'T0_ncdm', 'Omega0_cdm', 'Omega0_b', 'Omega0_k', 'Omega0_g', 'Omega0_ur', 'Omega0_r',\
+                     'Omega0_pncdm', 'Omega0_pncdm_tot','Omega0_ncdm', 'Omega0_ncdm_tot',\
+                     'Omega0_m', 'Omega0_Lambda', 'Omega0_fld', 'Omega0_de']:
+            assert np.allclose(getattr(ba, name), cosmo[name.replace('0','')], atol=0, rtol=1e-3)
+            assert np.allclose(getattr(ba, name), getattr(ba, name.replace('0',''))(0.), atol=0, rtol=1e-3)
 
-    z = np.sort(rng.uniform(0., 1., 10))
-    for name in ['h','H0']:
-        assert np.allclose(getattr(ba_class,name),getattr(ba_camb,name),atol=0,rtol=1e-6)
-    for density in ['Omega','rho']:
-        for name in ['k','cdm','b','g','ur','ncdm_tot','de']:
-            func = '{}_{}'.format(density,name)
-            #print(getattr(ba_camb,func)(0.), np.array(0.), getattr(ba_camb,func)(np.array(0.)), getattr(ba_camb,func)(np.zeros(0)), getattr(ba_camb,func)([0.]))
-            assert np.allclose(getattr(ba_class,func)(z),getattr(ba_camb,func)(z),atol=0,rtol=1e-4)
-    for name in ['k','cdm','b','g','ur','m']:
-        density = 'Omega0_{}'.format(name)
-        assert np.allclose(getattr(ba_class,density),cosmo['Omega_{}'.format(name)],atol=0,rtol=1e-4)
-        assert np.allclose(getattr(ba_class,density),getattr(ba_camb,density),atol=0,rtol=1e-4)
-    for name in ['time','efunc','hubble_function']:
-        assert np.allclose(getattr(ba_class,name)(z),getattr(ba_camb,name)(z),atol=0,rtol=1e-4)
-    for distance in ['comoving_radial','angular_diameter','comoving_angular','luminosity']:
-        func = '{}_distance'.format(distance)
-        assert np.allclose(getattr(ba_class,func)(z),getattr(ba_camb,func)(z),atol=0,rtol=2e-4)
-    if not cosmo['N_ncdm']:
-        for engine in ['eisenstein_hu','eisenstein_hu_nowiggle']:
-            ba = Background(cosmo,engine=engine)
-            for density in ['Omega']:
-                for name in ['m','de']:
-                    func = '{}_{}'.format(density,name)
-                    assert np.allclose(getattr(ba_class,func)(z),getattr(ba,func)(z),atol=0,rtol=1e-3)
-            for name in ['efunc','hubble_function','growth_factor','growth_rate']:
-                assert np.allclose(getattr(ba_class,name)(z),getattr(ba,name)(z),atol=0,rtol=2e-2)
-    for engine in ['astropy']:
-        ba = Background(cosmo, engine=engine)
-        for density in ['Omega']:
-            for name in ['k','cdm','b','g','de']:
-                func = '{}_{}'.format(density,name)
-                assert np.allclose(getattr(ba_class,func)(z),getattr(ba,func)(z),atol=0,rtol=1e-3)
-        for name in ['efunc','hubble_function','time','comoving_radial_distance','luminosity_distance','angular_diameter_distance','comoving_angular_distance']:
-            assert np.allclose(getattr(ba_class,name)(z),getattr(ba,name)(z),atol=0,rtol=2e-4)
+        for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'N_eff', 'w0_fld', 'wa_fld']:
+            assert np.allclose(getattr(ba, name), cosmo[name])
+
+    ba_class = Background(cosmo, engine='class')
+
+    def assert_allclose(ba, name, atol=0, rtol=1e-4):
+        test, ref = getattr(ba, name), getattr(ba_class, name)
+        shape = (cosmo['N_ncdm'],) if name.endswith('ncdm') else ()
+        z = rng.uniform(0., 1., 10)
+        assert np.allclose(test(z), ref(z), atol=atol, rtol=rtol)
+        assert test(0.).shape == shape
+        assert test([]).shape == shape + (0,)
+        z = np.array(0.)
+        assert test(z).dtype.itemsize == z.dtype.itemsize
+        z = np.array([0., 1.])
+        assert test(z).shape == shape + z.shape
+        z = np.array([[0., 1.]]*4, dtype='f4')
+        assert test(z).shape == shape + z.shape
+        assert test(z).dtype.itemsize == z.dtype.itemsize
+
+    for engine in ['class', 'camb', 'astropy', 'eisenstein_hu']:
+        ba = cosmo.get_background(engine=engine)
+        for name in ['T_cmb', 'T_ncdm']:
+            assert_allclose(ba, name, atol=0, rtol=1e-4)
+        for name in ['rho_crit', 'p_ncdm', 'p_ncdm_tot', 'Omega_pncdm', 'Omega_pncdm_tot']:
+            assert_allclose(ba, name, atol=0, rtol=1e-4)
+        for density in ['rho', 'Omega']:
+            for species in ['cdm', 'b', 'k', 'g', 'ur', 'r', 'ncdm', 'ncdm_tot', 'm', 'Lambda', 'fld', 'de']:
+                name = '{}_{}'.format(density, species)
+                assert_allclose(ba, name, atol=0, rtol=1e-4)
+
+        names = ['efunc', 'hubble_function']
+        for name in names:
+            assert_allclose(ba, name, atol=0, rtol=2e-4)
+        names = []
+        rtol = 2e-4
+        if engine in ['class', 'camb', 'astropy']:
+            names += ['time', 'comoving_radial_distance', 'luminosity_distance', 'angular_diameter_distance', 'comoving_angular_distance']
+        if engine in ['class']:
+            names += ['growth_factor', 'growth_rate']
+        if engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'] and not cosmo['N_ncdm'] and not cosmo._has_fld:
+            rtol = 2e-2
+            names += ['growth_factor', 'growth_rate']
+        for name in names:
+            assert_allclose(ba, name, atol=0, rtol=rtol)
 
 
 @pytest.mark.parametrize('params',list_params)
 def test_thermodynamics(params):
     cosmo = Cosmology(**params)
     th_class = Thermodynamics(cosmo,engine='class')
-    th_camb = Thermodynamics(cosmo,engine='camb')
-    # class and camb z_star do not match...
-    for name in ['z_drag','rs_drag','z_star','rs_star'][:2]:
-        assert np.allclose(getattr(th_class,name),getattr(th_camb,name),atol=0,rtol=1e-4)
 
-    for engine in ['eisenstein_hu','eisenstein_hu_nowiggle']:
-        th_eh = Thermodynamics(cosmo,engine=engine)
-        for name in ['z_drag','rs_drag']:
-            #print(name,getattr(th_class,name),getattr(th_eh,name))
-            assert np.allclose(getattr(th_class,name),getattr(th_eh,name),atol=0,rtol=1e-2)
+    for engine in ['camb']:
+        th = Thermodynamics(cosmo, engine=engine)
+        for name in ['z_drag', 'rs_drag', 'z_star', 'rs_star'][:2]:
+            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-4)
+    for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle']:
+        for name in ['z_drag', 'rs_drag']:
+            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-2)
 
 
 @pytest.mark.parametrize('params',list_params)
@@ -126,116 +135,117 @@ def test_primordial(params, seed=42):
     rng = np.random.RandomState(seed=seed)
     cosmo = Cosmology(**params)
     pr_class = Primordial(cosmo,engine='class')
-    pr_camb = Primordial(cosmo,engine='camb')
-    for name in ['A_s','ln_1e10_A_s','n_s','k_pivot']:
-        assert np.allclose(getattr(pr_class,name),getattr(pr_camb,name),atol=0,rtol=2e-3)
-    k = rng.uniform(1e-3,10.,100)
-    for mode in ['scalar','tensor']:
-        assert np.allclose(pr_class.pk_k(k,mode=mode),pr_camb.pk_k(k,mode=mode),atol=0,rtol=2e-3)
-        assert np.allclose(pr_class.pk_interpolator(mode=mode)(k),pr_camb.pk_interpolator(mode=mode)(k),atol=0,rtol=2e-3)
 
-    for engine in ['eisenstein_hu','eisenstein_hu_nowiggle']:
-        pr_eh = Primordial(cosmo,engine=engine)
+    for engine in ['camb']:
+        pr = Primordial(cosmo, engine=engine)
+        for name in ['A_s','ln_1e10_A_s','n_s','k_pivot']:
+            assert np.allclose(getattr(pr,name), getattr(pr_class,name), atol=0,rtol=2e-3)
+        k = rng.uniform(1e-3, 10., 100)
+        for mode in ['scalar','tensor']:
+            assert np.allclose(pr.pk_k(k, mode=mode), pr_class.pk_k(k, mode=mode), atol=0, rtol=2e-3)
+            assert np.allclose(pr.pk_interpolator(mode=mode)(k), pr_class.pk_interpolator(mode=mode)(k), atol=0, rtol=2e-3)
+
+    for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks']:
+        pr = Primordial(cosmo,engine=engine)
         for name in ['n_s']:
-            assert np.allclose(getattr(pr_class,name),getattr(pr_eh,name),atol=0,rtol=1e-4)
+            assert np.allclose(getattr(pr, name), getattr(pr_class, name), atol=0, rtol=1e-4)
 
 
 @pytest.mark.parametrize('params',list_params)
 def test_harmonic(params):
     cosmo = Cosmology(**params)
     hr_class = Harmonic(cosmo,engine='class')
-    hr_camb = Harmonic(cosmo,engine='camb')
 
-    for name in ['lensed_cl','lens_potential_cl']:
-        for ellmax in [100,-1]:
-            if not cosmo['lensing']:
-                from pyclass import ClassBadValueError
-                from cosmoprimo.camb import CAMBError
-                with pytest.raises(ClassBadValueError):
-                    tmp_class = getattr(hr_class,name)(ellmax=ellmax)
-                with pytest.raises(CAMBError):
-                    tmp_camb = getattr(hr_camb,name)(ellmax=ellmax)
-            else:
-                tmp_class = getattr(hr_class,name)(ellmax=ellmax)
-                tmp_camb = getattr(hr_camb,name)(ellmax=ellmax)
-                assert tmp_class.dtype == tmp_camb.dtype
+    for engine in ['camb']:
+        hr = Harmonic(cosmo, engine=engine)
+        for name in ['lensed_cl', 'lens_potential_cl']:
+            for ellmax in [100,-1]:
+                if not cosmo['lensing']:
+                    if engine == 'class':
+                        from pyclass import ClassBadValueError
+                        with pytest.raises(ClassBadValueError):
+                            getattr(hr, name)(ellmax=ellmax)
+                    if engine == 'camb':
+                        from cosmoprimo.camb import CAMBError
+                        with pytest.raises(CAMBError):
+                            getattr(hr, name)(ellmax=ellmax)
+                else:
+                    tmp_class = getattr(hr_class, name)(ellmax=ellmax)
+                    tmp = getattr(hr, name)(ellmax=ellmax)
+                    assert tmp_class.dtype == tmp.dtype
+                    for field in tmp_class.dtype.names[1:]:
+                        if name == 'lensed_cl':
+                            atol = tmp_class[field].std()*1e-2 # to deal with 0 oscillating behavior
+                            rtol = 1e-2
+                            #print(name,field,tmp_class[field],tmp_camb[field])
+                            #print(hr_class.unlensed_cl(ellmax=ellmax)[field],hr_camb.unlensed_cl(ellmax=ellmax)[field])
+                        else:
+                            atol = tmp_class[field].std()*1e-1 # to deal with 0 oscillating behavior
+                            rtol = 1e-1
+                        assert np.allclose(tmp[field], tmp_class[field], atol=atol, rtol=rtol)
+        for name in ['unlensed_cl']:
+            for ellmax in [100,-1]:
+                tmp_class = getattr(hr_class, name)(ellmax=ellmax)
+                tmp = getattr(hr, name)(ellmax=ellmax)
+                assert tmp_class.dtype == tmp.dtype
                 for field in tmp_class.dtype.names[1:]:
-                    if name == 'lensed_cl':
-                        atol = tmp_class[field].std()*1e-2 # to deal with 0 oscillating behavior
-                        rtol = 1e-2
-                        #print(name,field,tmp_class[field],tmp_camb[field])
-                        #print(hr_class.unlensed_cl(ellmax=ellmax)[field],hr_camb.unlensed_cl(ellmax=ellmax)[field])
-                    else:
-                        atol = tmp_class[field].std()*1e-1 # to deal with 0 oscillating behavior
-                        rtol = 1e-1
-                    assert np.allclose(tmp_class[field],tmp_camb[field],atol=atol,rtol=rtol)
-
-    for name in ['unlensed_cl']:
-        for ellmax in [100,-1]:
-            tmp_class = getattr(hr_class,name)(ellmax=ellmax)
-            tmp_camb = getattr(hr_camb,name)(ellmax=ellmax)
-            assert tmp_class.dtype == tmp_camb.dtype
-            for field in tmp_class.dtype.names[1:]:
-                atol = tmp_class[field].std()*1e-2
-                assert np.allclose(tmp_class[field],tmp_camb[field],atol=atol,rtol=2e-2)
+                    atol = tmp_class[field].std()*1e-2
+                    assert np.allclose(tmp[field], tmp_class[field], atol=atol, rtol=2e-2)
 
 
 @pytest.mark.parametrize('params',list_params)
 def test_fourier(params, seed=42):
     rng = np.random.RandomState(seed=seed)
     cosmo = Cosmology(**params)
-    fo_class = Fourier(cosmo,engine='class',gauge='newtonian')
-    fo_camb = Fourier(cosmo,engine='camb')
+    fo_class = Fourier(cosmo, engine='class', gauge='newtonian')
+    ba_class = Background(cosmo, engine='class')
 
-    z = rng.uniform(0.,10.,20)
-    r = rng.uniform(1.,10.,10)
-    if 'sigma8' in cosmo.params:
-        assert np.allclose(fo_camb.sigma8_z(0,of='delta_m'),cosmo['sigma8'],rtol=1e-3)
-    for of in ['delta_m','delta_cb',('delta_cb','theta_cb'),'theta_cb']:
-        assert np.allclose(fo_class.sigma_rz(r,z,of=of),fo_camb.sigma_rz(r,z,of=of),rtol=1e-3)
-        assert np.allclose(fo_class.sigma8_z(z,of=of),fo_camb.sigma8_z(z,of=of),rtol=1e-3)
+    for engine in ['class', 'camb']:
+        fo = Fourier(cosmo, engine=engine)
+        z = rng.uniform(0.,10.,20)
+        r = rng.uniform(1.,10.,10)
+        if 'sigma8' in cosmo.params:
+            assert np.allclose(fo.sigma8_z(0, of='delta_m'), cosmo['sigma8'], rtol=1e-3)
+        for of in ['delta_m', 'delta_cb', ('delta_cb', 'theta_cb'), 'theta_cb']:
+            assert np.allclose(fo.sigma_rz(r,z,of=of), fo_class.sigma_rz(r,z,of=of), rtol=1e-3)
+            assert np.allclose(fo.sigma8_z(z,of=of), fo_class.sigma8_z(z,of=of), rtol=1e-3)
 
-    z = rng.uniform(0.,3.,1)
-    k = rng.uniform(1e-3,1.,20)
+        z = rng.uniform(0.,3.,1)
+        k = rng.uniform(1e-3,1.,20)
 
-    for of in ['delta_m','delta_cb']:
-        assert np.allclose(fo_class.pk_interpolator(nonlinear=False,of=of)(k,z=z),fo_camb.pk_interpolator(nonlinear=False,of=of)(k,z=z),rtol=2.5e-3)
-        assert np.allclose(fo_class.sigma8_z(z,of=of),fo_class.pk_interpolator(nonlinear=False,of=of).sigma8_z(z=z),rtol=1e-4)
-        assert np.allclose(fo_camb.sigma8_z(z,of=of),fo_camb.pk_interpolator(nonlinear=False,of=of).sigma8_z(z=z),rtol=1e-4)
+        for of in ['delta_m', 'delta_cb']:
+            assert np.allclose(fo.pk_interpolator(nonlinear=False,of=of)(k,z=z), fo_class.pk_interpolator(nonlinear=False,of=of)(k,z=z), rtol=2.5e-3)
+            assert np.allclose(fo.pk_interpolator(nonlinear=False,of=of).sigma8_z(z=z), fo.sigma8_z(z,of=of), rtol=1e-4)
 
-    z = np.array([0.,1.,2.,3.,4.])
-    for of in ['theta_cb',('delta_cb','theta_cb')]:
-        assert np.allclose(fo_class.pk_interpolator(nonlinear=False,of=of)(k,z=z),fo_camb.pk_interpolator(nonlinear=False,of=of)(k,z=z),rtol=2.5e-3)
+        z = np.linspace(0., 4., 5)
+        for of in ['theta_cb',('delta_cb','theta_cb')]:
+            assert np.allclose(fo.pk_interpolator(nonlinear=False,of=of)(k,z=z), fo_class.pk_interpolator(nonlinear=False,of=of)(k,z=z), rtol=2.5e-3)
 
-    ba_class = Background(cosmo,engine='class')
-    # if not cosmo['N_ncdm']:
-    z = rng.uniform(0.,10.,20)
-    r = rng.uniform(1.,10.,10)
-    pk_class = fo_class.pk_interpolator(of='delta_cb')
-    pk_camb = fo_camb.pk_interpolator(of='delta_cb')
+        # if not cosmo['N_ncdm']:
+        z = rng.uniform(0.,10.,20)
+        r = rng.uniform(1.,10.,10)
+        pk = fo.pk_interpolator(of='delta_cb')
 
-    for z in np.linspace(0.2,4.,5):
-        for r in np.linspace(2.,20.,5):
-            for dz in [1e-3,1e-2]:
-                rtol = 1e-3
-                #assert np.allclose(ba_class.growth_rate(z),pk_class.growth_rate_rz(r=r,z=z,dz=dz),atol=0,rtol=rtol)
-                f = fo_class.sigma_rz(r,z,of='theta_cb')/fo_class.sigma_rz(r,z,of='delta_cb')
-                assert np.allclose(f,pk_class.growth_rate_rz(r=r,z=z,dz=dz),atol=0,rtol=rtol)
-                f = fo_camb.sigma_rz(r,z,of='theta_cb')/fo_camb.sigma_rz(r,z,of='delta_cb')
-                assert np.allclose(f,pk_camb.growth_rate_rz(r=r,z=z,dz=dz),atol=0,rtol=rtol)
+        for z in np.linspace(0.2,4.,5):
+            for r in np.linspace(2.,20.,5):
+                for dz in [1e-3,1e-2]:
+                    rtol = 1e-3
+                    #assert np.allclose(ba_class.growth_rate(z),pk_class.growth_rate_rz(r=r,z=z,dz=dz),atol=0,rtol=rtol)
+                    f = fo.sigma_rz(r,z,of='theta_cb')/fo.sigma_rz(r,z,of='delta_cb')
+                    assert np.allclose(f, pk.growth_rate_rz(r=r,z=z,dz=dz), atol=0, rtol=rtol)
 
-    for engine in ['eisenstein_hu','eisenstein_hu_nowiggle']:
-        fo_eh = Fourier(cosmo,engine=engine)
+    for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks']:
+        fo = Fourier(cosmo, engine=engine)
         if 'sigma8' not in cosmo.params:
             with pytest.raises(CosmologyError):
-                fo_eh.pk_interpolator()
+                fo.pk_interpolator()
         else:
-            rtol = {'eisenstein_hu':6e-2,'eisenstein_hu_nowiggle':8e-2}[engine]
-            pk_class = fo_class.pk_interpolator(nonlinear=False,of='delta_m')
-            pk_eh = fo_eh.pk_interpolator()
-            assert np.allclose(pk_class(k,z=z),pk_eh(k,z=z),rtol=rtol)
-            r = rng.uniform(1.,10.,10)
-            assert np.allclose(pk_class.growth_rate_rz(r=r,z=z),pk_eh.growth_rate_rz(r=r,z=z),rtol=rtol)
+            pk_class = fo_class.pk_interpolator(nonlinear=False, of='delta_m')
+            pk = fo.pk_interpolator()
+            rtol = 0.25 if engine == 'bbks' else 0.15
+            assert np.allclose(pk(k,z=z), pk_class(k,z=z), atol=0., rtol=rtol)
+            r = rng.uniform(1., 10., 10)
+            assert np.allclose(pk.growth_rate_rz(r=r,z=z), pk_class.growth_rate_rz(r=r,z=z), atol=0., rtol=0.15)
 
 
 def plot_primordial_power_spectrum():
@@ -421,8 +431,8 @@ def test_neutrinos():
     from cosmoprimo import constants
     from cosmoprimo.cosmology import _compute_ncdm_momenta
 
-    for m_ncdm in [0.06,0.1,0.2,0.4]:
-        T_eff = constants.TCMB*constants.TNCDM
+    for m_ncdm in [0.06, 0.1, 0.2, 0.4]:
+        T_eff = constants.TCMB*constants.TNCDM_OVER_CMB
         #print(_compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='rho'),_compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='p'))
         omega_ncdm = _compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='rho')/constants.rho_crit_Msunph_per_Mpcph3
         assert np.allclose(omega_ncdm,m_ncdm/93.14,rtol=1e-3)
@@ -434,7 +444,7 @@ def test_neutrinos():
         #print(m_ncdm,cosmo['Omega_ncdm'],sum(cosmo['m_ncdm'])/(93.14*cosmo['h']**2))
         assert np.allclose(cosmo['Omega_ncdm'],sum(cosmo['m_ncdm'])/(93.14*cosmo['h']**2),rtol=1e-3)
         cosmo = Cosmology(Omega_ncdm=cosmo['Omega_ncdm'])
-        assert np.allclose(cosmo['m_ncdm'],m_ncdm)
+        assert np.allclose(cosmo['m_ncdm'], m_ncdm)
 
 
 def test_clone():
