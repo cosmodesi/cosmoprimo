@@ -954,8 +954,8 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         def finite_difference(fun):
             mask = z < self.zmin + hdz
             toret = np.empty(r.shape + z.shape, dtype=dtype)
-            # See eq. 6 of https://arxiv.org/abs/2102.05049
-            toret[..., mask] = (-3*fun(z[mask] + dz) + 4*fun(z[mask] + hdz) - 3*fun(z[mask]))/dz
+            # See eq. 6 of https://arxiv.org/abs/2102.05049, corrected
+            toret[..., mask] = (-fun(z[mask] + dz) + 4*fun(z[mask] + hdz) - 3*fun(z[mask]))/dz
             toret[..., ~mask] = (fun(z[~mask] + hdz) - fun(z[~mask] - hdz))/dz
             return toret
 

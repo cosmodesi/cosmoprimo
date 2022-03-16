@@ -58,7 +58,10 @@ def test_power_spectrum():
     check_shape_1d(interp.sigma8_z)
     check_shape_1d(interp.sigma_dz)
     check_shape_2d(interp.sigma_rz)
+    interp = PowerSpectrumInterpolator2D(k, z=z, pk=np.array([pk*(iz+1)/len(z) for iz in range(len(z))]).T)
     check_shape_2d(interp.growth_rate_rz)
+    dz = 1e-3
+    assert np.allclose(interp.growth_rate_rz(8., dz*2., dz=dz), interp.growth_rate_rz(8., 0., dz=dz), rtol=1e-2)
 
     interp = PowerSpectrumInterpolator2D(k, z=z, pk=np.array([pk]*len(z)).T, extrap_kmin=1e-6, extrap_kmax=1e2)
     check_shape_2d(interp)
@@ -190,8 +193,6 @@ def test_extrap_1d(plot=True):
 
 
 def test_extrap_2d(plot=False):
-
-
     if plot:
         from matplotlib import pyplot as plt
     cosmo = Cosmology()
