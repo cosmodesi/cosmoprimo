@@ -376,7 +376,7 @@ class GenericSpline(BaseClass):
             if grid:
                 i_x = np.argsort(x.flat)
                 i_y = np.argsort(y.flat)
-                toret = self.spline(x.flat[i_x], y.flat[i_y], grid=grid)[np.argsort(i_x),:][:,np.argsort(i_y)]
+                toret = self.spline(x.flat[i_x], y.flat[i_y], grid=grid)[np.ix_(np.argsort(i_x) ,np.argsort(i_y))]
             else:
                 toret = self.spline(x, y, grid=False)
 
@@ -953,11 +953,11 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
 
         def finite_difference(fun):
             mask = z < self.zmin + hdz
-            toret = np.empty_like(z)
+            toret = np.empty(r.shape + z.shape, dtype=dtype)
             # See eq. 6 of https://arxiv.org/abs/2102.05049
-            low = (-3*fun(z[mask] + dz) + 4*fun(z[mask] + hdz) - 3*fun(z[mask]))/dz
-            high = (fun(z[~mask] + hdz) - fun(z[~mask] - hdz))/dz
-            return np.concatenate([low, high], axis=-1)
+            toret[..., mask] = (-3*fun(z[mask] + dz) + 4*fun(z[mask] + hdz) - 3*fun(z[mask]))/dz
+            toret[..., ~mask] = (fun(z[~mask] + hdz) - fun(z[~mask] - hdz))/dz
+            return toret
 
         dsigdz = finite_difference(lambda z: np.log(self.sigma_rz(r,z,nk=nk,epsrel=epsrel)))
         # a = 1/(1 + z) => da = -1/(1+z)^2 dz => dln(a) = -1/(1 + z) dz

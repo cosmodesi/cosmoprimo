@@ -10,7 +10,7 @@ def check_shape_1d(interp):
     assert interp([]).shape == (0,)
     assert interp([[0.1, 0.2]]*3).shape == (3, 2)
     assert interp(np.array([[0.1, 0.2]]*3, dtype='f4')).dtype.itemsize == 4
-
+    assert np.allclose(interp([0.2, 0.1]), interp([0.1, 0.2])[::-1])
 
 def check_shape_2d(interp, grid=True):
     assert interp(0.1, 0.1).shape == ()
@@ -22,10 +22,12 @@ def check_shape_2d(interp, grid=True):
         assert interp([[0.1, 0.2]]*3, [0.1]).shape == (3, 2, 1)
         assert interp([[0.1, 0.2]]*3, [[0.1, 0.1, 0.2]]*3).shape == (3, 2, 3, 3)
         assert interp(np.array([[0.1, 0.2]]*3, dtype='f4'), np.array(0.1, dtype='f4')).dtype.itemsize == 4
+        assert np.allclose(interp([0.2, 0.1], [0.1, 0.]), interp([0.1, 0.2], [0., 0.1])[::-1,::-1])
     else:
         assert interp([], [], grid=False).shape == (0,)
         assert interp([0.1, 0.2], [0.1, 0.2], grid=False).shape == (2,)
         assert interp([[0.1, 0.2]]*3, [[0.1, 0.2]]*3, grid=False).shape == (3, 2)
+        assert np.allclose(interp([0.2, 0.1], [0.1, 0.], grid=False), interp([0.1, 0.2], [0., 0.1], grid=False)[::-1])
 
 
 def test_power_spectrum():
