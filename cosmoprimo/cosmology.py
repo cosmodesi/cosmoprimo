@@ -210,54 +210,23 @@ class BaseEngine(BaseClass):
         """
         return np.asarray([_compute_ncdm_momenta(self['T_cmb'] * T_ncdm_over_cmb, m, z=z, epsrel=epsrel, out='p') / (1 + z)**3 for m, T_ncdm_over_cmb in zip(self['m_ncdm'], self['T_ncdm_over_cmb'])])/self['h']**2
 
-    def get_background(self):
-        """Return :class:`Background` calculations."""
-        name = 'background'
+
+def _make_section_getter(section):
+
+    def getter(self):
+        name = section.lower()
         if name not in self._sections:
             self._sections[name] = self._Sections[name](self)
         return self._sections[name]
 
-    def get_thermodynamics(self):
-        """Return :class:`Thermodynamics` calculations."""
-        name = 'thermodynamics'
-        if name not in self._sections:
-            self._sections[name] = self._Sections[name](self)
-        return self._sections[name]
+    getter.__doc__ = """Return :class:`{}` calculations.""".format(section)
 
-    def get_primordial(self):
-        """Return :class:`Primordial` calculations."""
-        name = 'primordial'
-        if name not in self._sections:
-            self._sections[name] = self._Sections[name](self)
-        return self._sections[name]
+    return getter
 
-    def get_perturbations(self):
-        """Return :class:`Perturbations` calculations."""
-        name = 'perturbations'
-        if name not in self._sections:
-            self._sections[name] = self._Sections[name](self)
-        return self._sections[name]
 
-    def get_transfer(self):
-        """Return :class:`Transfer` calculations."""
-        name = 'transfer'
-        if name not in self._sections:
-            self._sections[name] = self._Sections[name](self)
-        return self._sections[name]
+for section in _Sections:
+    setattr(BaseEngine, 'get_{}'.format(section.lower()), _make_section_getter(section))
 
-    def get_harmonic(self):
-        """Return :class:`Harmonic` calculations."""
-        name = 'harmonic'
-        if name not in self._sections:
-            self._sections[name] = self._Sections[name](self)
-        return self._sections[name]
-
-    def get_fourier(self):
-        """Return :class:`Fourier` calculations."""
-        name = 'fourier'
-        if name not in self._sections:
-            self._sections[name] = self._Sections[name](self)
-        return self._sections[name]
 
 def get_engine(engine):
     """
@@ -334,9 +303,14 @@ def _get_cosmology_engine(cosmology, engine=None, set_engine=True, **extra_param
     return engine
 
 
-def Background(cosmology, engine=None, set_engine=True, **extra_params):
-    """
-    Return :class:`Background` calculations.
+def _make_section_getter(section):
+
+    def getter(cosmology, engine=None, set_engine=True, **extra_params):
+        engine = _get_cosmology_engine(cosmology, engine=engine, set_engine=set_engine, **extra_params)
+        return getattr(engine, 'get_{}'.format(section.lower()))()
+
+    getter.__doc__ = """
+    Return :class:`{}` calculations.
 
     Parameters
     ----------
@@ -357,177 +331,13 @@ def Background(cosmology, engine=None, set_engine=True, **extra_params):
     Returns
     -------
     engine : BaseEngine
-    """
-    engine = _get_cosmology_engine(cosmology, engine=engine, set_engine=set_engine, **extra_params)
-    return engine.get_background()
+    """.format(section)
+
+    return getter
 
 
-def Thermodynamics(cosmology, engine=None, set_engine=True, **extra_params):
-    """
-    Return :class:`Thermodynamics` calculations.
-
-    Parameters
-    ----------
-    cosmology : Cosmology
-        Current cosmology.
-
-    engine : string, default=None
-        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`Cosmology.engine`.
-
-    set_engine : bool, default=True
-        Whether to attach returned engine to ``cosmology``.
-        (Set ``False`` if e.g. you want to use this engine for a single calculation).
-
-    extra_params : dict
-        Extra engine parameters, typically precision parameters.
-
-    Returns
-    -------
-    engine : BaseEngine
-    """
-    engine = _get_cosmology_engine(cosmology, engine=engine, set_engine=set_engine, **extra_params)
-    return engine.get_thermodynamics()
-
-
-def Primordial(cosmology, engine=None, set_engine=True, **extra_params):
-    """
-    Return :class:`Primordial` calculations.
-
-    Parameters
-    ----------
-    cosmology : Cosmology
-        Current cosmology.
-
-    engine : string, default=None
-        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`Cosmology.engine`.
-
-    set_engine : bool, default=True
-        Whether to attach returned engine to ``cosmology``.
-        (Set ``False`` if e.g. you want to use this engine for a single calculation).
-
-    extra_params : dict
-        Extra engine parameters, typically precision parameters.
-
-    Returns
-    -------
-    engine : BaseEngine
-    """
-    engine = _get_cosmology_engine(cosmology, engine=engine, set_engine=set_engine, **extra_params)
-    return engine.get_primordial()
-
-
-def Perturbations(cosmology, engine=None, set_engine=True, **extra_params):
-    """
-    Return :class:`Perturbations` calculations.
-
-    Parameters
-    ----------
-    cosmology : Cosmology
-        Current cosmology.
-
-    engine : string, default=None
-        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`Cosmology.engine`.
-
-    set_engine : bool, default=True
-        Whether to attach returned engine to ``cosmology``.
-        (Set ``False`` if e.g. you want to use this engine for a single calculation).
-
-    extra_params : dict
-        Extra engine parameters, typically precision parameters.
-
-    Returns
-    -------
-    engine : BaseEngine
-    """
-    engine = _get_cosmology_engine(cosmology, engine=engine, set_engine=set_engine, **extra_params)
-    return engine.get_perturbations()
-
-
-def Transfer(cosmology, engine=None, set_engine=True, **extra_params):
-    """
-    Return :class:`Transfer` calculations.
-
-    Parameters
-    ----------
-    cosmology : Cosmology
-        Current cosmology.
-
-    engine : string, default=None
-        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`Cosmology.engine`.
-
-    set_engine : bool, default=True
-        Whether to attach returned engine to ``cosmology``.
-        (Set ``False`` if e.g. you want to use this engine for a single calculation).
-
-    extra_params : dict
-        Extra engine parameters, typically precision parameters.
-
-    Returns
-    -------
-    engine : BaseEngine
-    """
-    engine = _get_cosmology_engine(cosmology, engine=engine, set_engine=set_engine, **extra_params)
-    return engine.get_transfer()
-
-
-def Harmonic(cosmology, engine=None, set_engine=True, **extra_params):
-    """
-    Return :class:`Harmonic` calculations.
-
-    Parameters
-    ----------
-    cosmology : Cosmology
-        Current cosmology.
-
-    engine : string, default=None
-        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`Cosmology.engine`.
-
-    set_engine : bool, default=True
-        Whether to attach returned engine to ``cosmology``.
-        (Set ``False`` if e.g. you want to use this engine for a single calculation).
-
-    extra_params : dict
-        Extra engine parameters, typically precision parameters.
-
-    Returns
-    -------
-    engine : BaseEngine
-    """
-    engine = _get_cosmology_engine(cosmology, engine=engine, set_engine=set_engine, **extra_params)
-    return engine.get_harmonic()
-
-
-def Fourier(cosmology, engine=None, set_engine=True, **extra_params):
-    """
-    Return :class:`Fourier` calculations.
-
-    Parameters
-    ----------
-    cosmology : Cosmology
-        Current cosmology.
-
-    engine : string, default=None
-        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-        If ``None``, returns current :attr:`Cosmology.engine`.
-
-    set_engine : bool, default=True
-        Whether to attach returned engine to ``cosmology``.
-        (Set ``False`` if e.g. you want to use this engine for a single calculation).
-
-    extra_params : dict
-        Extra engine parameters, typically precision parameters.
-
-    Returns
-    -------
-    engine : BaseEngine
-    """
-    engine = _get_cosmology_engine(cosmology, engine=engine, set_engine=set_engine, **extra_params)
-    return engine.get_fourier()
+for section in _Sections:
+    globals()[section] = _make_section_getter(section)
 
 
 def _include_conflicts(params):
@@ -741,27 +551,28 @@ class BaseSection(object):
 def _make_section_getter(section):
 
     def getter(self,  engine=None, set_engine=True, **extra_params):
-        """
-        Get {}.
-
-        Parameters
-        ----------
-        engine : string, default=None
-            Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
-            If ``None``, returns current :attr:`Cosmology.engine`.
-
-        set_engine : bool, default=True
-            Whether to attach returned engine to ``cosmology``.
-            (Set ``False`` if e.g. you want to use this engine for a single calculation).
-
-        extra_params : dict
-            Extra engine parameters, typically precision parameters.
-        """.format(section)
         engine = _get_cosmology_engine(self,engine=engine,set_engine=set_engine,**extra_params)
-        toret = getattr(engine,'get_{}'.format(section),None)
+        toret = getattr(engine, 'get_{}'.format(section), None)
         if toret is None:
             raise CosmologyError('Engine {} does not provide {}'.format(engine.__class__.__name__,section))
         return toret()
+
+    getter.__doc__ = """
+    Get {}.
+
+    Parameters
+    ----------
+    engine : string, default=None
+        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+        If ``None``, returns current :attr:`Cosmology.engine`.
+
+    set_engine : bool, default=True
+        Whether to attach returned engine to ``cosmology``.
+        (Set ``False`` if e.g. you want to use this engine for a single calculation).
+
+    extra_params : dict
+        Extra engine parameters, typically precision parameters.
+    """.format(section)
 
     return getter
 

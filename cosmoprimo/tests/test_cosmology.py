@@ -119,7 +119,7 @@ def test_background(params, seed=42):
 @pytest.mark.parametrize('params',list_params)
 def test_thermodynamics(params):
     cosmo = Cosmology(**params)
-    th_class = Thermodynamics(cosmo,engine='class')
+    th_class = Thermodynamics(cosmo, engine='class')
 
     for engine in ['camb']:
         th = Thermodynamics(cosmo, engine=engine)
@@ -134,7 +134,7 @@ def test_thermodynamics(params):
 def test_primordial(params, seed=42):
     rng = np.random.RandomState(seed=seed)
     cosmo = Cosmology(**params)
-    pr_class = Primordial(cosmo,engine='class')
+    pr_class = Primordial(cosmo, engine='class')
 
     for engine in ['camb']:
         pr = Primordial(cosmo, engine=engine)
@@ -146,7 +146,7 @@ def test_primordial(params, seed=42):
             assert np.allclose(pr.pk_interpolator(mode=mode)(k), pr_class.pk_interpolator(mode=mode)(k), atol=0, rtol=2e-3)
 
     for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks']:
-        pr = Primordial(cosmo,engine=engine)
+        pr = Primordial(cosmo, engine=engine)
         for name in ['n_s']:
             assert np.allclose(getattr(pr, name), getattr(pr_class, name), atol=0, rtol=1e-4)
 
@@ -154,7 +154,7 @@ def test_primordial(params, seed=42):
 @pytest.mark.parametrize('params',list_params)
 def test_harmonic(params):
     cosmo = Cosmology(**params)
-    hr_class = Harmonic(cosmo,engine='class')
+    hr_class = Harmonic(cosmo, engine='class')
 
     for engine in ['camb']:
         hr = Harmonic(cosmo, engine=engine)

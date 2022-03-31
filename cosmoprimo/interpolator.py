@@ -27,7 +27,7 @@ def get_default_z_callable():
     return np.linspace(0.,10.,60)
 
 
-def _pad_log(k, pk, extrap_kmin=1e-5, extrap_kmax=100):
+def _pad_log(k, pk, extrap_kmin=1e-6, extrap_kmax=1e2):
     """
     Pad ``pk`` and ``k`` in log10-log10-space between ``extrap_kmin`` and ``k[0]`` and ``k[-1]`` and ``extrap_kmax``.
 
@@ -39,10 +39,10 @@ def _pad_log(k, pk, extrap_kmin=1e-5, extrap_kmax=100):
     pk : array_like
         Power spectrum.
 
-    extrap_kmin : float, default=1e-5
+    extrap_kmin : float, default=1e-6
         Minimum wavenumber of extrapolation range.
 
-    extrap_kmax : float, default=100
+    extrap_kmax : float, default=1e2
         Maximum wavenumber of extrapolation range.
 
     Returns
@@ -65,7 +65,7 @@ def _pad_log(k, pk, extrap_kmin=1e-5, extrap_kmax=100):
         delta = [dlogpkdlogk*(padhighk[0] - logk[-1]), dlogpkdlogk*(padhighk[1] - logk[-1])]
         padhighpk = np.array([logpk[-1] + delta[0], logpk[-1] + delta[1]])
         # if log_extrap_kmax too close to logk
-        if padhighk[1] == padhighk[0]:
+        if padhighk[1] <= padhighk[0] or padhighk[0] <= logk[-1]:
             logk = logk[:-1]
             logpk = logpk[:-1]
             padhighk = padhighk[1:]
@@ -75,16 +75,16 @@ def _pad_log(k, pk, extrap_kmin=1e-5, extrap_kmax=100):
         padlowk = [log_extrap_kmin, logk[0] * 0.1 + log_extrap_kmin * 0.9]
         delta = [dlogpkdlogk*(padlowk[0] - logk[0]), dlogpkdlogk*(padlowk[1] - logk[0])]
         padlowpk = np.array([logpk[0] + delta[0], logpk[0] + delta[1]])
-        if padlowk[1] == padlowk[0]:
+        if padlowk[1] <= padlowk[0] or padlowk[1] >= logk[0]:
             logk = logk[1:]
             logpk = logpk[1:]
             padlowk = padlowk[:-1]
             padlowpk = padlowpk[:-1]
-    logk = np.hstack([padlowk,logk,padhighk])
+    logk = np.concatenate([padlowk, logk, padhighk], axis=0)
     s = [logpk]
     if padlowpk is not None: s = [padlowpk] + s
     if padhighpk is not None: s = s + [padhighpk]
-    logpk = np.concatenate(s,axis=0)
+    logpk = np.concatenate(s, axis=0)
     return logk,logpk
 
 
@@ -111,7 +111,7 @@ def wtophat_scalar(x):
     return _wtophat_highx(x)
 
 
-def _sigma_d(pk, kmin=1e-6, kmax=100, epsrel=1e-5):
+def _sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
     r"""
     Return the r.m.s. of the displacement field, i.e. the square root of:
 
@@ -127,7 +127,7 @@ def _sigma_d(pk, kmin=1e-6, kmax=100, epsrel=1e-5):
     kmin : float, default=1e-6
         Minimum wavenumber.
 
-    kmax : float, default=100
+    kmax : float, default=1e2
         Maximum wavenumber.
 
     epsrel : float, default1e-5
@@ -148,7 +148,7 @@ def _sigma_d(pk, kmin=1e-6, kmax=100, epsrel=1e-5):
 
 
 @np.vectorize
-def _sigma_r(r, pk, kmin=1e-6, kmax=100, epsrel=1e-5):
+def _sigma_r(r, pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
     r"""
     Return the r.m.s. of perturbations in a sphere of :math:`r`, i.e. the square root of:
 
@@ -167,7 +167,7 @@ def _sigma_r(r, pk, kmin=1e-6, kmax=100, epsrel=1e-5):
     kmin : float, default=1e-6
         Minimum wavenumber.
 
-    kmax : float, default=100
+    kmax : float, default=1e2
         Maximum wavenumber.
 
     epsrel : float, default=1e-5
@@ -232,7 +232,7 @@ class GenericSpline(BaseClass):
 
     """Base class that handles 1D and 2D splines."""
 
-    def __init__(self, x, y=0, fun=None, interp_x='log', extrap_fun='lin', extrap_xmin=1e-6, extrap_xmax=100, interp_order_x=3, interp_order_y=None, extrap_y=False):
+    def __init__(self, x, y=0, fun=None, interp_x='log', extrap_fun='lin', extrap_xmin=1e-6, extrap_xmax=1e2, interp_order_x=3, interp_order_y=None, extrap_y=False):
         """
         Initialize :class:`GenericSpline`.
 
@@ -257,7 +257,7 @@ class GenericSpline(BaseClass):
         extrap_xmin : float, default=1e-6
             Minimum extrapolation range in ``x``.
 
-        extrap_xmax : float, default=100
+        extrap_xmax : float, default=1e2
             Maximum extrapolation range in ``y``.
 
         interp_order_x : int, default=3
@@ -440,7 +440,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
     such as :meth:`sigma_r` or :meth:`to_xi`.
     """
 
-    def __init__(self, k, pk, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=100, interp_order_k=3):
+    def __init__(self, k, pk, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=1e2, interp_order_k=3):
         """
         Initialize :class:`PowerSpectrumInterpolator1D`.
 
@@ -461,7 +461,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         extrap_kmin : float, default=1e-6
             Minimum extrapolation range in ``k``.
 
-        extrap_kmax : float, default=100
+        extrap_kmax : float, default=1e2
             Maximum extrapolation range in ``k``.
 
         interp_order_k : int, default=3
@@ -640,7 +640,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     such as :meth:`sigma_rz` or :meth:`to_xi`.
     """
 
-    def __init__(self, k, z=0, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=100,
+    def __init__(self, k, z=0, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=1e2,
                 interp_order_k=3, interp_order_z=None, extrap_z=None, growth_factor_sq=None):
         r"""
         Initialize :class:`PowerSpectrumInterpolator2D`.
@@ -670,7 +670,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         extrap_kmin : float, default=1e-6
             Minimum extrapolation range in ``k``.
 
-        extrap_kmax : float, default=100
+        extrap_kmax : float, default=1e2
             Maximum extrapolation range in ``k``.
 
         interp_order_k : int, default=3
