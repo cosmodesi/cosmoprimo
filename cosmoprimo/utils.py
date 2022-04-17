@@ -9,7 +9,7 @@ import numpy as np
 def mkdir(dirname):
     """Try to create ``dirnm`` and catch :class:`OSError`."""
     try:
-        os.makedirs(dirname) # MPI...
+        os.makedirs(dirname)  # MPI...
     except OSError:
         return
 
@@ -39,12 +39,12 @@ def addproperty(*attrs):
 
             @property
             def func(self):
-                return getattr(self,'_{}'.format(name))
+                return getattr(self, '_{}'.format(name))
 
             return func
 
         for attr in attrs:
-            setattr(cls,attr,_make_property(attr))
+            setattr(cls, attr, _make_property(attr))
 
         return cls
 
@@ -112,7 +112,7 @@ class SolveLeastSquares(BaseClass):
         # gradient shape = (nparams,ndata)
         self.gradient = np.asarray(gradient)
         self.isscalar = self.gradient.ndim == 1
-        if self.isscalar: self.gradient = self.gradient[None,:]
+        if self.isscalar: self.gradient = self.gradient[None, :]
         self.precision = np.asarray(precision)
         if self.precision.ndim == 1:
             hv = self.gradient * self.precision
@@ -126,18 +126,18 @@ class SolveLeastSquares(BaseClass):
         self.params = self.delta.dot(self.projector)
 
     def __call__(self, delta):
-        """Main method to be called; return parameters :math:`\mathbf{p}` best fitting ``delta``."""
+        r"""Main method to be called; return parameters :math:`\mathbf{p}` best fitting ``delta``."""
         self.compute(delta)
-        if self.isscalar: return self.params[...,0]
+        if self.isscalar: return self.params[..., 0]
         return self.params
 
     def model(self):
-        """Return model at :math:`\mathbf{p}`."""
+        r"""Return model at :math:`\mathbf{p}`."""
         return self.params.dot(self.gradient)
 
     def chi2(self):
-        """Return :math:`\chi^{2}` at :math:`\mathbf{p}`."""
+        r"""Return :math:`\chi^{2}` at :math:`\mathbf{p}`."""
         delta = self.delta - self.model()
         if self.precision.ndim == 1:
-            return np.sum((delta * self.precision) * delta,axis=-1)
-        return np.sum(delta.dot(self.precision) * delta,axis=-1)
+            return np.sum((delta * self.precision) * delta, axis=-1)
+        return np.sum(delta.dot(self.precision) * delta, axis=-1)

@@ -4,7 +4,6 @@ Useful classes are :class:`PowerSpectrumInterpolator1D`, :class:`PowerSpectrumIn
 :class:`CorrelationFunctionInterpolator1D`, :class:`CorrelationFunctionInterpolator2D`.
 """
 
-import functools
 import inspect
 
 import numpy as np
@@ -16,15 +15,15 @@ from . import constants
 
 
 def get_default_k_callable():
-    return np.logspace(-6,2,500)
+    return np.logspace(-6, 2, 500)
 
 
 def get_default_s_callable():
-    return np.logspace(-6,2,500)
+    return np.logspace(-6, 2, 500)
 
 
 def get_default_z_callable():
-    return np.linspace(0.,10.,60)
+    return np.linspace(0., 10., 60)
 
 
 def _pad_log(k, pk, extrap_kmin=1e-6, extrap_kmax=1e2):
@@ -55,14 +54,14 @@ def _pad_log(k, pk, extrap_kmin=1e-6, extrap_kmax=1e2):
     """
     logk = np.log10(k)
     logpk = np.log10(pk)
-    padlowk,padhighk = [],[]
-    padlowpk,padhighpk = None,None
+    padlowk, padhighk = [], []
+    padlowpk, padhighpk = None, None
     log_extrap_kmax = np.log10(extrap_kmax)
     log_extrap_kmin = np.log10(extrap_kmin)
     if log_extrap_kmax > logk[-1]:
         dlogpkdlogk = (logpk[-1] - logpk[-2]) / (logk[-1] - logk[-2])
         padhighk = [logk[-1] * 0.1 + log_extrap_kmax * 0.9, log_extrap_kmax]
-        delta = [dlogpkdlogk*(padhighk[0] - logk[-1]), dlogpkdlogk*(padhighk[1] - logk[-1])]
+        delta = [dlogpkdlogk * (padhighk[0] - logk[-1]), dlogpkdlogk * (padhighk[1] - logk[-1])]
         padhighpk = np.array([logpk[-1] + delta[0], logpk[-1] + delta[1]])
         # if log_extrap_kmax too close to logk
         if padhighk[1] <= padhighk[0] or padhighk[0] <= logk[-1]:
@@ -73,7 +72,7 @@ def _pad_log(k, pk, extrap_kmin=1e-6, extrap_kmax=1e2):
     if log_extrap_kmin < logk[0]:
         dlogpkdlogk = (logpk[1] - logpk[0]) / (logk[1] - logk[0])
         padlowk = [log_extrap_kmin, logk[0] * 0.1 + log_extrap_kmin * 0.9]
-        delta = [dlogpkdlogk*(padlowk[0] - logk[0]), dlogpkdlogk*(padlowk[1] - logk[0])]
+        delta = [dlogpkdlogk * (padlowk[0] - logk[0]), dlogpkdlogk * (padlowk[1] - logk[0])]
         padlowpk = np.array([logpk[0] + delta[0], logpk[0] + delta[1]])
         if padlowk[1] <= padlowk[0] or padlowk[1] >= logk[0]:
             logk = logk[1:]
@@ -85,7 +84,7 @@ def _pad_log(k, pk, extrap_kmin=1e-6, extrap_kmax=1e2):
     if padlowpk is not None: s = [padlowpk] + s
     if padhighpk is not None: s = s + [padhighpk]
     logpk = np.concatenate(s, axis=0)
-    return logk,logpk
+    return logk, logpk
 
 
 def _wtophat_lowx(x2):
@@ -97,17 +96,17 @@ def _wtophat_lowx(x2):
     ----
     Taken from https://github.com/LSSTDESC/CCL/blob/66397c7b53e785ae6ee38a688a741bb88d50706b/src/ccl_power.c
     """
-    return 1. + x2*(-1.0/10.0 + x2*(1.0/280.0 + x2*(-1.0/15120.0 + x2*(1.0/1330560.0 + x2*(-1.0/172972800.0)))))
+    return 1. + x2 * (-1.0 / 10.0 + x2 * (1.0 / 280.0 + x2 * (-1.0 / 15120.0 + x2 * (1.0 / 1330560.0 + x2 * (-1.0 / 172972800.0)))))
 
 
 def _wtophat_highx(x):
     r"""Return the tophat function math:`W(x) = 3 (\sin(x)-x\cos(x))/x^{3}` to :math:`\mathcal{O}(x^{10})`."""
-    return 3.*(np.sin(x) - x*np.cos(x))/x**3
+    return 3. * (np.sin(x) - x * np.cos(x)) / x**3
 
 
 def wtophat_scalar(x):
     """Non vectorized tophat function."""
-    if x<0.1: return _wtophat_lowx(x**2)
+    if x < 0.1: return _wtophat_lowx(x**2)
     return _wtophat_highx(x)
 
 
@@ -141,9 +140,9 @@ def _sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
     """
     def integrand(logk):
         k = np.exp(logk)
-        return k*pk(k) # extra k factor because log integration
+        return k * pk(k)  # extra k factor because log integration
 
-    sigmasq = 1./6./np.pi**2*integrate.quad(integrand,np.log(kmin),np.log(kmax),epsrel=epsrel)[0]
+    sigmasq = 1. / 6. / np.pi**2 * integrate.quad(integrand, np.log(kmin), np.log(kmax), epsrel=epsrel)[0]
     return np.sqrt(sigmasq)
 
 
@@ -180,9 +179,9 @@ def _sigma_r(r, pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
     """
     def integrand(logk):
         k = np.exp(logk)
-        return pk(k)*(wtophat_scalar(r*k)*k)**2*k # extra k factor because log integration
+        return pk(k) * (wtophat_scalar(r * k) * k)**2 * k  # extra k factor because log integration
 
-    sigmasq = 1./2./np.pi**2*integrate.quad(integrand,np.log(kmin),np.log(kmax),epsrel=epsrel)[0]
+    sigmasq = 1. / 2. / np.pi**2 * integrate.quad(integrand, np.log(kmin), np.log(kmax), epsrel=epsrel)[0]
     return np.sqrt(sigmasq)
 
 
@@ -208,7 +207,7 @@ def _get_default_kwargs(func, start=0, remove=()):
     """
     parameters = inspect.signature(func).parameters
     default_params = {}
-    for iname,(name,param) in enumerate(parameters.items()):
+    for iname, (name, param) in enumerate(parameters.items()):
         if iname >= start:
             default_params[name] = param.default
     for rm in remove:
@@ -268,8 +267,8 @@ class GenericSpline(BaseClass):
         """
         #  Check order
         if np.ndim(y) == 0:
-            fun = fun[:,None]
-        x,y = (np.atleast_1d(x_) for x_ in [x,y])
+            fun = fun[:, None]
+        x, y = (np.atleast_1d(x_) for x_ in [x, y])
         i_x = np.argsort(x)
         i_y = np.argsort(y)
         self.x, self.y, self.fun = x[i_x], y[i_y], fun[i_x, :][:, i_y]
@@ -288,12 +287,12 @@ class GenericSpline(BaseClass):
         if self.extrap_fun == 'log':
             if self.interp_x != 'log':
                 raise ValueError('log-log extrapolation requires log-x interpolation')
-            x,fun = _pad_log(self.x,self.fun,extrap_kmin=extrap_xmin,extrap_kmax=extrap_xmax)
+            x, fun = _pad_log(self.x, self.fun, extrap_kmin=extrap_xmin, extrap_kmax=extrap_xmax)
             self.extrap_xmin = 10**x[0]
             self.extrap_xmax = 10**x[-1]
 
         if interp_order_y is None:
-            self.interp_order_y = min(len(y)-1,3)
+            self.interp_order_y = min(len(y) - 1, 3)
         if self.interp_order_y == 0:
             self.spline = interpolate.UnivariateSpline(x, fun, k=self.interp_order_x, s=0, ext='const')
         else:
@@ -302,7 +301,7 @@ class GenericSpline(BaseClass):
     @staticmethod
     def min_spline_order(x):
         """Return maximum spline order given ``x`` size."""
-        return min(len(x)-1, 3)
+        return min(len(x) - 1, 3)
 
     @property
     def xmin(self):
@@ -372,7 +371,7 @@ class GenericSpline(BaseClass):
             if grid:
                 i_x = np.argsort(x.flat)
                 i_y = np.argsort(y.flat)
-                toret = self.spline(x.flat[i_x], y.flat[i_y], grid=grid)[np.ix_(np.argsort(i_x) ,np.argsort(i_y))]
+                toret = self.spline(x.flat[i_x], y.flat[i_y], grid=grid)[np.ix_(np.argsort(i_x), np.argsort(i_y))]
             else:
                 toret = self.spline(x, y, grid=False)
 
@@ -390,13 +389,13 @@ class _BasePowerSpectrumInterpolator(BaseClass):
 
     def params(self):
         """Return interpolator parameter dictionary."""
-        return {name: getattr(self,name) for name in self.default_params}
+        return {name: getattr(self, name) for name in self.default_params}
 
     def as_dict(self):
         """Return interpolator as a dictionary."""
         state = self.params()
-        for name in ['k','pk']:
-            state[name] = getattr(self,name)
+        for name in ['k', 'pk']:
+            state[name] = getattr(self, name)
         return state
 
     def clone(self, **kwargs):
@@ -406,7 +405,7 @@ class _BasePowerSpectrumInterpolator(BaseClass):
 
         See :meth:`deepcopy` doc for warning about interpolators built from callables.
         """
-        return self.__class__(**{**self.as_dict(),**kwargs})
+        return self.__class__(**{**self.as_dict(), **kwargs})
 
     def deepcopy(self):
         """
@@ -464,7 +463,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
             Interpolation order, i.e. degree of smoothing spline along ``k``.
         """
         self._rsigma8sq = 1.
-        self.spline = GenericSpline(k,fun=pk,interp_x=interp_k,extrap_fun=extrap_pk,extrap_xmin=extrap_kmin,extrap_xmax=extrap_kmax,interp_order_x=interp_order_k)
+        self.spline = GenericSpline(k, fun=pk, interp_x=interp_k, extrap_fun=extrap_pk, extrap_xmin=extrap_kmin, extrap_xmax=extrap_kmax, interp_order_x=interp_order_k)
         self.k = self.spline.x
         self.extrap_kmin, self.extrap_kmax = self.spline.extrap_xmin, self.spline.extrap_xmax
         self.interp_k, self.extrap_pk = self.spline.interp_x, self.spline.extrap_fun
@@ -477,14 +476,14 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
 
         self.interp = interp
 
-    default_params = _get_default_kwargs(__init__,start=3)
+    default_params = _get_default_kwargs(__init__, start=3)
 
     @property
     def pk(self):
         """Return power spectrum array (if interpolator built from callable, evaluate it), with normalisation."""
         if self.is_from_callable:
             return self(self.k)
-        return self.spline.fun[:,0] * self._rsigma8sq
+        return self.spline.fun[:, 0] * self._rsigma8sq
 
     @classmethod
     def from_callable(cls, k=None, pk_callable=None):
@@ -560,9 +559,9 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         sigmad : array_like
         """
         if nk is None:
-            return _sigma_d(self,kmin=self.extrap_kmin,kmax=self.extrap_kmax,epsrel=epsrel)
+            return _sigma_d(self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, epsrel=epsrel)
         k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
-        sigmasq = 1./6./constants.pi**2*integrate.trapz(self(k), x=k, axis=-1)
+        sigmasq = 1. / 6. / constants.pi**2 * integrate.trapz(self(k), x=k, axis=-1)
         return np.sqrt(sigmasq)
 
     def sigma_r(self, r, nk=1024, epsrel=1e-5):
@@ -591,19 +590,19 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
             Array of shape ``(r.size,)`` (null dimensions are squeezed).
         """
         if nk is None:
-            return _sigma_r(r, self,kmin=self.extrap_kmin, kmax=self.extrap_kmax, epsrel=epsrel)
+            return _sigma_r(r, self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, epsrel=epsrel)
         k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
         s, var = TophatVariance(k)(self(k))
-        return np.sqrt(GenericSpline(s,[0],var[:,None])(r))
+        return np.sqrt(GenericSpline(s, [0], var[:, None])(r))
 
     def sigma8(self, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""
-        return self.sigma_r(8.,**kwargs)
+        return self.sigma_r(8., **kwargs)
 
     def rescale_sigma8(self, sigma8=1.):
         """Rescale power spectrum to the provided ``sigma8`` normalisation."""
-        self._rsigma8sq = 1. # reset rsigma8 for interpolation
-        self._rsigma8sq = sigma8**2/self.sigma8()**2
+        self._rsigma8sq = 1.  # reset rsigma8 for interpolation
+        self._rsigma8sq = sigma8**2 / self.sigma8()**2
 
     def to_xi(self, nk=1024, fftlog_kwargs=None, **kwargs):
         """
@@ -623,10 +622,10 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         xi : CorrelationFunctionInterpolator1D
         """
         k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
-        s,xi = PowerToCorrelation(k, complex=False, **(fftlog_kwargs or {}))(self(k))
-        default_params = dict(interp_s='log',interp_order_s=self.interp_order_k)
+        s, xi = PowerToCorrelation(k, complex=False, **(fftlog_kwargs or {}))(self(k))
+        default_params = dict(interp_s='log', interp_order_s=self.interp_order_k)
         default_params.update(kwargs)
-        return CorrelationFunctionInterpolator1D(s,xi=xi,**default_params)
+        return CorrelationFunctionInterpolator1D(s, xi=xi, **default_params)
 
 
 class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
@@ -637,7 +636,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     """
 
     def __init__(self, k, z=0, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=1e2,
-                interp_order_k=3, interp_order_z=None, extrap_z=None, growth_factor_sq=None):
+                 interp_order_k=3, interp_order_z=None, extrap_z=None, growth_factor_sq=None):
         r"""
         Initialize :class:`PowerSpectrumInterpolator2D`.
 
@@ -689,27 +688,27 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         self._rsigma8sq = 1.
         self.growth_factor_sq = growth_factor_sq
         if extrap_z is None: extrap_z = self.growth_factor_sq is not None
-        self.spline = GenericSpline(k,y=z,fun=pk,interp_x=interp_k,extrap_fun=extrap_pk,extrap_xmin=extrap_kmin,extrap_xmax=extrap_kmax,
-                                    interp_order_x=interp_order_k,interp_order_y=interp_order_z,extrap_y=extrap_z)
+        self.spline = GenericSpline(k, y=z, fun=pk, interp_x=interp_k, extrap_fun=extrap_pk, extrap_xmin=extrap_kmin, extrap_xmax=extrap_kmax,
+                                    interp_order_x=interp_order_k, interp_order_y=interp_order_z, extrap_y=extrap_z)
         self.k, self.z = self.spline.x, self.spline.y
         self.extrap_kmin, self.extrap_kmax = self.spline.extrap_xmin, self.spline.extrap_xmax
         self.interp_k, self.extrap_pk, self.extrap_z = self.spline.interp_x, self.spline.extrap_fun, self.spline.extrap_y
-        self.interp_order_k,self.interp_order_z = self.spline.interp_order_x, self.spline.interp_order_y
+        self.interp_order_k, self.interp_order_z = self.spline.interp_order_x, self.spline.interp_order_y
         self.is_from_callable = False
 
         def interp(k, z=0, islogk=False, ignore_growth=False, **kwargs):
             toret = self.spline(k, z, islogx=islogk, **kwargs)
             if self.growth_factor_sq is not None and not ignore_growth:
-                toret = toret*self.growth_factor_sq(z)
+                toret = toret * self.growth_factor_sq(z)
             return toret * self._rsigma8sq
 
         self.interp = interp
 
-    default_params = _get_default_kwargs(__init__,start=4)
+    default_params = _get_default_kwargs(__init__, start=4)
 
     def as_dict(self):
         """Return interpolator as a dictionary."""
-        state = super(PowerSpectrumInterpolator2D,self).as_dict()
+        state = super(PowerSpectrumInterpolator2D, self).as_dict()
         state['z'] = self.z
         return state
 
@@ -717,7 +716,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     def pk(self):
         """Return power spectrum array (if interpolator built from callable, evaluate it), without growth factor, but with normalisation."""
         if self.is_from_callable:
-            return self(self.k,self.z,ignore_growth=True)
+            return self(self.k, self.z, ignore_growth=True)
         return self.spline.fun * self._rsigma8sq
 
     @property
@@ -858,7 +857,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             toret.shape = z.shape
             return toret.astype(dtype=dtype, copy=False)
         k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
-        sigmasq = 1./6./constants.pi**2*integrate.trapz(self(k,z), x=k, axis=0)
+        sigmasq = 1. / 6. / constants.pi**2 * integrate.trapz(self(k, z), x=k, axis=0)
         return np.sqrt(sigmasq).astype(dtype=dtype, copy=False)
 
     def sigma_rz(self, r, z=0, nk=1024, epsrel=1e-5):
@@ -892,21 +891,21 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         dtype = _bcast_dtype(z)
         z = np.asarray(z, dtype=dtype)
         if nk is None:
-            toret = np.array([self.to_1d(z=zz).sigma_r(r,epsrel=epsrel) for zz in z.flat]).T
+            toret = np.array([self.to_1d(z=zz).sigma_r(r, epsrel=epsrel) for zz in z.flat]).T
             toret.shape = z.shape
             return toret.astype(dtype=dtype, copy=False)
         k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
-        s, var = TophatVariance(k)(self(k,z=self.z).T)
-        return np.sqrt(GenericSpline(s,self.z,var.T)(r,z,grid=True)).astype(dtype=dtype, copy=False)
+        s, var = TophatVariance(k)(self(k, z=self.z).T)
+        return np.sqrt(GenericSpline(s, self.z, var.T)(r, z, grid=True)).astype(dtype=dtype, copy=False)
 
     def sigma8_z(self, z=0, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""
-        return self.sigma_rz(8.,z=z,**kwargs)
+        return self.sigma_rz(8., z=z, **kwargs)
 
     def rescale_sigma8(self, sigma8=1.):
         """Rescale power spectrum to the provided ``sigma8`` normalisation  at :math:`z = 0`."""
-        self._rsigma8sq = 1. # reset rsigma8 for interpolation
-        self._rsigma8sq = sigma8**2/self.sigma8_z(z=0)**2
+        self._rsigma8sq = 1.  # reset rsigma8 for interpolation
+        self._rsigma8sq = sigma8**2 / self.sigma8_z(z=0)**2
 
     def growth_rate_rz(self, r, z=0, dz=1e-3, nk=1024, epsrel=1e-5):
         r"""
@@ -938,9 +937,9 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         """
         if self.interp_order_z == 0 and self.growth_factor_sq is None:
             import warnings
-            warnings.warn('No redshift evolution provided, growth rate is 0'.format(self.__class__.__name__))
+            warnings.warn('No redshift evolution provided, growth rate is 0')
             return 0.
-        hdz = dz/2.
+        hdz = dz / 2.
 
         dtype = _bcast_dtype(r, z)
         r, z = (np.asarray(xx, dtype=dtype) for xx in (r, z))
@@ -951,11 +950,11 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             mask = z < self.zmin + hdz
             toret = np.empty(r.shape + z.shape, dtype=dtype)
             # See eq. 6 of https://arxiv.org/abs/2102.05049, corrected
-            toret[..., mask] = (-fun(z[mask] + dz) + 4*fun(z[mask] + hdz) - 3*fun(z[mask]))/dz
-            toret[..., ~mask] = (fun(z[~mask] + hdz) - fun(z[~mask] - hdz))/dz
+            toret[..., mask] = (-fun(z[mask] + dz) + 4 * fun(z[mask] + hdz) - 3 * fun(z[mask])) / dz
+            toret[..., ~mask] = (fun(z[~mask] + hdz) - fun(z[~mask] - hdz)) / dz
             return toret
 
-        dsigdz = finite_difference(lambda z: np.log(self.sigma_rz(r,z,nk=nk,epsrel=epsrel)))
+        dsigdz = finite_difference(lambda z: np.log(self.sigma_rz(r, z, nk=nk, epsrel=epsrel)))
         # a = 1/(1 + z) => da = -1/(1+z)^2 dz => dln(a) = -1/(1 + z) dz
         dsigdlna = -dsigdz * (1 + z)
         dsigdlna.shape = toret_shape
@@ -979,10 +978,10 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         interp : PowerSpectrumInterpolator1D
         """
         if self.is_from_callable:
-            return PowerSpectrumInterpolator1D.from_callable(self.k, pk_callable=lambda k: self.interp(k,z=z))
-        default_params = dict(extrap_pk=self.extrap_pk,extrap_kmin=self.extrap_kmin,extrap_kmax=self.extrap_kmax,interp_order_k=self.interp_order_k)
+            return PowerSpectrumInterpolator1D.from_callable(self.k, pk_callable=lambda k: self.interp(k, z=z))
+        default_params = dict(extrap_pk=self.extrap_pk, extrap_kmin=self.extrap_kmin, extrap_kmax=self.extrap_kmax, interp_order_k=self.interp_order_k)
         default_params.update(kwargs)
-        return PowerSpectrumInterpolator1D(self.k,self(self.k,z=z),**default_params)
+        return PowerSpectrumInterpolator1D(self.k, self(self.k, z=z), **default_params)
 
     def to_xi(self, nk=1024, fftlog_kwargs=None, **kwargs):
         """
@@ -1002,11 +1001,11 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         xi : CorrelationFunctionInterpolator2D
         """
         k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
-        s, xi = PowerToCorrelation(k,complex=False, **(fftlog_kwargs or {}))(self(k,z=self.z,ignore_growth=True).T)
-        default_params = dict(interp_s='log',interp_order_s=self.interp_order_k,
-                              interp_order_z=self.interp_order_z,extrap_z=self.extrap_z,growth_factor_sq=self.growth_factor_sq)
+        s, xi = PowerToCorrelation(k, complex=False, **(fftlog_kwargs or {}))(self(k, z=self.z, ignore_growth=True).T)
+        default_params = dict(interp_s='log', interp_order_s=self.interp_order_k,
+                              interp_order_z=self.interp_order_z, extrap_z=self.extrap_z, growth_factor_sq=self.growth_factor_sq)
         default_params.update(kwargs)
-        return CorrelationFunctionInterpolator2D(s,z=self.z,xi=xi.T,**default_params)
+        return CorrelationFunctionInterpolator2D(s, z=self.z, xi=xi.T, **default_params)
 
 
 class _BaseCorrelationFunctionInterpolator(BaseClass):
@@ -1015,13 +1014,13 @@ class _BaseCorrelationFunctionInterpolator(BaseClass):
 
     def params(self):
         """Return interpolator parameter dictionary."""
-        return {name: getattr(self,name) for name in self.default_params}
+        return {name: getattr(self, name) for name in self.default_params}
 
     def as_dict(self):
         """Return interpolator as a dictionary."""
         state = self.params()
-        for name in ['s','xi']:
-            state[name] = getattr(self,name)
+        for name in ['s', 'xi']:
+            state[name] = getattr(self, name)
         return state
 
     def clone(self, **kwargs):
@@ -1031,7 +1030,7 @@ class _BaseCorrelationFunctionInterpolator(BaseClass):
 
         See :meth:`deepcopy` doc for warning about interpolators built from callables.
         """
-        return self.__class__(**{**self.as_dict(),**kwargs})
+        return self.__class__(**{**self.as_dict(), **kwargs})
 
     def deepcopy(self):
         """
@@ -1087,7 +1086,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
             Interpolation order, i.e. degree of smoothing spline along ``s``.
         """
         self._rsigma8sq = 1.
-        self.spline = GenericSpline(s,fun=xi,interp_x=interp_s,interp_order_x=interp_order_s)
+        self.spline = GenericSpline(s, fun=xi, interp_x=interp_s, interp_order_x=interp_order_s)
         self.s = self.spline.x
         self.interp_s = self.spline.interp_x
         self.interp_order_s = self.spline.interp_order_x
@@ -1098,14 +1097,14 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
 
         self.interp = interp
 
-    default_params = _get_default_kwargs(__init__,start=3)
+    default_params = _get_default_kwargs(__init__, start=3)
 
     @property
     def xi(self):
         """Return correlation function array (if interpolator built from callable, evaluate it), with normalisation."""
         if self.is_from_callable:
             return self(self.s)
-        return self.spline.fun[:,0] * self._rsigma8sq
+        return self.spline.fun[:, 0] * self._rsigma8sq
 
     @classmethod
     def from_callable(cls, s=None, xi_callable=None):
@@ -1170,16 +1169,16 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
 
         See :meth:`PowerSpectrumInterpolator1D.sigma_r` arguments.
         """
-        return self.to_pk().sigma_r(r,**kwargs)
+        return self.to_pk().sigma_r(r, **kwargs)
 
     def sigma8(self, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""
-        return self.sigma_r(8.,**kwargs)
+        return self.sigma_r(8., **kwargs)
 
     def rescale_sigma8(self, sigma8=1.):
         """Rescale the correlation function to the provided ``sigma8`` normalisation."""
-        self._rsigma8sq = 1. # reset rsigma8 for interpolation
-        self._rsigma8sq = sigma8**2/self.sigma8()**2
+        self._rsigma8sq = 1.  # reset rsigma8 for interpolation
+        self._rsigma8sq = sigma8**2 / self.sigma8()**2
 
     def to_pk(self, ns=1024, fftlog_kwargs=None, **kwargs):
         """
@@ -1200,9 +1199,9 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         """
         s = np.geomspace(self.extrap_smin, self.extrap_smax, ns)
         k, pk = CorrelationToPower(s, complex=False, **(fftlog_kwargs or {}))(self(s))
-        default_params = dict(interp_k='log',interp_order_k=self.interp_order_s)
+        default_params = dict(interp_k='log', interp_order_k=self.interp_order_s)
         default_params.update(kwargs)
-        return PowerSpectrumInterpolator1D(k,pk=pk,**default_params)
+        return PowerSpectrumInterpolator1D(k, pk=pk, **default_params)
 
 
 class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
@@ -1252,25 +1251,25 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         self._rsigma8sq = 1.
         self.growth_factor_sq = growth_factor_sq
         if extrap_z is None: extrap_z = self.growth_factor_sq is not None
-        self.spline = GenericSpline(s,y=z,fun=xi,interp_x=interp_s,interp_order_x=interp_order_s,interp_order_y=interp_order_z,extrap_y=extrap_z)
+        self.spline = GenericSpline(s, y=z, fun=xi, interp_x=interp_s, interp_order_x=interp_order_s, interp_order_y=interp_order_z, extrap_y=extrap_z)
         self.s, self.z = self.spline.x, self.spline.y
         self.interp_s, self.extrap_z = self.spline.interp_x, self.spline.extrap_y
-        self.interp_order_s,self.interp_order_z = self.spline.interp_order_x, self.spline.interp_order_y
+        self.interp_order_s, self.interp_order_z = self.spline.interp_order_x, self.spline.interp_order_y
         self.is_from_callable = False
 
         def interp(s, z=0, islogs=False, ignore_growth=False, **kwargs):
             toret = self.spline(s, z, islogx=islogs, **kwargs)
             if self.growth_factor_sq is not None and not ignore_growth:
-                toret = toret*self.growth_factor_sq(z)
+                toret = toret * self.growth_factor_sq(z)
             return toret * self._rsigma8sq
 
         self.interp = interp
 
-    default_params = _get_default_kwargs(__init__,start=4)
+    default_params = _get_default_kwargs(__init__, start=4)
 
     def as_dict(self):
         """Return interpolator as a dictionary."""
-        state = super(CorrelationFunctionInterpolator2D,self).as_dict()
+        state = super(CorrelationFunctionInterpolator2D, self).as_dict()
         state['z'] = self.z
         return state
 
@@ -1279,8 +1278,8 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         """Return ``xi`` (if interpolator built from callable, evaluate it), without growth factor, but with normalisation."""
         if self.is_from_callable:
             growth_factor_sq = self.growth_factor_sq
-            self.growth_factor_sq = lambda x: np.ones_like(x) # to avoid using growth factor in following call
-            toret = self(self.s,self.z)
+            self.growth_factor_sq = lambda x: np.ones_like(x)  # to avoid using growth factor in following call
+            toret = self(self.s, self.z)
             self.growth_factor_sq = growth_factor_sq
             return toret
         return self.spline.fun * self._rsigma8sq
@@ -1385,7 +1384,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
                 dtype = _bcast_dtype(s)
                 s = np.asarray(s, dtype=dtype)
                 if islogs: s = 10**s
-                toret = xi_callable(s,z=z,grid=grid) * self._rsigma8sq
+                toret = xi_callable(s, z=z, grid=grid) * self._rsigma8sq
                 return toret.astype(dtype=dtype, copy=False)
 
         self.interp = interp
@@ -1397,7 +1396,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
         See :meth:`PowerSpectrumInterpolator2D.sigma_dz` arguments.
         """
-        return self.to_pk().sigma_dz(z=z,**kwargs)
+        return self.to_pk().sigma_dz(z=z, **kwargs)
 
     def sigma_rz(self, r, z=0, **kwargs):
         """
@@ -1405,7 +1404,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
         See :meth:`PowerSpectrumInterpolator2D.sigma_rz` arguments.
         """
-        return self.to_pk().sigma_rz(r, z=z,**kwargs)
+        return self.to_pk().sigma_rz(r, z=z, **kwargs)
 
     def sigma8_z(self, z=0, **kwargs):
         """
@@ -1413,12 +1412,12 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
         See :meth:`PowerSpectrumInterpolator2D.sigma8_z` arguments.
         """
-        return self.sigma_rz(8.,z=z,**kwargs)
+        return self.sigma_rz(8., z=z, **kwargs)
 
     def rescale_sigma8(self, sigma8=1.):
         """Rescale correlation function to the provided ``sigma8`` normalisation  at :math:`z = 0`."""
-        self._rsigma8sq = 1. # reset rsigma8 for interpolation
-        self._rsigma8sq = sigma8**2/self.sigma8_z(z=0)**2
+        self._rsigma8sq = 1.  # reset rsigma8 for interpolation
+        self._rsigma8sq = sigma8**2 / self.sigma8_z(z=0)**2
 
     def growth_rate_rz(self, r, z=0, **kwargs):
         r"""
@@ -1426,7 +1425,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
         See :meth:`PowerSpectrumInterpolator2D.growth_rate_rz` arguments.
         """
-        return self.to_pk().growth_rate_rz(r, z=z,**kwargs)
+        return self.to_pk().growth_rate_rz(r, z=z, **kwargs)
 
     def to_1d(self, z=0, **kwargs):
         """
@@ -1446,10 +1445,10 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         interp : CorrelationFunctionInterpolator1D
         """
         if self.is_from_callable:
-            return CorrelationFunctionInterpolator1D.from_callable(self.s,xi_callable=lambda s: self.interp(s,z=z))
+            return CorrelationFunctionInterpolator1D.from_callable(self.s, xi_callable=lambda s: self.interp(s, z=z))
         default_params = dict(interp_order_s=self.interp_order_s)
         default_params.update(kwargs)
-        return CorrelationFunctionInterpolator1D(self.s,self(self.s,z=z),**default_params)
+        return CorrelationFunctionInterpolator1D(self.s, self(self.s, z=z), **default_params)
 
     def to_pk(self, ns=1024, fftlog_kwargs=None, **kwargs):
         """
@@ -1469,8 +1468,8 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         pk : PowerSpectrumInterpolator2D
         """
         s = np.geomspace(self.extrap_smin, self.extrap_smax, ns)
-        k, pk = CorrelationToPower(s, complex=False, **(fftlog_kwargs or {}))(self(s,self.z,ignore_growth=True).T)
-        default_params = dict(interp_k='log',extrap_pk='log',interp_order_k=self.interp_order_s,
-                        interp_order_z=self.interp_order_z,extrap_z=self.extrap_z,growth_factor_sq=self.growth_factor_sq)
+        k, pk = CorrelationToPower(s, complex=False, **(fftlog_kwargs or {}))(self(s, self.z, ignore_growth=True).T)
+        default_params = dict(interp_k='log', extrap_pk='log', interp_order_k=self.interp_order_s,
+                              interp_order_z=self.interp_order_z, extrap_z=self.extrap_z, growth_factor_sq=self.growth_factor_sq)
         default_params.update(kwargs)
-        return PowerSpectrumInterpolator2D(k,z=self.z,pk=pk.T,**default_params)
+        return PowerSpectrumInterpolator2D(k, z=self.z, pk=pk.T, **default_params)

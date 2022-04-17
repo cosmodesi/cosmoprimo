@@ -1,25 +1,23 @@
-import warnings
-
 import numpy as np
-import astropy
 from astropy import units
 from astropy import cosmology as astropy_cosmology
 
-from .cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyError
+from .cosmology import BaseEngine, BaseBackground
 from . import constants, utils
 
 
 class AstropyEngine(BaseEngine):
 
     """Wrapper on astropy cosmology engine."""
+    name = 'astropy'
 
     def __init__(self, *args, **kwargs):
-        super(AstropyEngine,self).__init__(*args,**kwargs)
+        super(AstropyEngine, self).__init__(*args, **kwargs)
         N_eff = self['N_eff']
         m_nu = self['m_ncdm']
-        m_nu = m_nu + [0.]*(int(N_eff) - len(m_nu))
-        kwargs = {'H0':self['H0'],'Om0':self['Omega_b']+self['Omega_cdm'],
-                'Tcmb0':self['T_cmb'],'Neff':N_eff,'m_nu':units.Quantity(m_nu, units.eV),'Ob0':self['Omega_b']}
+        m_nu = m_nu + [0.] * (int(N_eff) - len(m_nu))
+        kwargs = {'H0': self['H0'], 'Om0': self['Omega_b'] + self['Omega_cdm'],
+                  'Tcmb0': self['T_cmb'], 'Neff': N_eff, 'm_nu': units.Quantity(m_nu, units.eV), 'Ob0': self['Omega_b']}
         name = 'CDM'
         if self['wa_fld'] != -1:
             name = 'wa{}'.format(name)
@@ -27,19 +25,18 @@ class AstropyEngine(BaseEngine):
         if self['w0_fld'] != 0:
             kwargs['w0'] = self['w0_fld']
             if self['wa_fld'] != -1:
-                name = 'w0{}'.format(name) # w0wa model
+                name = 'w0{}'.format(name)  # w0wa model
             else:
-                name = 'w{}'.format(name) # w model
+                name = 'w{}'.format(name)  # w model
         if self['Omega_k'] == 0:
             name = 'Flat{}'.format(name)
         else:
-            kwargs['Ode0'] = 1-(self['Omega_b']+self['Omega_cdm']) # this is a first guess for OdeO because neutrino treatment...
-            self._astropy = getattr(astropy_cosmology,name)(**kwargs)
+            kwargs['Ode0'] = 1 - (self['Omega_b'] + self['Omega_cdm'])  # this is a first guess for OdeO because neutrino treatment...
+            self._astropy = getattr(astropy_cosmology, name)(**kwargs)
             # now adjust Ode0 based on Omega_k
             kwargs['Ode0'] = 1.0 - self._astropy.Om0 - self['Omega_k'] - self._astropy.Ogamma0 - self._astropy.Onu0
 
-        self._astropy = getattr(astropy_cosmology,name)(**kwargs)
-        #print(name,kwargs)
+        self._astropy = getattr(astropy_cosmology, name)(**kwargs)
 
 
 class Background(BaseBackground):
@@ -54,7 +51,7 @@ class Background(BaseBackground):
     hence we do not include them here.
     """
     def __init__(self, engine):
-        super(Background,self).__init__(engine=engine)
+        super(Background, self).__init__(engine=engine)
         self.ba = self._engine._astropy
 
     @utils.flatarray()
@@ -94,7 +91,7 @@ class Background(BaseBackground):
               \rho_{\mathrm{crit}}(z) = \frac{3 H(z)^{2}}{8 \pi G}.
         """
         # astropy in g/cm3
-        return self.ba.critical_density(z).value * 1e3 / (1e10*constants.msun) * constants.megaparsec**3 / self.h**2 / (1 + z)**3
+        return self.ba.critical_density(z).value * 1e3 / (1e10 * constants.msun) * constants.megaparsec**3 / self.h**2 / (1 + z)**3
 
     @utils.flatarray()
     def efunc(self, z):
@@ -104,7 +101,7 @@ class Background(BaseBackground):
     @utils.flatarray()
     def time(self, z):
         r"""Proper time (age of universe), in :math:`\mathrm{Gy}`."""
-        if z.size: # required to avoid error in np.vectorize
+        if z.size:  # required to avoid error in np.vectorize
             return self.ba.age(z).value
         return np.zeros_like(z)
 

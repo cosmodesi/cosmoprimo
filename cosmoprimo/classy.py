@@ -10,6 +10,7 @@ from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator
 class ClassEngine(pyclass.ClassEngine, BaseEngine):
 
     """Engine for the Boltzmann code CLASS."""
+    name = 'class'
 
     def __init__(self, *args, **kwargs):
         BaseEngine.__init__(self, *args, **kwargs)
@@ -31,21 +32,21 @@ class ClassEngine(pyclass.ClassEngine, BaseEngine):
             params.pop('m_ncdm')
             params.pop('T_ncdm')
         if self._has_fld:
-            params['Omega_Lambda'] = 0. # will force non-zero Omega_fld
+            params['Omega_Lambda'] = 0.  # will force non-zero Omega_fld
         else:
             for name in ['w0_fld', 'wa_fld']: del params[name]
         params.update(self.extra_params)
         super(ClassEngine, self).__init__(params=params)
-        #print(self.get_params_str())
+        # print(self.get_params_str())
 
     def _rescale_sigma8(self):
         """Rescale perturbative quantities to match input sigma8."""
-        if hasattr(self,'_rsigma8'):
+        if hasattr(self, '_rsigma8'):
             return self._rsigma8
         self._rsigma8 = 1.
         if 'sigma8' in self._params:
             self.compute('peturbations')
-            self._rsigma8 = self['sigma8']/self.get_fourier().sigma8_m
+            self._rsigma8 = self['sigma8'] / self.get_fourier().sigma8_m
         return self._rsigma8
 
 
@@ -58,18 +59,18 @@ Perturbations = pyclass.Perturbations
 class Primordial(pyclass.Primordial):
 
     def __init__(self, engine):
-        super(Primordial,self).__init__(engine)
+        super(Primordial, self).__init__(engine)
         self._rsigma8 = engine._rescale_sigma8()
 
     @property
     def A_s(self):
         r"""Scalar amplitude of the primordial power spectrum at :math:`k_\mathrm{pivot}`, unitless."""
-        return super(Primordial,self).A_s * self._rsigma8**2
+        return super(Primordial, self).A_s * self._rsigma8**2
 
     @property
     def ln_1e10_A_s(self):
         r""":math:`\ln(10^{10}A_s)`, unitless."""
-        return np.log(1e10*self.A_s)
+        return np.log(1e10 * self.A_s)
 
     def pk_k(self, k, mode='scalar'):
         r"""
@@ -96,9 +97,9 @@ class Primordial(pyclass.Primordial):
             The primordial power spectrum if only one type of initial conditions (typically adiabatic),
             else dictionary of primordial power spectra corresponding to the tuples of initial conditions.
         """
-        toret = super(Primordial,self).pk_k(k,mode=mode)
-        if isinstance(toret,dict):
-            for key,value in toret.items():
+        toret = super(Primordial, self).pk_k(k, mode=mode)
+        if isinstance(toret, dict):
+            for key, value in toret.items():
                 toret[key] = value * self._rsigma8**2
         else:
             toret *= self._rsigma8**2
@@ -119,10 +120,10 @@ class Primordial(pyclass.Primordial):
             :class:`PowerSpectrumInterpolator1D` instance if only one type of initial conditions (typically adiabatic),
             else dictionary of class:`PowerSpectrumInterpolator1D` corresponding to the tuples of initial conditions.
         """
-        toret = self.pk_k(1e-3,mode=mode)
-        if isinstance(toret,dict):
-            return {ic: PowerSpectrumInterpolator1D.from_callable(pk_callable=lambda k: self.pk_k(k,mode=mode)[ic]) for ic in toret}
-        return PowerSpectrumInterpolator1D.from_callable(pk_callable=lambda k: self.pk_k(k,mode=mode))
+        toret = self.pk_k(1e-3, mode=mode)
+        if isinstance(toret, dict):
+            return {ic: PowerSpectrumInterpolator1D.from_callable(pk_callable=lambda k: self.pk_k(k, mode=mode)[ic]) for ic in toret}
+        return PowerSpectrumInterpolator1D.from_callable(pk_callable=lambda k: self.pk_k(k, mode=mode))
 
     def table(self):
         r"""
@@ -133,7 +134,7 @@ class Primordial(pyclass.Primordial):
         data : array
             Structured array containing thermodynamics data.
         """
-        table = super(Primordial,self).table()
+        table = super(Primordial, self).table()
         for name in table.dtype.names:
             if not name.startswith('k'):
                 table[name] *= self._rsigma8**2
@@ -142,7 +143,7 @@ class Primordial(pyclass.Primordial):
 class Harmonic(pyclass.Harmonic):
 
     def __init__(self, engine):
-        super(Harmonic,self).__init__(engine)
+        super(Harmonic, self).__init__(engine)
         self._rsigma8 = engine._rescale_sigma8()
 
     def unlensed_table(self, ellmax=-1, of=None):
@@ -168,7 +169,7 @@ class Harmonic(pyclass.Harmonic):
         the lensing potential ``pp`` spectrum).
         Usually multiplied by CMB temperature in :math:`\mu K`.
         """
-        table = super(Harmonic,self).unlensed_table(ellmax=ellmax,of=of)
+        table = super(Harmonic, self).unlensed_table(ellmax=ellmax, of=of)
         for name in table.dtype.names:
             if not name.startswith('ell'):
                 table[name] *= self._rsigma8**2
@@ -191,7 +192,7 @@ class Harmonic(pyclass.Harmonic):
         cell : array
             Structured array.
         """
-        table = super(Harmonic,self).lensed_table(ellmax=ellmax,of=of)
+        table = super(Harmonic, self).lensed_table(ellmax=ellmax, of=of)
         for name in table.dtype.names:
             if not name.startswith('ell'):
                 table[name] *= self._rsigma8**2
@@ -201,29 +202,29 @@ class Harmonic(pyclass.Harmonic):
 class Fourier(pyclass.Fourier):
 
     def __init__(self, engine):
-        super(Fourier,self).__init__(engine)
+        super(Fourier, self).__init__(engine)
         self._rsigma8 = engine._rescale_sigma8()
 
     @property
     def sigma8_m(self):
         r"""Current r.m.s. of matter perturbations in a sphere of :math:`8 \mathrm{Mpc}/h`, unitless."""
-        return super(Fourier,self).sigma8_m * self._rsigma8
+        return super(Fourier, self).sigma8_m * self._rsigma8
 
     @property
     def sigma8_cb(self):
         r"""Current r.m.s. of cold dark matter + baryons perturbations in a sphere of :math:`8 \mathrm{Mpc}/h` unitless."""
-        return super(Fourier,self).sigma8_cb * self._rsigma8
+        return super(Fourier, self).sigma8_cb * self._rsigma8
 
     def sigma_rz(self, r, z, of='delta_m', **kwargs):
         r"""Return the r.m.s. of `of` perturbations in sphere of :math:`r \mathrm{Mpc}/h`."""
-        return self.pk_interpolator(nonlinear=False,of=of,**kwargs).sigma_rz(r,z)
+        return self.pk_interpolator(nonlinear=False, of=of, **kwargs).sigma_rz(r, z)
 
     def sigma8_z(self, z, of='delta_m'):
         r"""Return the r.m.s. of `of` perturbations in sphere of :math:`8 \mathrm{Mpc}/h`."""
-        return self.sigma_rz(8.,z,of=of)
+        return self.sigma_rz(8., z, of=of)
 
     def pk_kz(self, k, z, nonlinear=False, of='m'):
-        """
+        r"""
         Return power spectrum, in :math:`(\mathrm{Mpc}/h)^{3}`, using original CLASS routine.
 
         Parameters
@@ -246,10 +247,10 @@ class Fourier(pyclass.Fourier):
         pk : array
             Power spectrum array of shape (len(k),len(z)).
         """
-        return super(Fourier,self).pk_kz(k,z,nonlinear=nonlinear,of=of) * self._rsigma8**2
+        return super(Fourier, self).pk_kz(k, z, nonlinear=nonlinear, of=of) * self._rsigma8**2
 
     def table(self, nonlinear=False, of='delta_m'):
-        """
+        r"""
         Return power spectrum table, in :math:`(\mathrm{Mpc}/h)^{3}`.
 
         Parameters
@@ -274,9 +275,9 @@ class Fourier(pyclass.Fourier):
         pk : array
             Power spectrum array of shape (len(k),len(z)).
         """
-        k,z,pk = super(Fourier,self).table(nonlinear=nonlinear,of=of)
+        k, z, pk = super(Fourier, self).table(nonlinear=nonlinear, of=of)
         pk *= self._rsigma8**2
-        return k,z,pk
+        return k, z, pk
 
     def pk_interpolator(self, nonlinear=False, of='delta_m', **kwargs):
         """
@@ -296,5 +297,5 @@ class Fourier(pyclass.Fourier):
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
         """
-        ka,za,pka = self.table(nonlinear=nonlinear,of=of)
-        return PowerSpectrumInterpolator2D(ka,za,pka,**kwargs)
+        ka, za, pka = self.table(nonlinear=nonlinear, of=of)
+        return PowerSpectrumInterpolator2D(ka, za, pka, **kwargs)
