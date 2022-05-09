@@ -96,7 +96,7 @@ class Transfer(BaseSection):
         k = np.asarray(k) * self._engine['h']  # now in 1/Mpc
         if grid:
             toret_shape = k.shape + z.shape
-            k.shape = k.shape + (1,) * z.ndim
+            k = k.reshape(k.shape + (1,) * z.ndim)
         q = k / self._engine.omega_m * self._engine.theta_cmb ** 2
 
         # Compute the scale-dependent growth functions
@@ -138,7 +138,7 @@ class Transfer(BaseSection):
         # EH eq. 6
         toret = T_sup * growth / growth_k0
         if grid:
-            toret.shape = toret_shape
+            toret = toret.reshape(toret_shape)
         return toret
 
 

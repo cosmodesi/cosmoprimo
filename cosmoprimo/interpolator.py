@@ -716,7 +716,8 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     def pk(self):
         """Return power spectrum array (if interpolator built from callable, evaluate it), without growth factor, but with normalisation."""
         if self.is_from_callable:
-            return self(self.k, self.z, ignore_growth=True)
+            kwargs = {'ignore_growth': True} if self.growth_factor_sq is not None else {}
+            return self(self.k, self.z, **kwargs)
         return self.spline.fun * self._rsigma8sq
 
     @property

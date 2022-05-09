@@ -68,11 +68,12 @@ def test_power_spectrum():
     check_shape_2d(interp)
 
     cosmo = Cosmology()
-    for engine in ['eisenstein_hu', 'class']:
+    for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle_variants', 'class']:
         fo = Fourier(cosmo, engine=engine)
         interp = fo.pk_interpolator()
         k = np.logspace(-4, 2, 100)
         z = np.linspace(0, 4, 10)
+        check_shape_2d(interp)
         pk = interp(k, z)
         interp2 = interp.clone()
         assert np.allclose(interp2(k, z), pk, rtol=1e-4)
@@ -80,6 +81,7 @@ def test_power_spectrum():
         assert np.allclose(interp2(k, z), 2 * pk, rtol=1e-4)
         for iz, zz in enumerate(z):
             interp1d = interp.to_1d(z=zz)
+            check_shape_1d(interp1d)
             assert np.allclose(interp1d.extrap_kmin, interp.extrap_kmin)
             assert np.allclose(interp1d.extrap_kmax, interp.extrap_kmax)
             assert np.allclose(interp1d(k), pk[:, iz])
