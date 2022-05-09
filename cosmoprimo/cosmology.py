@@ -246,7 +246,7 @@ def get_engine(engine):
     Parameters
     ----------
     engine : BaseEngine, string
-        Engine or one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+        Engine or one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks'].
 
     Returns
     -------
@@ -262,6 +262,8 @@ def get_engine(engine):
             from . import eisenstein_hu
         elif engine == 'eisenstein_hu_nowiggle':
             from . import eisenstein_hu_nowiggle
+        elif engine == 'eisenstein_hu_nowiggle_variants':
+            from . import eisenstein_hu_nowiggle_variants
         elif engine == 'bbks':
             from . import bbks
         elif engine == 'astropy':
@@ -666,7 +668,9 @@ def compile_params(args):
             return list(li)
         raise TypeError('{} must be a list'.format(name))
 
-    T_ncdm_over_cmb = params.get('T_ncdm_over_cmb', constants.TNCDM_OVER_CMB)
+    T_ncdm_over_cmb = params.get('T_ncdm_over_cmb', None)
+    if T_ncdm_over_cmb is None:
+        T_ncdm_over_cmb = constants.TNCDM_OVER_CMB
 
     if 'm_ncdm' in params:
         m_ncdm = params.pop('m_ncdm')
@@ -784,25 +788,26 @@ def compile_params(args):
         rho = 7. / 8. * 4. / constants.c**3 * constants.Stefan_Boltzmann * T_ur**4  # density, kg/m^3
         N_ur = params.pop('Omega_ur') / (rho / (h**2 * constants.rho_crit_kgph_per_mph3))
 
+    # Check which of the neutrino species are non-relativistic today
+    m_massive = 0.00017  # Lesgourges et al. 2012
+    m_ncdm = np.array(m_ncdm)
+    T_ncdm_over_cmb = np.array(T_ncdm_over_cmb)
+    mask_m = m_ncdm > m_massive
+    # arxiv: 1812.05995 eq. 84
+    N_eff = params.pop('N_eff', constants.NEFF)
+    # We remove massive neutrinos
     if N_ur is None:
-        # Check which of the neutrino species are non-relativistic today
-        m_massive = 0.00017  # Lesgourges et al. 2012
-        m_ncdm = np.array(m_ncdm)
-        T_ncdm_over_cmb = np.array(T_ncdm_over_cmb)
-        mask_m = m_ncdm > m_massive
-        # arxiv: 1812.05995 eq. 84
-        N_eff = params.pop('N_eff', constants.NEFF)
-        # we remove massive neutrinos
         N_ur = N_eff - sum(T_ncdm_over_cmb[mask_m]**4) * (4. / 11.)**(-4. / 3.)
-        if N_ur < 0.:
-            raise ValueError('N_ur and m_ncdm must result in a number of relativistic neutrino species greater than or equal to zero.')
-        # Fill an array with the non-relativistic neutrino masses
-        m_ncdm = m_ncdm[mask_m].tolist()
+    if N_ur < 0.:
+        raise ValueError('N_ur and m_ncdm must result in a number of relativistic neutrino species greater than or equal to zero.')
+    # Fill an array with the non-relativistic neutrino masses
+    m_ncdm = m_ncdm[mask_m].tolist()
+    T_ncdm_over_cmb = T_ncdm_over_cmb[mask_m].tolist()
 
     params['N_ur'] = N_ur
     # number of massive neutrino species
     params['m_ncdm'] = m_ncdm
-    params['T_ncdm_over_cmb'] = list(T_ncdm_over_cmb)
+    params['T_ncdm_over_cmb'] = T_ncdm_over_cmb
 
     if params.get('z_pk', None) is None:
         # same as pyccl, https://github.com/LSSTDESC/CCL/blob/d2a5630a229378f64468d050de948b91f4480d41/src/ccl_core.c
@@ -813,8 +818,8 @@ def compile_params(args):
     for name in ['modes', 'z_pk']:
         if np.ndim(params[name]) == 0:
             params[name] = [params[name]]
-    if 0 not in params['z_pk']:
-        params['z_pk'].append(0)  # in order to normalise CAMB power spectrum with sigma8
+    if 0. not in params['z_pk']:
+        params['z_pk'].append(0.)  # in order to normalise CAMB power spectrum with sigma8
 
     if 'Omega_m' in params:
         nonrelativistic_ncdm = (BaseEngine._get_rho_ncdm(params, z=0).sum() - 3 * BaseEngine._get_p_ncdm(params, z=0).sum()) / constants.rho_crit_Msunph_per_Mpcph3
@@ -888,12 +893,11 @@ def find_conflicts(name):
                  ('Omega_b', 'omega_b', 'Omega0_b'),
                  # ('Omega_fld', 'Omega0_fld'),
                  # ('Omega_Lambda', 'Omega0_Lambda'),
-                 ('N_ur', 'Omega_ur', 'omega_ur', 'Omega0_ur','N_eff'),
+                 ('N_ur', 'Omega_ur', 'omega_ur', 'Omega0_ur', 'N_eff'),
                  ('Omega_cdm', 'omega_cdm', 'Omega0_cdm', 'Omega_c', 'omega_c', 'Omega_m', 'omega_m', 'Omega0_m'),
                  ('m_ncdm', 'Omega_ncdm', 'omega_ncdm', 'Omega0_ncdm'),
                  ('A_s', 'ln10^{10}A_s', 'sigma8'),
-                 ('tau_reio', 'z_reio')
-                ]
+                 ('tau_reio', 'z_reio')]
 
     for conf in conflicts:
         if name in conf:

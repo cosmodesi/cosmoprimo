@@ -1,7 +1,7 @@
 import numpy as np
 
 from .cosmology import BaseSection
-from .eisenstein_hu import EisensteinHuEngine, Background, Thermodynamics, Primordial, Fourier
+from .eisenstein_hu import EisensteinHuEngine, Background, Thermodynamics, Primordial, Fourier, CosmologyError
 
 
 class EisensteinHuNoWiggleEngine(EisensteinHuEngine):
@@ -17,8 +17,8 @@ class EisensteinHuNoWiggleEngine(EisensteinHuEngine):
     def compute(self):
         """Precompute coefficients for the transfer function."""
         self._set_rsdrag()
-        # self.rs_drag = 44.5 * np.log(9.83/self.omega_m) / np.sqrt(1. + 10.*self.omega_b**0.75)
-        self.alpha_gamma = 1. - 0.328 * np.log(431. * self.omega_m) * self.frac_baryon + 0.38 * np.log(22.3 * self.omega_m) * self.frac_baryon**2
+        # self.rs_drag = 44.5 * np.log(9.83 / self.omega_m) / np.sqrt(1. + 10. * self.omega_b**0.75)
+        self.alpha_gamma = 1. - 0.328 * np.log(431. * self.omega_m) * self.frac_b + 0.38 * np.log(22.3 * self.omega_m) * self.frac_b**2
 
 
 class Transfer(BaseSection):

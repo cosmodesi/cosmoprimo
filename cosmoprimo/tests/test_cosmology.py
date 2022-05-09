@@ -62,7 +62,7 @@ def test_background(params, seed=42):
         with pytest.raises(CosmologyError):
             cosmo['A_s']
 
-    for engine in ['class', 'camb', 'astropy', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks']:
+    for engine in ['class', 'camb', 'astropy', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
         ba = cosmo.get_background(engine=engine)
         for name in ['T0_cmb', 'T0_ncdm', 'Omega0_cdm', 'Omega0_b', 'Omega0_k', 'Omega0_g', 'Omega0_ur', 'Omega0_r',
                      'Omega0_pncdm', 'Omega0_pncdm_tot', 'Omega0_ncdm', 'Omega0_ncdm_tot',
@@ -110,7 +110,7 @@ def test_background(params, seed=42):
             names += ['time', 'comoving_radial_distance', 'luminosity_distance', 'angular_diameter_distance', 'comoving_angular_distance']
         if engine in ['class']:
             names += ['growth_factor', 'growth_rate']
-        if engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'] and not cosmo['N_ncdm'] and not cosmo._has_fld:
+        if engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks'] and not cosmo['N_ncdm'] and not cosmo._has_fld:
             rtol = 2e-2
             names += ['growth_factor', 'growth_rate']
         for name in names:
@@ -126,7 +126,7 @@ def test_thermodynamics(params):
         th = Thermodynamics(cosmo, engine=engine)
         for name in ['z_drag', 'rs_drag', 'z_star', 'rs_star'][: 2]:
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-4)
-    for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle']:
+    for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants']:
         for name in ['z_drag', 'rs_drag']:
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-2)
 
@@ -146,7 +146,7 @@ def test_primordial(params, seed=42):
             assert np.allclose(pr.pk_k(k, mode=mode), pr_class.pk_k(k, mode=mode), atol=0, rtol=2e-3)
             assert np.allclose(pr.pk_interpolator(mode=mode)(k), pr_class.pk_interpolator(mode=mode)(k), atol=0, rtol=2e-3)
 
-    for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks']:
+    for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
         pr = Primordial(cosmo, engine=engine)
         for name in ['n_s']:
             assert np.allclose(getattr(pr, name), getattr(pr_class, name), atol=0, rtol=1e-4)
@@ -234,7 +234,7 @@ def test_fourier(params, seed=42):
                     f = fo.sigma_rz(r, z, of='theta_cb') / fo.sigma_rz(r, z, of='delta_cb')
                     assert np.allclose(f, pk.growth_rate_rz(r=r, z=z, dz=dz), atol=0, rtol=rtol)
 
-    for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks']:
+    for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
         fo = Fourier(cosmo, engine=engine)
         if 'sigma8' not in cosmo.params:
             with pytest.raises(CosmologyError):
@@ -292,18 +292,30 @@ def plot_matter_power_spectrum():
     # plt.loglog(k, pk)
     z = 1.
     k = np.logspace(-6, 2, 500)
-    pk = fo_class.pk_interpolator(nonlinear=False, of='m', extrap_kmin=1e-7)
+    pk = fo_class.pk_interpolator(nonlinear=False, of='delta_m', extrap_kmin=1e-7)
     # pk = fo_class.pk_kz
     plt.loglog(k, pk(k, z=z), label='class')
-    fo_camb = Fourier(cosmo, engine='camb')
-    pk = fo_camb.pk_interpolator(nonlinear=False, of='m', extrap_kmin=1e-7)
+    pk = Fourier(cosmo, engine='camb').pk_interpolator(nonlinear=False, of='delta_m', extrap_kmin=1e-7)
     plt.loglog(k, pk(k, z=z), label='camb')
-    fo_eh = Fourier(cosmo, engine='eisenstein_hu')
-    pk = fo_eh.pk_interpolator()
+    pk = Fourier(cosmo, engine='eisenstein_hu').pk_interpolator()
     plt.loglog(k, pk(k, z=z), label='eisenstein_hu')
-    fo_eh = Fourier(cosmo, engine='eisenstein_hu_nowiggle')
-    pk = fo_eh.pk_interpolator()
+    pk = Fourier(cosmo, engine='eisenstein_hu_nowiggle').pk_interpolator()
     plt.loglog(k, pk(k, z=z), label='eisenstein_hu_nowiggle')
+    pk = Fourier(cosmo, engine='eisenstein_hu_nowiggle_variants').pk_interpolator()
+    plt.loglog(k, pk(k, z=z), label='eisenstein_hu_nowiggle_variants')
+    plt.legend()
+    plt.show()
+
+
+def plot_eisenstein_hu_nowiggle_variants():
+    from matplotlib import pyplot as plt
+    cosmo = Cosmology()
+    z = 1.
+    k = np.logspace(-6, 2, 500)
+    for m_ncdm in [0., 1.1]:
+        cosmo = cosmo.clone(m_ncdm=m_ncdm, T_ncdm_over_cmb=None)
+        pk = Fourier(cosmo, engine='eisenstein_hu_nowiggle_variants').pk_interpolator()
+        plt.loglog(k, pk(k, z=z), label=r'$m_{{ncdm}} = {:.2f} \mathrm{{eV}}$'.format(m_ncdm))
     plt.legend()
     plt.show()
 
@@ -488,10 +500,10 @@ if __name__ == '__main__':
     test_neutrinos()
     test_clone()
     test_shortcut()
-
     # plot_primordial_power_spectrum()
     # plot_harmonic()
     # plot_matter_power_spectrum()
+    # plot_eisenstein_hu_nowiggle_variants()
     # external_test_camb()
 
     try: import pyccl

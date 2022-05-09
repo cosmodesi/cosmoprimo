@@ -336,7 +336,7 @@ class GenericSpline(BaseClass):
             1D array of points where to evaluate the spline (2D case).
 
         grid : bool, default=True
-            Whether ``x``, ``y`` coordinates should be interpreted as a grid, in which case the output will be of shape ``(x.size, y.size)``.
+            Whether ``x``, ``y`` coordinates should be interpreted as a grid, in which case the output will be of shape ``x.shape + y.shape``.
 
         islogx : bool, default=False
             Whether input ``x`` is already in log10-space.

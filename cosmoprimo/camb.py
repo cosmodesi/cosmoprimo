@@ -531,7 +531,7 @@ class Fourier(BaseSection):
 
         of : string, tuple, default='delta_m'
             Perturbed quantities.
-            Does not make difference between 'theta_cb' and 'theta_m'.
+            No difference made between 'theta_cb' and 'theta_m'.
 
         Returns
         -------
@@ -596,7 +596,7 @@ class Fourier(BaseSection):
 
         of : string, tuple, default='delta_m'
             Perturbed quantities.
-            Does not make difference between 'theta_cb' and 'theta_m'.
+            No difference made between 'theta_cb' and 'theta_m'.
 
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
@@ -621,7 +621,7 @@ class Fourier(BaseSection):
 
         of : string, default='delta_m'
             Perturbed quantities.
-            Does not make difference between 'theta_cb' and 'theta_m'.
+            No difference made between 'theta_cb' and 'theta_m'.
 
         Returns
         -------

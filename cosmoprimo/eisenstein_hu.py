@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 
 from .cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyError
-from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
+from .interpolator import PowerSpectrumInterpolator2D
 from . import utils
 
 
@@ -32,7 +32,7 @@ class EisensteinHuEngine(BaseEngine):
 
         self.omega_b = self['omega_b']
         self.omega_m = self['omega_cdm'] + self['omega_b']
-        self.frac_baryon = self.omega_b / self.omega_m
+        self.frac_b = self.omega_b / self.omega_m
         self.theta_cmb = self['T_cmb'] / 2.7
 
         # redshift and wavenumber of equality
@@ -55,6 +55,7 @@ class EisensteinHuEngine(BaseEngine):
         # EH eq. 6
         self.rs_drag = 2. / (3. * self.k_eq) * np.sqrt(6. / self.r_eq)\
                        * np.log((np.sqrt(1 + self.r_drag) + np.sqrt(self.r_drag + self.r_eq)) / (1 + np.sqrt(self.r_eq)))
+        # self.rs_drag = 44.5 * np.log(9.83 / self.omega_m) / np.sqrt(1. + 10. * self.omega_b**0.75)
 
     def compute(self):
         """Precompute coefficients for the transfer function."""
@@ -68,23 +69,23 @@ class EisensteinHuEngine(BaseEngine):
         # EH eq. 11
         alpha_c_a1 = (46.9 * self.omega_m) ** 0.670 * (1 + (32.1 * self.omega_m) ** (-0.532))
         alpha_c_a2 = (12.0 * self.omega_m) ** 0.424 * (1 + (45.0 * self.omega_m) ** (-0.582))
-        self.alpha_c = alpha_c_a1 ** (-self.frac_baryon) * alpha_c_a2 ** (-self.frac_baryon**3)
+        self.alpha_c = alpha_c_a1 ** (-self.frac_b) * alpha_c_a2 ** (-self.frac_b**3)
 
         # beta_c
         # EH eq. 12
         beta_c_b1 = 0.944 / (1 + (458 * self.omega_m) ** (-0.708))
         beta_c_b2 = 0.395 * self.omega_m ** (-0.0266)
-        self.beta_c = 1. / (1 + beta_c_b1 * ((1 - self.frac_baryon) ** beta_c_b2) - 1)
+        self.beta_c = 1. / (1 + beta_c_b1 * ((1 - self.frac_b) ** beta_c_b2) - 1)
 
-        y = (1 + self.z_eq) / (1 + self.z_drag)
+        y_drag = (1 + self.z_eq) / (1 + self.z_drag)
         # EH eq. 15
-        alpha_b_G = y * (-6. * np.sqrt(1 + y) + (2. + 3. * y) * np.log((np.sqrt(1 + y) + 1) / (np.sqrt(1 + y) - 1)))
+        alpha_b_G = y_drag * (-6. * np.sqrt(1 + y_drag) + (2. + 3. * y_drag) * np.log((np.sqrt(1 + y_drag) + 1) / (np.sqrt(1 + y_drag) - 1)))
         self.alpha_b = 2.07 * self.k_eq * self.rs_drag * (1 + self.r_drag)**(-0.75) * alpha_b_G
 
         # EH eq. 23
         self.beta_node = 8.41 * self.omega_m ** 0.435
         # EH eq. 24
-        self.beta_b = 0.5 + self.frac_baryon + (3. - 2. * self.frac_baryon) * np.sqrt((17.2 * self.omega_m) ** 2 + 1)
+        self.beta_b = 0.5 + self.frac_b + (3. - 2. * self.frac_b) * np.sqrt((17.2 * self.omega_m) ** 2 + 1)
 
 
 class Background(BaseBackground):
@@ -96,9 +97,18 @@ class Background(BaseBackground):
     Does not treat neutrinos.
     """
     @utils.flatarray()
-    def growth_factor(self, z):
+    def growth_factor(self, z, znorm=None):
         """
         Approximation of growth factor.
+
+        Parameters
+        ----------
+        z : array_like
+            Redshifts.
+
+        znorm : float, default=None
+            If provided, growth factor is normalized as ``(1 + znorm) / (1 + z)`` in the matter domination era.
+            Else, growth_factor is normalized to 1 at ``z = 0``.
 
         References
         ----------
@@ -108,6 +118,9 @@ class Background(BaseBackground):
         def growth(z):
             return 1. / (1 + z) * 5 * self.Omega_m(z) / 2. / (self.Omega_m(z)**(4. / 7.) - self.Omega_de(z) + (1. + self.Omega_m(z) / 2.) * (1 + self.Omega_de(z) / 70.))
 
+        growthz = growth(z)
+        if znorm is not None:
+            return (1. + znorm) * growthz
         return growth(z) / growth(0.)
 
     @utils.flatarray()
@@ -144,7 +157,7 @@ class Primordial(BaseSection):
 
 class Transfer(BaseSection):
 
-    def transfer_k(self, k, frac_baryon=None):
+    def transfer_k(self, k):
         """
         Return matter transfer function.
 
@@ -152,10 +165,6 @@ class Transfer(BaseSection):
         ----------
         k : array_like
             Wavenumbers.
-
-        frac_baryon : float, default=None
-            If not ``None``, scale the baryon transfer function w.r.t. to the CDM one.
-            May be useful to remove BAO.
 
         Returns
         -------
@@ -190,8 +199,7 @@ class Transfer(BaseSection):
         T_b = np.sinc(ks_tilde / np.pi) * (T_b_1 + T_b_2)
 
         # EH eq. 16
-        frac_baryon = self._engine.frac_baryon if frac_baryon is None else frac_baryon
-        return frac_baryon * T_b + (1 - frac_baryon) * T_c
+        return self._engine.frac_b * T_b + (1 - self._engine.frac_b) * T_c
 
 
 class Fourier(BaseSection):
@@ -232,7 +240,7 @@ class Fourier(BaseSection):
                 return self.ba.growth_factor(z)**2
 
         def pk_callable(k):
-            return transfer(k)**2 * k**self._engine['n_s']
+            return transfer(k) ** 2 * k**self._engine['n_s']
 
         toret = PowerSpectrumInterpolator2D.from_callable(pk_callable=pk_callable, growth_factor_sq=growth_factor_sq, **kwargs)
         if not ignore_norm:
