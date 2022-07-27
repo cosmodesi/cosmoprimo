@@ -8,7 +8,7 @@ from scipy import interpolate
 
 
 def mkdir(dirname):
-    """Try to create ``dirnm`` and catch :class:`OSError`."""
+    """Try to create ``dirname`` and catch :class:`OSError`."""
     try:
         os.makedirs(dirname)  # MPI...
     except OSError:

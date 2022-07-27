@@ -13,6 +13,22 @@ from . import utils, constants
 _Sections = ['Background', 'Thermodynamics', 'Primordial', 'Perturbations', 'Transfer', 'Harmonic', 'Fourier']
 
 
+def _deepeq(obj1, obj2):
+    # Deep equality test
+    if type(obj2) is type(obj1):
+        if isinstance(obj1, dict):
+            if obj2.keys() == obj1.keys():
+                return all(_deepeq(obj1[name], obj2[name]) for name in obj1)
+        elif isinstance(obj1, (tuple, list)):
+            if len(obj2) == len(obj1):
+                return all(_deepeq(o1, o2) for o1, o2 in zip(obj1, obj2))
+        elif isinstance(obj1, np.ndarray):
+            return np.all(obj2 == obj1)
+        else:
+            return obj2 == obj1
+    return False
+
+
 class CosmologyError(Exception):
 
     """Exception raised by :class:`Cosmology`."""
@@ -220,6 +236,10 @@ class BaseEngine(BaseClass, metaclass=RegisteredEngine):
             Pressure, in units of :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
         """
         return np.asarray([_compute_ncdm_momenta(self['T_cmb'] * T_ncdm_over_cmb, m, z=z, epsrel=epsrel, out='p') / (1 + z)**3 for m, T_ncdm_over_cmb in zip(self['m_ncdm'], self['T_ncdm_over_cmb'])]) / self['h']**2
+
+    def __eq__(self, other):
+        r"""Is ``other`` same as ``self``?"""
+        return type(other) == type(self) and _deepeq(other._params, self._params) and _deepeq(other.extra_params, self.extra_params)
 
 
 def _make_section_getter(section):
@@ -548,14 +568,18 @@ class Cosmology(BaseEngine):
         Adapted from https://github.com/bccp/nbodykit/blob/master/nbodykit/cosmology/cosmology.py.
         """
         if self._engine is None:
-            raise CosmologyError('Attribute {} not found; try setting an engine ("set_engine")?'.format(name))
+            raise AttributeError('Attribute {} not found; try setting an engine ("set_engine")?'.format(name))
         # Resolving a name from the sections : c.Omega0_m => c.get_background().Omega0_m
         Sections = self._engine._Sections
         for section_name, Section in Sections.items():
             if hasattr(Section, name) and not any(hasattr(OtherSection, name) for OtherSection in Sections.values() if OtherSection is not Section):  # keep only single elements
                 section = getattr(self._engine, 'get_{}'.format(section_name))()
                 return getattr(section, name)
-        raise CosmologyError("Attribute {} not found in any of {} engine's products (rejecting duplicates)".format(name, self.engine.__class__.__name__))
+        raise AttributeError("Attribute {} not found in any of {} engine's products (rejecting duplicates)".format(name, self.engine.__class__.__name__))
+
+    def __eq__(self, other):
+        r"""Is ``other`` same as ``self``?"""
+        return type(other) == type(self) and _deepeq(other._params, self._params) and other._engine == self._engine
 
 
 @utils.addproperty('engine')
@@ -631,10 +655,7 @@ def compile_params(args):
     for name, value in args.items():
         if name.startswith('omega'):
             omega = params.pop(name)
-            if isinstance(omega, list):
-                Omega = [o / h**2 for o in omega]
-            else:
-                Omega = omega / h**2
+            Omega = np.array(omega) / h**2  # array to cope with tuple, lists for e.g. omega_ncdm
             params[name.replace('omega', 'Omega')] = Omega
 
     def set_alias(params_name, args_name):
@@ -663,7 +684,7 @@ def compile_params(args):
     if 'Omega_g' in params:
         params['T_cmb'] = (params.pop('Omega_g') * h**2 * constants.rho_crit_kgph_per_mph3 / (4. / constants.c**3 * constants.Stefan_Boltzmann))**(0.25)
 
-    def make_list(li, name):
+    def _make_list(li, name):
         if isinstance(li, (tuple, list, np.ndarray)):
             return list(li)
         raise TypeError('{} must be a list'.format(name))
@@ -678,13 +699,17 @@ def compile_params(args):
     else:
         if 'Omega_ncdm' in params:
             Omega_ncdm = params.pop('Omega_ncdm')
-            single_ncdm = np.ndim(Omega_ncdm) == 0
-            if np.ndim(Omega_ncdm) == 0:
+            single_ncdm = False
+            if Omega_ncdm is None:
+                Omega_ncdm = []
+            else:
+                single_ncdm = np.ndim(Omega_ncdm) == 0
+            if single_ncdm:  # a single massive neutrino
                 Omega_ncdm = [Omega_ncdm]
-            Omega_ncdm = make_list(Omega_ncdm, 'Omega_ncdm')
+            Omega_ncdm = _make_list(Omega_ncdm, 'Omega_ncdm')
             if np.ndim(T_ncdm_over_cmb) == 0:
                 T_ncdm_over_cmb = [T_ncdm_over_cmb] * len(Omega_ncdm)
-            T_ncdm_over_cmb = make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
+            T_ncdm_over_cmb = _make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
             m_ncdm = []
             h = params['h']
 
@@ -699,14 +724,13 @@ def compile_params(args):
                     omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
 
                 return m
-
             for Omega, T in zip(Omega_ncdm, T_ncdm_over_cmb):
                 if Omega == 0:
                     m_ncdm.append(0.)
                 else:
                     T_ncdm = params['T_cmb'] * T
                     m = solve_newton(Omega * h**2, Omega * h**2 * 93.14, T_ncdm)
-                    # print(m,Omega*h**2*93.14)
+                    # print(m, Omega * h**2 * 93.14)
                     m_ncdm.append(m)
 
             if single_ncdm: m_ncdm = m_ncdm[0]
@@ -714,19 +738,19 @@ def compile_params(args):
         else:
             m_ncdm = []
 
+    single_ncdm = False
     if m_ncdm is None:
         m_ncdm = []
-
-    single_ncdm = np.ndim(m_ncdm) == 0
-    if single_ncdm:
-        # a single massive neutrino
+    else:
+        single_ncdm = np.ndim(m_ncdm) == 0
+    if single_ncdm:  # a single massive neutrino
         m_ncdm = [m_ncdm]
 
-    m_ncdm = make_list(m_ncdm, 'm_ncdm')
+    m_ncdm = _make_list(m_ncdm, 'm_ncdm')
 
     if np.ndim(T_ncdm_over_cmb) == 0:
         T_ncdm_over_cmb = [T_ncdm_over_cmb] * len(m_ncdm)
-    T_ncdm_over_cmb = make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
+    T_ncdm_over_cmb = _make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
     if len(T_ncdm_over_cmb) != len(m_ncdm):
         raise TypeError('T_ncdm_over_cmb and m_ncdm must be of same length')
 

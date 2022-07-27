@@ -1,6 +1,7 @@
 import os
 import tempfile
 
+import pytest
 from matplotlib import pyplot as plt
 import numpy as np
 
@@ -8,9 +9,28 @@ from cosmoprimo import fiducial, Cosmology
 
 
 def test_planck():
-
     cosmo = fiducial.Planck2018FullFlatLCDM()
     assert cosmo['h'] == 0.6766
+
+
+def test_boss():
+    cosmo = fiducial.BOSS()
+    assert cosmo['h'] == 0.676
+
+
+def test_abacus():
+    from cosmoprimo.fiducial import AbacusSummit_params, AbacusSummit
+    dcosmos = AbacusSummit_params(params=['root', 'omega_b', 'omega_cdm', 'h', 'A_s', 'n_s', 'alpha_s', 'N_ur', 'omega_ncdm', 'w0_fld', 'wa_fld'])
+    ncosmos = len(dcosmos)
+    assert AbacusSummit_params(19)['omega_ncdm'] == (0.0006442, 0.0006442)
+    assert list(AbacusSummit_params(19, params=['h']).keys()) == ['h']
+    assert list(AbacusSummit_params(19, params=['omega_k', 'h']).keys()) == ['omega_k', 'h']
+    for dcosmo in dcosmos:
+        cosmo = AbacusSummit(dcosmo['root'])
+        dcosmo.pop('root')
+        assert cosmo == AbacusSummit().clone(T_ncdm_over_cmb=None, **dcosmo)
+    with pytest.raises(ValueError):
+        cosmo = AbacusSummit('0')
 
 
 def test_desi(plot=False):
@@ -61,4 +81,6 @@ def test_desi(plot=False):
 if __name__ == '__main__':
 
     test_planck()
+    test_boss()
+    test_abacus()
     test_desi(plot=False)

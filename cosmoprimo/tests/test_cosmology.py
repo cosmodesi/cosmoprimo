@@ -146,6 +146,11 @@ def test_primordial(params, seed=42):
             assert np.allclose(pr.pk_k(k, mode=mode), pr_class.pk_k(k, mode=mode), atol=0, rtol=2e-3)
             assert np.allclose(pr.pk_interpolator(mode=mode)(k), pr_class.pk_interpolator(mode=mode)(k), atol=0, rtol=2e-3)
 
+    k = np.logspace(-3, 1, 100)
+    for engine in ['camb', 'class']:
+        pr = Primordial(cosmo, engine=engine)
+        assert np.allclose(pr.pk_interpolator(mode='scalar')(k), (cosmo.h**3 * pr.A_s * (k / pr.k_pivot) ** (pr.n_s - 1.)))
+
     for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
         pr = Primordial(cosmo, engine=engine)
         for name in ['n_s']:
@@ -472,7 +477,7 @@ def test_clone():
 def test_shortcut():
     cosmo = Cosmology()
     z = [0.1, 0.3]
-    with pytest.raises(CosmologyError):
+    with pytest.raises(AttributeError):
         d = cosmo.comoving_radial_distance(z)
     assert 'tau_reio' not in dir(cosmo)
     cosmo.set_engine('class')
@@ -509,6 +514,6 @@ if __name__ == '__main__':
     try: import pyccl
     except ImportError: pyccl = None
 
-    if pyccl is None:
+    if pyccl is not None:
         print('With pyccl')
         external_test_pyccl()
