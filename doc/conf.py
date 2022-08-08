@@ -35,15 +35,14 @@ extensions = [
 # -- Project information -----------------------------------------------------
 
 project = 'cosmoprimo'
-copyright = '2021, Arnaud de Mattia'
-author = 'Arnaud de Mattia'
+copyright = '2021, cosmodesi'
 
 # The full version, including alpha/beta/rc tags
 release = __version__
 
 html_theme = 'sphinx_rtd_theme'
 
-autodoc_mock_imports = ['pyfftw','pyclass','camb']
+autodoc_mock_imports = ['pyfftw', 'pyclass', 'camb']
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']

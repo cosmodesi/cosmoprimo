@@ -32,6 +32,42 @@ def test_abacus():
     with pytest.raises(ValueError):
         cosmo = AbacusSummit('0')
 
+    try: from abacusnbody import metadata
+    except ImportError: metadata = None
+
+    if metadata is not None:
+        print('With abacusnbody')
+        plot = False
+        for root in AbacusSummit_params(params=['root']):
+            root = root['root'][-3:]
+            try:
+                meta = metadata.get_meta('AbacusSummit_base_c{}_ph000'.format(root))
+            except ValueError:
+                continue
+            cosmo = AbacusSummit(root)
+            z = np.array(list(meta['GrowthTable'].keys()))
+            dz_ref = np.array(list(meta['GrowthTable'].values()))
+            if plot and root == '000':
+                from matplotlib import pyplot as plt
+                plt.plot(z, dz_ref * (1 + z), label='abacusnbody')
+                dz_test = cosmo.growth_factor(z)
+                dz_test *= dz_ref[0] / dz_test[0]
+                plt.plot(z, dz_test * (1 + z), label='class')
+                plt.legend()
+                plt.show()
+            mask = z <= 5.
+            pivot = np.flatnonzero(z == 1.)
+            assert pivot.size
+            z, dz_ref = z[mask], dz_ref[mask]
+            dz_test = cosmo.growth_factor(z)
+            dz_test *= dz_ref[pivot] / dz_test[pivot]
+            sig_test = cosmo.get_fourier().sigma8_z(z)
+            sig_test *= dz_ref[pivot] / sig_test[pivot]
+            pk_test = cosmo.get_fourier().pk_interpolator()(0.2, z)**0.5
+            pk_test *= dz_ref[pivot] / pk_test[pivot]
+            assert np.allclose(dz_test, dz_ref, rtol=1e-3)
+            assert np.allclose(sig_test, dz_ref, rtol=1e-3)
+
 
 def test_desi(plot=False):
 
