@@ -606,7 +606,7 @@ def _make_section_getter(section):
     Parameters
     ----------
     engine : string, default=None
-        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_variants', 'bbks'].
         If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool, default=True

@@ -40,8 +40,10 @@ def test_abacus():
         plot = False
         for root in AbacusSummit_params(params=['root']):
             root = root['root'][-3:]
+            #if root not in ['000', '009']: continue
+            simname = 'AbacusSummit_base_c{}_ph000'.format(root)
             try:
-                meta = metadata.get_meta('AbacusSummit_base_c{}_ph000'.format(root))
+                meta = metadata.get_meta(simname)
             except ValueError:
                 continue
             cosmo = AbacusSummit(root)
@@ -61,12 +63,22 @@ def test_abacus():
             z, dz_ref = z[mask], dz_ref[mask]
             dz_test = cosmo.growth_factor(z)
             dz_test *= dz_ref[pivot] / dz_test[pivot]
+            #print(dz_test / dz_ref - 1., cosmo.Omega0_r, cosmo.Omega0_ncdm, meta['Omega_Smooth'])
             sig_test = cosmo.get_fourier().sigma8_z(z)
             sig_test *= dz_ref[pivot] / sig_test[pivot]
             pk_test = cosmo.get_fourier().pk_interpolator()(0.2, z)**0.5
             pk_test *= dz_ref[pivot] / pk_test[pivot]
             assert np.allclose(dz_test, dz_ref, rtol=1e-3)
             assert np.allclose(sig_test, dz_ref, rtol=1e-3)
+
+            try:
+                z = np.sort(np.atleast_1d(meta['TimeSliceRedshifts']))
+            except KeyError:
+                continue
+            vel_ref = np.array([metadata.get_meta(simname, redshift=zz)['VelZSpace_to_kms'] for zz in z]) / meta['BoxSize']
+            vel_test =  1. / (1 + z) * 100 * cosmo.efunc(z)  #(cosmo.efunc(z)**2 - cosmo.Omega0_r * (1 + z)**4)**(0.5)
+            #print(vel_test / vel_ref - 1.)
+            assert np.allclose(vel_test, vel_ref, rtol=1e-3)
 
 
 def test_desi(plot=False):

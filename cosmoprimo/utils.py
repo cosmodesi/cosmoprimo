@@ -77,31 +77,32 @@ def flatarray(dtype=None):
     return make_wrapper
 
 
-class SolveLeastSquares(BaseClass):
+class LeastSquareSolver(BaseClass):
     r"""
-    Class that solves the least square problem, i.e. solves :math:`d\chi^{2}/d\mathbf{p}` for :math:`\mathbf{p}`, with:
+    Class that solves the least square problem, i.e. solves :math:`d\chi^{2}/d\mathbf{p} = 0` for :math:`\mathbf{p}`, with:
 
     .. math::
 
         \chi^{2} = \left(\mathbf{\delta} - \mathbf{p} \cdot \mathbf{grad}\right)^{T} \mathbf{F} \left(\mathbf{\delta} - \mathbf{p} \cdot \mathbf{grad}\right)
 
-    >>> sls = SolveLeastSquares(np.ones(4))
-    >>> sls(2*np.ones(4))
+    >>> lss = LeastSquareSolver(np.ones(4))
+    >>> lss(2 * np.ones(4))
     2.0
-    >>> sls.model()
+    >>> lss.model()
     array([2., 2., 2., 2.])
-    >>> sls.chi2()
+    >>> lss.chi2()
     0.0
     """
-    def __init__(self, gradient, precision=1.):
+    def __init__(self, gradient, precision=1., constraint_gradient=None):
         r"""
         Initialize :class:`SolveLeastSquares`.
 
         Parameters
         ----------
         gradient : array_like, 1D array, 2D array
-            Gradient :math:`\mathbf{grad}`` of the model (assumed constant), such that the model is :math:`\mathbf{p} \cdot \mathbf{grad}`.
-            If 1D, corresponds to the data vector size (one parameter model).
+            Gradient :math:`\mathbf{grad}`` of the model (assumed constant),
+            such that the model is :math:`\mathbf{p} \cdot \mathbf{grad}`.
+            If 1D, shape is the data vector size (one parameter model).
             If 2D, first dimension is the number of model parameters, second is data vector size.
 
         precision : scalar, 1D array, 2D array
@@ -109,26 +110,58 @@ class SolveLeastSquares(BaseClass):
             If scalar, equivalent to diagonal matrix with all elements set to ``precision``.
             If 1D, equivalent to diagonal matrix filled with ``precision``.
             If 2D, symmetric precision matrix.
+
+        constraint_gradient : array_like, 2D array
+            Gradient of constraints w.r.t. model parameters.
+            First dimension is the number of model parameters, second is number of constraints.
         """
         # gradient shape = (nparams,ndata)
-        self.gradient = np.asarray(gradient)
+        self.gradient = np.atleast_1d(gradient)
         self.isscalar = self.gradient.ndim == 1
-        if self.isscalar: self.gradient = self.gradient[None, :]
+        if self.isscalar:
+            self.gradient = self.gradient[None, :]
+        elif self.gradient.ndim != 2:
+            raise ValueError('gradient must be at most 2D')
         self.precision = np.asarray(precision)
         if self.precision.ndim == 1:
             hv = self.gradient * self.precision
         else:
             hv = self.gradient.dot(self.precision)
-        self.projector = np.linalg.inv(hv.dot(self.gradient.T)).dot(hv).T
+        invfisher = hv.dot(self.gradient.T)
+        if constraint_gradient is None:
+            self.nconstraints = 0
+        else:
+            constraint_gradient = np.atleast_2d(constraint_gradient)
+            self.nconstraints = constraint_gradient.shape[-1]
+            if constraint_gradient.ndim != 2 or constraint_gradient.shape[0] != self.gradient.shape[0]:
+                raise ValueError('constraint_gradient must be 2D, of first dimension the number of model parameters (gradient first dimension)')
+            dtype = constraint_gradient.dtype
+            # Possible improvement: block-inverse
+            invfisher = np.bmat([[invfisher, - constraint_gradient],
+                                 [constraint_gradient.T, np.zeros((self.nconstraints,) * 2, dtype=dtype)]]).A
+            hv = np.bmat([[hv, np.zeros(constraint_gradient.shape, dtype=dtype)],
+                          [np.zeros((self.nconstraints, self.gradient.shape[-1]), dtype=dtype), np.eye(self.nconstraints, dtype=dtype)]]).A
+        fisher = np.linalg.inv(invfisher)
 
-    def compute(self, delta):
+        # Check inversion
+        tmp = fisher.dot(invfisher)
+        ref = np.eye(tmp.shape[0], dtype=tmp.dtype)
+        if not np.allclose(tmp, ref, rtol=1e-04, atol=1e-04):
+            import warnings
+            warnings.warn('Numerically inaccurate inverse matrix, max absolute diff {:.6f}.'.format(np.max(np.abs(tmp - ref))))
+
+        self.projector = fisher.dot(hv).T
+
+    def compute(self, delta, constraint=None):
         """Solve least square problem for ``delta`` given :attr:`gradient`, :attr:`precision`."""
-        self.delta = delta
-        self.params = self.delta.dot(self.projector)
+        self.delta = delta = np.atleast_1d(delta)
+        if constraint is not None:
+            delta = np.concatenate([self.delta, np.atleast_1d(constraint)], axis=-1)
+        self.params = delta.dot(self.projector)[..., :self.gradient.shape[0]]
 
-    def __call__(self, delta):
+    def __call__(self, delta, constraint=None):
         r"""Main method to be called; return parameters :math:`\mathbf{p}` best fitting ``delta``."""
-        self.compute(delta)
+        self.compute(delta, constraint=constraint)
         if self.isscalar: return self.params[..., 0]
         return self.params
 

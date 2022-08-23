@@ -7,7 +7,7 @@ For the correlation function: :class:`Kirkby2013CorrelationFunctionBAOFilter`.
 import numpy as np
 
 from .interpolator import PowerSpectrumInterpolator2D, CorrelationFunctionInterpolator2D
-from .utils import BaseClass, SolveLeastSquares
+from .utils import BaseClass, LeastSquareSolver
 from .cosmology import Cosmology, Fourier
 
 
@@ -28,7 +28,7 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
     """Base BAO filter for power spectrum."""
     name = 'base'
 
-    def __init__(self, pk_interpolator, cosmo=None, **kwargs):
+    def __init__(self, pk_interpolator, cosmo=None, cosmo_fid=None, **kwargs):
         """
         Run BAO filter.
 
@@ -38,20 +38,23 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
             Input power spectrum to remove BAO wiggles from.
 
         cosmo : Cosmology, default=None
-            Cosmology instance, which may be used to tune filter settings (depending on ``rs_drag``).
+            Cosmology instance, which may be used to tune filter settings (e.g.``rs_drag``).
+
+        cosmo_fid : Cosmology, default=None
+            Reference cosmology.
 
         kwargs : dict
             Arguments for :meth:`set_k`.
         """
+        self._cosmo_fid = cosmo_fid
         self.pk_interpolator = pk_interpolator
-        self.is2d = isinstance(pk_interpolator, PowerSpectrumInterpolator2D)
-        self._cosmo = cosmo
         self.set_k(**kwargs)
-        if self.is2d:
-            self.pk = self.pk_interpolator(self.k, self.pk_interpolator.z, ignore_growth=True)
-        else:
-            self.pk = self.pk_interpolator(self.k)
-        self.compute()
+        self.set_pk(pk_interpolator, cosmo=cosmo)
+        self._prepare()
+        self._compute()
+
+    def _prepare(self):
+        """Anything that can be done once."""
 
     def set_k(self, nk=1024):
         """
@@ -63,6 +66,23 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
             Number of wavenumbers.
         """
         self.k = np.geomspace(self.pk_interpolator.extrap_kmin, self.pk_interpolator.extrap_kmax, nk)
+
+    def set_pk(self, pk_interpolator, cosmo=None):
+        """Set input power spectrum to remove BAO wiggles from."""
+        self._cosmo = cosmo
+        self.pk_interpolator = pk_interpolator
+        self.is2d = isinstance(pk_interpolator, PowerSpectrumInterpolator2D)
+        if self.is2d:
+            self.pk = self.pk_interpolator(self.k, self.pk_interpolator.z, ignore_growth=True)
+        else:
+            self.pk = self.pk_interpolator(self.k)[:, None]
+
+    def __call__(self, pk_interpolator, cosmo=None):
+        self.set_pk(pk_interpolator, cosmo=cosmo)
+        self._compute()
+        if not self.is2d:
+            self.pk, self.pknow = self.pk[..., 0], self.pknow[..., 0]
+        return self
 
     @property
     def wiggles(self):
@@ -108,11 +128,22 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
             self._cosmo = Cosmology()
         return self._cosmo
 
+    @property
+    def cosmo_fid(self):
+        """Reference cosmology."""
+        if self._cosmo_fid is None:
+            self._cosmo_fid = Cosmology()
+        return self._cosmo_fid
+
     def rs_drag_ratio(self):
         """If :attr:`cosmo` is provided, return the ratio of its ``rs_drag`` to the fiducial one (from ``Cosmology()``), else 1."""
         if self._cosmo is None:
             return 1.
-        return self.cosmo.get_thermodynamics().rs_drag / 100.91463132327911
+        if self._cosmo_fid is None:
+            rs_drag_fid = 100.91463132327911
+        else:
+            rs_drag_fid = self.cosmo_fid.get_thermodynamics().rs_drag
+        return self.cosmo.get_thermodynamics().rs_drag / rs_drag_fid
 
 
 class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
@@ -122,10 +153,14 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     References
     ----------
     https://github.com/Samreay/Barry/blob/master/barry/cosmology/power_spectrum_smoothing.py
+
+    Note
+    ----
+    We have hand-tune parameters w.r.t. the reference.
     """
     name = 'hinton2017'
 
-    def __init__(self, pk_interpolator, degree=13, sigma=1, weight=0.5, **kwargs):
+    def __init__(self, pk_interpolator, degree=13, sigma=0.5, weight=0.9, **kwargs):
         """
         Run BAO filter.
 
@@ -137,10 +172,10 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         degree : int, default=13
             Polynomial degree.
 
-        sigma : float, default=1
+        sigma : float, default=0.5
             Standard deviation of the Gaussian kernel that downweights the maximum of the power spectrum relative to the edges.
 
-        weight : float, default=0.5
+        weight : float, default=0.9
             Normalisation of the Gaussian kernel.
         """
         self.degree = degree
@@ -148,20 +183,29 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         self.weight = weight
         super(Hinton2017PowerSpectrumBAOFilter, self).__init__(pk_interpolator, **kwargs)
 
-    def compute(self):
+    def _compute(self):
         """Run filter."""
-        logk = np.log(self.k)
-        logpk = np.log(self.pk)
-        maxk = logk[np.argmax(self.pk, axis=0)].flat[0]  # here we take just the first one, approximation
+        mask = (self.k > 1e-4) & (self.k < 5.)
+        logk = np.log10(self.k[mask])
+        logpk = np.log10(self.pk[mask].T)
+        maxk = logk[np.argmax(logpk[0], axis=0)]  # here we take just the first one, approximation
+        meanlogk = np.mean(logk)
         gauss = np.exp(-0.5 * ((logk - maxk) / self.sigma)**2)
-        w = np.ones_like(self.k) - self.weight * gauss
+        w = np.ones_like(logk) - self.weight * gauss
 
-        gradient = np.array([logk**i for i in range(self.degree)])
-        sls = SolveLeastSquares(gradient, precision=1. / w**2)
-        sls(logpk.T)
-        self.pknow = np.exp(sls.model()).T
-        # series = np.polynomial.polynomial.Polynomial.fit(logk, logpk, self.degree, w=w)
-        # self.pknow = np.exp(series(logk))
+        gradient = np.array([(logk - meanlogk)**i for i in range(self.degree)])
+        constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0],
+                                               gradient[..., 2] - 2. * gradient[..., 1] + gradient[..., 0],
+                                               gradient[..., -1], gradient[..., -2] - gradient[..., -1],
+                                               gradient[..., -3] - 2. * gradient[..., -2] + gradient[..., -1]])
+        lss = LeastSquareSolver(gradient, precision=w**2, constraint_gradient=constraint_gradient)
+        lss(logpk, constraint=np.column_stack([logpk[..., 0], logpk[..., 1] - logpk[..., 0],
+                                               logpk[..., 2] - 2. * logpk[..., 1] + logpk[..., 0],
+                                               logpk[..., -1], logpk[..., -2] - logpk[..., -1],
+                                               logpk[..., -3] - 2. * logpk[..., -2] + logpk[..., -1]]))
+
+        self.pknow = self.pk.copy()
+        self.pknow[mask] = 10 ** lss.model().T
 
 
 class SavGolPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
@@ -178,12 +222,12 @@ class SavGolPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     """
     name = 'savgol'
 
-    def compute(self):
+    def _compute(self):
         """Run filter."""
         from scipy.signal import savgol_filter
         # empirical setting of https://github.com/sfschen/velocileptors/blob/master/velocileptors/EPT/cleft_kexpanded_resummed_fftw.py#L37
         nfilter = int(np.ceil(np.log(7) / np.log(self.k[-1] / self.k[-2])) // 2 * 2 + 1)  # filter length ~ log span of one oscillation from k = 0.01
-        # self.pknow = np.exp(savgol_filter(np.log(self.pk),nfilter,polyorder=4,axis=0))
+        # self.pknow = np.exp(savgol_filter(np.log(self.pk), nfilter, polyorder=4, axis=0))
         self.pknow = (np.exp(savgol_filter(np.log(self.k * self.pk.T), nfilter, polyorder=4, axis=-1)) / self.k).T
         hnfilter = nfilter // 2
         self.pknow[-hnfilter:] = self.pk[-hnfilter:]
@@ -194,7 +238,7 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     """Remove BAO wiggles using the Eisenstein & Hu no-wiggle analytic formula, emulated with a 6-th order polynomial."""
     name = 'ehpoly'
 
-    def __init__(self, pk_interpolator, kbox=(5e-3, 0.5), dampkbox=(1e-2, 0.4), dampsigma=10, rescale_kbox=True, cosmo=None, **kwargs):
+    def __init__(self, pk_interpolator, krange=(1e-3, 1.), krange_damp=(1e-2, 0.4), sigma_damp=10, rescale_krange=True, cosmo=None, **kwargs):
         """
         Run BAO filter.
 
@@ -203,18 +247,11 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         pk_interpolator : PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
             Input power spectrum to remove BAO wiggles from.
 
-        kbox : tuple, default=(5e-3, 0.5)
+        krange : tuple, default=(1e-3, 1.)
             k-range to fit the Eisenstein & Hu no-wiggle power spectrum to the input one :attr:`pk_interpolator`.
 
-        dampkbox : tuple, default=(1e-2, 0.4)
-            k-range to interpolate between the Eisenstein & Hu no-wiggle power spectrum and the input one :attr:`pk_interpolator`
-            with an Gaussian damping factor.
-
-        dampsigma : float, default=10
-            Standard deviation of the Gaussian damping factor.
-
-        rescale_kbox : bool, default=True
-            Whether to rescale ``kbox`` and ``dampkbox`` by the ratio of ``rs_drag`` relative to the fiducial cosmology
+        rescale_krange : bool, default=True
+            Whether to rescale ``krange`` and ``krange_damp`` by the ratio of ``rs_drag`` relative to the fiducial cosmology
             (may help robustify the procedure for cosmologies far from the fiducial one).
 
         cosmo : Cosmology, default=None
@@ -223,69 +260,54 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         kwargs : dict
             Arguments for :meth:`set_k`.
         """
-        self.kbox = kbox
-        self.dampkbox = dampkbox
-        self.dampsigma = dampsigma
-        self.rescale_kbox = rescale_kbox
+        self.krange = krange
+        self.rescale_krange = rescale_krange
         super(EHNoWigglePolyPowerSpectrumBAOFilter, self).__init__(pk_interpolator, cosmo=cosmo, **kwargs)
 
-    def compute(self):
+    def _compute(self):
         """Run filter."""
-        kbox, dampkbox = np.asarray(self.kbox), np.asarray(self.dampkbox)
-        if self.rescale_kbox:
-            scale = self.rs_drag_ratio()
-            kbox, dampkbox = kbox / scale, dampkbox / scale
-        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(self.k)
-        ratio = self.pk.T / pknow
-        mask = (self.k >= kbox[0]) & (self.k <= kbox[1])
+        krange = np.asarray(self.krange)
+        if self.rescale_krange:
+            krange = krange / self.rs_drag_ratio()
+        mask = (self.k >= krange[0]) & (self.k <= krange[1])
         k = self.k[mask]
+        ratio = self.pk[mask].T / Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(k, z=0.)
 
-        def model(k):
-            return np.array([k**(i - 1) for i in range(6)])
+        gradient = np.array([k**(i - 2) for i in range(6)])
+        constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
+        lss = LeastSquareSolver(gradient, precision=k**2, constraint_gradient=constraint_gradient)
+        lss(ratio, constraint=np.column_stack([ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]]))
 
-        sls = SolveLeastSquares(model(k), precision=1.)
-        params = sls(ratio[..., mask])
-
-        tophat = self._tophat(self.k, kmin=dampkbox[0], kmax=dampkbox[-1], scale=self.dampsigma)
-        model = ratio / params.dot(model(self.k))
-        wiggles = (model - 1.) * tophat + 1.
-        self.pknow = self.pk / wiggles.T
-
-    @staticmethod
-    def _tophat(k, kmin=1e-3, kmax=1, scale=1):
-        """Tophat Gaussian kernel."""
-        tophat = np.ones_like(k)
-        mask = k > kmax
-        tophat[mask] *= np.exp(-scale**2 * (k[mask] / kmax - 1.)**2)
-        mask = k < kmin
-        tophat[mask] *= np.exp(-scale**2 * (kmin / k[mask] - 1.)**2)
-        return tophat
+        wiggles = np.ones_like(self.pk)
+        wiggles[mask] = (ratio / lss.model()).T
+        self.pknow = self.pk / wiggles
 
 
 class Wallish2018PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     """
-    Filter BAO wiggles by sine-transforming the power spectrum to real space (where the BAO is better localised),
+    Filter BAO wiggles by sine-transforming the power spectrum to real space (where the BAO is better localized),
     cutting the peak and interpolating with a spline.
 
     References
     ----------
     https://arxiv.org/pdf/1810.02800.pdf, Appendix D (thanks to Stephen Chen for the reference)
+    https://arxiv.org/pdf/1003.3999.pdf
 
     Note
     ----
-    We have hand-tune parameters w.r.t. to the reference.
+    We have hand-tuned parameters w.r.t. the reference.
     """
     name = 'wallish2018'
 
-    def compute(self):
+    def _compute(self):
         """Run filter."""
         from scipy import fftpack, interpolate
         k = np.linspace(self.pk_interpolator.extrap_kmin, 2., 4096)
         if self.is2d:
             pk = self.pk_interpolator(k, self.pk_interpolator.z, ignore_growth=True)
         else:
-            pk = self.pk_interpolator(k)
-        kpk = np.log(k * pk.T).T
+            pk = self.pk_interpolator(k)[:, None]
+        kpk = np.log(k[:, None] * pk)
         kpkffted = fftpack.dst(kpk, type=2, axis=0, norm='ortho', overwrite_x=False)
         even = kpkffted[::2]
         odd = kpkffted[1::2]
@@ -318,11 +340,8 @@ class Wallish2018PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
             spline_odd = interpolate.CubicSpline(xodd[mask_odd], odd[mask_odd] * xodd[mask_odd]**2, axis=-1, bc_type='clamped', extrapolate=False)
             return spline_even(xeven) / xeven**2, spline_odd(xodd) / xodd**2
 
-        if self.is2d:
-            for iz in range(self.pk.shape[-1]):
-                even[:, iz], odd[:, iz] = smooth_even_odd(even[:, iz], odd[:, iz], dd_even[:, iz], dd_odd[:, iz])
-        else:
-            even, odd = smooth_even_odd(even, odd, dd_even, dd_odd)
+        for iz in range(self.pk.shape[-1]):
+            even[:, iz], odd[:, iz] = smooth_even_odd(even[:, iz], odd[:, iz], dd_even[:, iz], dd_odd[:, iz])
 
         self._even_now = even
         self._odd_now = odd
@@ -330,17 +349,17 @@ class Wallish2018PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         merged[::2] = even
         merged[1::2] = odd
         kpknow = fftpack.idst(merged, type=2, axis=0, norm='ortho', overwrite_x=False)
-        pknow = (np.exp(kpknow).T / k).T
+        pknow = np.exp(kpknow) / k[..., None]
 
         mask = (k > 1e-2) & (k < 1.5)
         k, pknow = k[mask], pknow[mask]
         mask_left, mask_right = self.k < 5e-4, self.k > 2.
-        k = np.concatenate([self.k[mask_left], k, self.k[mask_right]])
-        pknow = np.concatenate([self.pk[mask_left], pknow, self.pk[mask_right]])
+        k = np.concatenate([self.k[mask_left], k, self.k[mask_right]], axis=0)
+        pknow = np.concatenate([self.pk[mask_left], pknow, self.pk[mask_right]], axis=0)
         pknow = interpolate.CubicSpline(k, pknow, axis=0, bc_type='clamped', extrapolate=False)(self.k)
-        tophat = self._tophat(self.k, kmax=1., scale=20.)
-        wiggles = (self.pk / pknow - 1.).T * tophat + 1.
-        self.pknow = self.pk / wiggles.T
+        tophat = self._tophat(self.k, kmax=1., scale=20.)[..., None]
+        wiggles = (self.pk / pknow - 1.) * tophat + 1.
+        self.pknow = self.pk / wiggles
 
     @staticmethod
     def _tophat(k, kmax=1, scale=1):
@@ -349,6 +368,117 @@ class Wallish2018PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         mask = k > kmax
         tophat[mask] *= np.exp(-scale**2 * (k[mask] / kmax - 1.)**2)
         return tophat
+
+
+class Brieden2022PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
+    """
+    Filter BAO wiggles by averaging the minima and maxima of the wiggles.
+
+    References
+    ----------
+    https://arxiv.org/abs/2204.11868, Appendix D (thanks to Samuel Brieden for the reference)
+    """
+    name = 'brieden2022'
+
+    def _prepare(self):
+        self.kmask_fid = (self.k >= 1e-3) & (self.k <= 1.)
+        self.k_fid = self.k[self.kmask_fid]
+        try:
+            pk_fid = Fourier(self.cosmo_fid).pk_interpolator(ignore_norm=True)(self.k_fid, z=0.)  # to cope with A_s-parameterized E&H
+        except TypeError:
+            pk_fid = Fourier(self.cosmo_fid).pk_interpolator()(self.k_fid, z=0.)
+        pknow_fid = Fourier(self.cosmo_fid, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(self.k_fid, z=0.)
+        ratio = pk_fid / pknow_fid
+        gradient = np.array([self.k_fid**(i - 1) for i in range(4)])
+        constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
+        lss = LeastSquareSolver(gradient, precision=self.k_fid**2, constraint_gradient=constraint_gradient)
+        lss(ratio, constraint=[ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]])
+        self.pknow_correction = lss.model()[:, None]
+        self.ratio_fid = ratio[:, None] / self.pknow_correction
+        ik0 = np.searchsorted(self.k_fid, 0.02, side='right') + 1
+        self.ik_fid_peaks = []
+        from scipy import signal
+        for si in [1., -1.]:
+            ix = signal.find_peaks(si * self.ratio_fid[ik0:, 0])[0] + ik0  # here we take just the first one, approximation
+            ix = np.concatenate([[0]] * (ix[0] > 0) + [ix] + [[-1]] * (ix[-1] < self.k_fid.size - 1), axis=0)
+            self.ik_fid_peaks.append(ix)
+        self.ratio_now_fid = self._interp(*self.ik_fid_peaks, self.k_fid, self.ratio_fid)
+
+    @staticmethod
+    def _interp(ixh, ixl, x, y, kind=2):
+        from scipy import interpolate
+        toret = 0.
+        for ix in [ixh, ixl]:
+            toret += interpolate.interp1d(x[ix], y[ix], kind=kind, axis=0, fill_value='extrapolate', assume_sorted=True)(x)
+        return toret / 2.
+
+    def _compute(self):
+        rescale = self.rs_drag_ratio()
+        if self.is2d:
+            pk = self.pk_interpolator(self.k_fid / rescale, self.pk_interpolator.z, ignore_growth=True)
+        else:
+            pk = self.pk_interpolator(self.k_fid / rescale)[:, None]
+
+        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(self.k_fid * rescale, z=0.)[:, None]
+        pknow *= self.pknow_correction
+        ratio = pk / pknow / self.ratio_fid
+        pknow = self._interp(*self.ik_fid_peaks, self.k_fid, ratio) * pknow * self.ratio_now_fid
+        pk_interpolator = self.pk_interpolator.clone(k=self.k_fid / rescale, pk=pknow)
+        self.pknow = self.pk.copy()
+        if self.is2d:
+            self.pknow[self.kmask_fid] = pk_interpolator(self.k_fid, self.pk_interpolator.z, ignore_growth=True)
+        else:
+            self.pknow[self.kmask_fid] = pk_interpolator(self.k_fid)[:, None]
+
+
+class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
+    """
+    Filter BAO wiggles by averaging the minima and maxima of the wiggles at the fiducial positions rescaled by :math:`r_{\mathrm{drag}} / r_{\mathrm{drag}}^{\mathrm{fid}}`.
+    A simpler version of :class:`Brieden2022PowerSpectrumBAOFilter`.
+
+    References
+    ----------
+    https://arxiv.org/abs/2204.11868, Appendix D (thanks to Samuel Brieden for the reference)
+    """
+    name = 'peakaverage'
+
+    def _prepare(self):
+        index = np.flatnonzero((self.k >= 1e-4) & (self.k <= 1.))
+        k_fid = self.k[index]
+        try:
+            pk_fid = Fourier(self.cosmo_fid).pk_interpolator(ignore_norm=True)(k_fid, z=0.)  # to cope with A_s-parameterized E&H
+        except TypeError:
+            pk_fid = Fourier(self.cosmo_fid).pk_interpolator()(k_fid, z=0.)
+        pknow_fid = Fourier(self.cosmo_fid, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(k_fid, z=0.)
+        ratio = pk_fid / pknow_fid
+        gradient = np.array([k_fid**(i - 1) for i in range(4)])
+        constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
+        lss = LeastSquareSolver(gradient, precision=k_fid**2, constraint_gradient=constraint_gradient)
+        lss(ratio, constraint=[ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]])
+        pknow_correction = lss.model()
+        ik0 = np.searchsorted(k_fid, 1e-2, side='right') + 1
+        self.k_peaks = []
+        from scipy import signal
+        for si in [1., -1.]:
+            ik = signal.find_peaks(si * ratio[ik0:] / pknow_correction[ik0:])[0] + ik0  # here we take just the first one, approximation
+            ik += index[0]
+            k = self.k[np.concatenate([np.arange(index[0]), ik, np.arange(max(index[-1], ik[-1] + 1), self.k.size)], axis=0)]
+            self.k_peaks.append(k)
+
+    @staticmethod
+    def _interp(xh, xl, x, y, kind=2):
+        from scipy import interpolate
+        toret = 0.
+        interp = interpolate.interp1d(x, y, kind=kind, axis=0, fill_value='extrapolate', assume_sorted=True)
+        for xx in [xh, xl]:
+            yy = interp(xx)
+            toret += interpolate.interp1d(xx, yy, kind=kind, axis=0, fill_value='extrapolate', assume_sorted=True)(x)
+        return toret / 2.
+
+    def _compute(self):
+        rescale = self.rs_drag_ratio()
+        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(self.k)[:, None]
+        self.pknow = self._interp(self.k_peaks[0] / rescale, self.k_peaks[1] / rescale, self.k, self.pk / pknow) * pknow
 
 
 class RegisteredCorrelationFunctionBAOFilter(type(BaseClass)):
@@ -368,7 +498,7 @@ class BaseCorrelationFunctionBAOFilter(BaseClass, metaclass=RegisteredCorrelatio
     """Base BAO filter for correlation function."""
     name = 'base'
 
-    def __init__(self, xi_interpolator, cosmo=None, **kwargs):
+    def __init__(self, xi_interpolator, cosmo=None, cosmo_fid=None, **kwargs):
         """
         Run BAO filter.
 
@@ -380,18 +510,21 @@ class BaseCorrelationFunctionBAOFilter(BaseClass, metaclass=RegisteredCorrelatio
         cosmo : Cosmology, default=None
             Cosmology instance, which may be used to tune filter settings (depending on ``rs_drag``).
 
+        cosmo_fid : Cosmology, default=None
+            Reference cosmology.
+
         kwargs : dict
             Arguments for :meth:`set_s`.
         """
+        self._cosmo_fid = cosmo_fid
         self.xi_interpolator = xi_interpolator
-        self.is2d = isinstance(xi_interpolator, CorrelationFunctionInterpolator2D)
-        self._cosmo = cosmo
         self.set_s(**kwargs)
-        if self.is2d:
-            self.xi = self.xi_interpolator(self.s, self.xi_interpolator.z, ignore_growth=True)
-        else:
-            self.xi = self.xi_interpolator(self.s)
-        self.compute()
+        self.set_xi(xi_interpolator, cosmo=cosmo)
+        self._prepare()
+        self._compute()
+
+    def _prepare(self):
+        """Anything that can be done once."""
 
     def set_s(self, ns=1024):
         """
@@ -403,6 +536,23 @@ class BaseCorrelationFunctionBAOFilter(BaseClass, metaclass=RegisteredCorrelatio
             Number of separations.
         """
         self.s = np.geomspace(self.xi_interpolator.extrap_smin, self.xi_interpolator.extrap_smax, ns)
+
+    def set_xi(self, xi_interpolator, cosmo=None):
+        """Set input correlation function to remove BAO wiggles from."""
+        self._cosmo = cosmo
+        self.xi_interpolator = xi_interpolator
+        self.is2d = isinstance(xi_interpolator, CorrelationFunctionInterpolator2D)
+        if self.is2d:
+            self.xi = self.xi_interpolator(self.s, self.xi_interpolator.z, ignore_growth=True)
+        else:
+            self.xi = self.xi_interpolator(self.s)[:, None]
+
+    def __call__(self, xi_interpolator, cosmo=None):
+        self.set_xi(xi_interpolator, cosmo=cosmo)
+        self._compute()
+        if not self.is2d:
+            self.xi, self.xinow = self.xi[..., 0], self.xinow[..., 0]
+        return self
 
     def smooth_xi_interpolator(self, **kwargs):
         """
@@ -443,11 +593,22 @@ class BaseCorrelationFunctionBAOFilter(BaseClass, metaclass=RegisteredCorrelatio
             self._cosmo = Cosmology()
         return self._cosmo
 
+    @property
+    def cosmo_fid(self):
+        """Reference cosmology."""
+        if self._cosmo_fid is None:
+            self._cosmo_fid = Cosmology()
+        return self._cosmo_fid
+
     def rs_drag_ratio(self):
         """If :attr:`cosmo` is provided, return the ratio of its ``rs_drag`` to the fiducial one (from ``Cosmology()``), else 1."""
         if self._cosmo is None:
             return 1.
-        return self.cosmo.get_thermodynamics().rs_drag / 100.91463132327911
+        if self._cosmo_fid is None:
+            rs_drag_fid = 100.91463132327911
+        else:
+            rs_drag_fid = self.cosmo_fid.get_thermodynamics().rs_drag
+        return self.cosmo.get_thermodynamics().rs_drag / rs_drag_fid
 
 
 class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
@@ -461,7 +622,7 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
     """
     name = 'kirkby2013'
 
-    def __init__(self, xi_interpolator, sbox_left=(50., 82.), sbox_right=(150., 190.), rescale_sbox=True, cosmo=None, **kwargs):
+    def __init__(self, xi_interpolator, srange_left=(50., 82.), srange_right=(150., 190.), rescale_sbox=True, cosmo=None, **kwargs):
         """
         Run BAO filter.
 
@@ -470,17 +631,17 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
         xi_interpolator : CorrelationFunctionInterpolator1D, CorrelationFunctionInterpolator2D
             Input correlation function to remove BAO peak from.
 
-        sbox_left : tuple
+        srange_left : tuple
             s-range to fit the polynomial on the left-hand side of the BAO peak.
 
-        sbox_right : tuple
+        srange_right : tuple
             s-range to fit the polynomial on the right-hand side of the BAO peak.
 
         cosmo : Cosmology
             Cosmology instance, which may be used to tune filter settings (depending on ``rs_drag``).
 
         rescale_sbox : bool
-            Whether to rescale ``sbox_left`` and ``sbox_right`` by the ratio of ``rs_drag`` relative to the fiducial cosmology
+            Whether to rescale ``srange_left`` and ``srange_right`` by the ratio of ``rs_drag`` relative to the fiducial cosmology
             (may help robustify the procedure for cosmologies far from the fiducial one).
 
         cosmo : Cosmology
@@ -489,26 +650,26 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
         kwargs : dict
             Arguments for :meth:`set_s`.
         """
-        self.sbox_left = sbox_left
-        self.sbox_right = sbox_right
+        self.srange_left = srange_left
+        self.srange_right = srange_right
         self.rescale_sbox = rescale_sbox
         super(Kirkby2013CorrelationFunctionBAOFilter, self).__init__(xi_interpolator, cosmo=cosmo, **kwargs)
 
-    def compute(self):
+    def _compute(self):
         """Run filter."""
-        sbox_left, sbox_right = np.asarray(self.sbox_left), np.asarray(self.sbox_right)
+        srange_left, srange_right = np.asarray(self.srange_left), np.asarray(self.srange_right)
         if self.rescale_sbox:
-            scale = self.rs_drag_ratio()
-            sbox_left, sbox_right = sbox_left * scale, sbox_right * scale
+            rescale = self.rs_drag_ratio()
+            srange_left, srange_right = srange_left * rescale, srange_right * rescale
 
-        mask = ((self.s >= sbox_left[0]) & (self.s <= sbox_left[1])) | ((self.s >= sbox_right[0]) & (self.s <= sbox_right[1]))
+        mask = ((self.s >= srange_left[0]) & (self.s <= srange_left[1])) | ((self.s >= srange_right[0]) & (self.s <= srange_right[1]))
 
         def model(s):
             return np.array([s**(1 - i) for i in range(5)])
 
-        sls = SolveLeastSquares(model(self.s[mask]), precision=1.)
-        params = sls(self.xi[mask].T)
-        mask = (self.s > sbox_left[1]) & (self.s < sbox_right[0])
+        lss = LeastSquareSolver(model(self.s[mask]), precision=1.)
+        params = lss(self.xi[mask].T)
+        mask = (self.s > srange_left[1]) & (self.s < srange_right[0])
         self.xinow = self.xi.copy()
         self.xinow[mask] = params.dot(model(self.s[mask])).T
 
