@@ -93,7 +93,7 @@ class LeastSquareSolver(BaseClass):
     >>> lss.chi2()
     0.0
     """
-    def __init__(self, gradient, precision=1., constraint_gradient=None):
+    def __init__(self, gradient, precision=1., constraint_gradient=None, compute_inverse=True):
         r"""
         Initialize :class:`SolveLeastSquares`.
 
@@ -114,6 +114,11 @@ class LeastSquareSolver(BaseClass):
         constraint_gradient : array_like, 2D array
             Gradient of constraints w.r.t. model parameters.
             First dimension is the number of model parameters, second is number of constraints.
+
+        compute_inverse : bool, default=True
+            Compute matrix inverse to get Fisher matrix; this is faster in case of many calls to the solver.
+            Else, ``np.linalg.solve`` is used to solve the system at each call, which may be numerically more stable
+            than computing the inverse.
         """
         # gradient shape = (nparams,ndata)
         self.gradient = np.atleast_1d(gradient)
@@ -141,23 +146,31 @@ class LeastSquareSolver(BaseClass):
                                  [constraint_gradient.T, np.zeros((self.nconstraints,) * 2, dtype=dtype)]]).A
             hv = np.bmat([[hv, np.zeros(constraint_gradient.shape, dtype=dtype)],
                           [np.zeros((self.nconstraints, self.gradient.shape[-1]), dtype=dtype), np.eye(self.nconstraints, dtype=dtype)]]).A
-        fisher = np.linalg.inv(invfisher)
+        self.inverse_fisher = invfisher
+        self.gradient_precision = hv
 
-        # Check inversion
-        tmp = fisher.dot(invfisher)
-        ref = np.eye(tmp.shape[0], dtype=tmp.dtype)
-        if not np.allclose(tmp, ref, rtol=1e-04, atol=1e-04):
-            import warnings
-            warnings.warn('Numerically inaccurate inverse matrix, max absolute diff {:.6f}.'.format(np.max(np.abs(tmp - ref))))
+        if compute_inverse:
+            fisher = np.linalg.inv(invfisher)
 
-        self.projector = fisher.dot(hv).T
+            # Check inversion
+            tmp = fisher.dot(invfisher)
+            ref = np.eye(tmp.shape[0], dtype=tmp.dtype)
+            if not np.allclose(tmp, ref, rtol=1e-04, atol=1e-04):
+                import warnings
+                warnings.warn('Numerically inaccurate inverse matrix, max absolute diff {:.6f}.'.format(np.max(np.abs(tmp - ref))))
+
+            self.projector = fisher.dot(hv).T
 
     def compute(self, delta, constraint=None):
         """Solve least square problem for ``delta`` given :attr:`gradient`, :attr:`precision`."""
         self.delta = delta = np.atleast_1d(delta)
         if constraint is not None:
             delta = np.concatenate([self.delta, np.atleast_1d(constraint)], axis=-1)
-        self.params = delta.dot(self.projector)[..., :self.gradient.shape[0]]
+        if hasattr(self, 'projector'):
+            params = delta.dot(self.projector)
+        else:
+            params = np.linalg.solve(self.inverse_fisher, self.gradient_precision.dot(delta.T)).T
+        self.params = params[..., :self.gradient.shape[0]]
 
     def __call__(self, delta, constraint=None):
         r"""Main method to be called; return parameters :math:`\mathbf{p}` best fitting ``delta``."""

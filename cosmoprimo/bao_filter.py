@@ -198,7 +198,7 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
                                                gradient[..., 2] - 2. * gradient[..., 1] + gradient[..., 0],
                                                gradient[..., -1], gradient[..., -2] - gradient[..., -1],
                                                gradient[..., -3] - 2. * gradient[..., -2] + gradient[..., -1]])
-        lss = LeastSquareSolver(gradient, precision=w**2, constraint_gradient=constraint_gradient)
+        lss = LeastSquareSolver(gradient, precision=w**2, constraint_gradient=constraint_gradient, compute_inverse=False)
         lss(logpk, constraint=np.column_stack([logpk[..., 0], logpk[..., 1] - logpk[..., 0],
                                                logpk[..., 2] - 2. * logpk[..., 1] + logpk[..., 0],
                                                logpk[..., -1], logpk[..., -2] - logpk[..., -1],
@@ -275,7 +275,7 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
 
         gradient = np.array([k**(i - 2) for i in range(6)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
-        lss = LeastSquareSolver(gradient, precision=k**2, constraint_gradient=constraint_gradient)
+        lss = LeastSquareSolver(gradient, precision=k**2, constraint_gradient=constraint_gradient, compute_inverse=False)
         lss(ratio, constraint=np.column_stack([ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]]))
 
         wiggles = np.ones_like(self.pk)
@@ -391,7 +391,7 @@ class Brieden2022PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         ratio = pk_fid / pknow_fid
         gradient = np.array([self.k_fid**(i - 1) for i in range(4)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
-        lss = LeastSquareSolver(gradient, precision=self.k_fid**2, constraint_gradient=constraint_gradient)
+        lss = LeastSquareSolver(gradient, precision=self.k_fid**2, constraint_gradient=constraint_gradient, compute_inverse=False)
         lss(ratio, constraint=[ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]])
         self.pknow_correction = lss.model()[:, None]
         self.ratio_fid = ratio[:, None] / self.pknow_correction
@@ -453,7 +453,7 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         ratio = pk_fid / pknow_fid
         gradient = np.array([k_fid**(i - 1) for i in range(4)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
-        lss = LeastSquareSolver(gradient, precision=k_fid**2, constraint_gradient=constraint_gradient)
+        lss = LeastSquareSolver(gradient, precision=k_fid**2, constraint_gradient=constraint_gradient, compute_inverse=False)
         lss(ratio, constraint=[ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]])
         pknow_correction = lss.model()
         ik0 = np.searchsorted(k_fid, 1e-2, side='right') + 1
@@ -667,7 +667,7 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
         def model(s):
             return np.array([s**(1 - i) for i in range(5)])
 
-        lss = LeastSquareSolver(model(self.s[mask]), precision=1.)
+        lss = LeastSquareSolver(model(self.s[mask]), precision=1., compute_inverse=False)
         params = lss(self.xi[mask].T)
         mask = (self.s > srange_left[1]) & (self.s < srange_right[0])
         self.xinow = self.xi.copy()

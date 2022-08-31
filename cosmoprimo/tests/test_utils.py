@@ -6,60 +6,62 @@ from cosmoprimo.utils import LeastSquareSolver, DistanceToRedshift
 
 def test_least_squares():
 
-    x = np.linspace(1, 100, 10)
-    gradient = np.array([1. / x, np.ones_like(x), x, x ** 2, x ** 3])
+    for compute_inverse in [False, True]:
 
-    covs = [np.diag(x), np.diag(x) + 0.1]
-    rng = np.random.RandomState(seed=42)
-    y = rng.uniform(0., 1., x.size)
+        x = np.linspace(1, 100, 10)
+        gradient = np.array([1. / x, np.ones_like(x), x, x ** 2, x ** 3])
 
-    for cov in covs:
+        covs = [np.diag(x), np.diag(x) + 0.1]
+        rng = np.random.RandomState(seed=42)
+        y = rng.uniform(0., 1., x.size)
 
-        precision = np.linalg.inv(cov)
+        for cov in covs:
 
-        def chi2(pars):
-            delta = y - pars.dot(gradient)
-            return np.sum(delta.dot(precision).dot(delta.T))
+            precision = np.linalg.inv(cov)
 
-        x0 = np.zeros(len(gradient))
-        result_ref = optimize.minimize(chi2, x0=x0, args=(), method='Nelder-Mead', tol=1e-6, options={'maxiter': 1000000}).x
+            def chi2(pars):
+                delta = y - pars.dot(gradient)
+                return np.sum(delta.dot(precision).dot(delta.T))
 
-        lss = LeastSquareSolver(gradient, precision)
-        result = lss(y)
-        assert np.allclose(result, result_ref, rtol=1e-2, atol=1e-2)
+            x0 = np.zeros(len(gradient))
+            result_ref = optimize.minimize(chi2, x0=x0, args=(), method='Nelder-Mead', tol=1e-6, options={'maxiter': 1000000}).x
 
-        lss_c = LeastSquareSolver(gradient, precision, constraint_gradient=np.ones((len(gradient), 1)))
-        constraint = 0.42
-        result = lss_c(y, constraint=constraint)
-        assert lss_c.chi2() >= lss.chi2()
-        assert np.allclose(sum(result), constraint)
+            lss = LeastSquareSolver(gradient, precision, compute_inverse=compute_inverse)
+            result = lss(y)
+            assert np.allclose(result, result_ref, rtol=1e-2, atol=1e-2)
 
-        weights = np.arange(len(gradient))
-        lss_c = LeastSquareSolver(gradient, precision, constraint_gradient=np.array([np.ones(len(gradient)), weights]).T)
-        constraint = [0.42, 2.]
-        result = lss_c(y, constraint=constraint)
-        assert lss_c.chi2() >= lss.chi2()
-        assert np.allclose(sum(result), constraint[0])
-        assert np.allclose(sum(r * w for r, w in zip(result, weights)), constraint[1])
+            lss_c = LeastSquareSolver(gradient, precision, constraint_gradient=np.ones((len(gradient), 1)), compute_inverse=compute_inverse)
+            constraint = 0.42
+            result = lss_c(y, constraint=constraint)
+            assert lss_c.chi2() >= lss.chi2()
+            assert np.allclose(sum(result), constraint)
 
-    result_ref = LeastSquareSolver(gradient, precision=np.eye(x.size))(y)
-    for precision in [1., np.ones_like(x)]:
-        result = LeastSquareSolver(gradient, precision=precision)(y)
+            weights = np.arange(len(gradient))
+            lss_c = LeastSquareSolver(gradient, precision, constraint_gradient=np.column_stack([np.ones(len(gradient)), weights]), compute_inverse=compute_inverse)
+            constraint = [0.42, 2.]
+            result = lss_c(y, constraint=constraint)
+            assert lss_c.chi2() >= lss.chi2()
+            assert np.allclose(sum(result), constraint[0])
+            assert np.allclose(sum(r * w for r, w in zip(result, weights)), constraint[1])
+
+        result_ref = LeastSquareSolver(gradient, precision=np.eye(x.size), compute_inverse=compute_inverse)(y)
+        for precision in [1., np.ones_like(x)]:
+            result = LeastSquareSolver(gradient, precision=precision, compute_inverse=compute_inverse)(y)
+            assert np.allclose(result, result_ref)
+
+        lss = LeastSquareSolver(gradient, precision=np.eye(x.size), compute_inverse=compute_inverse)
+        result_ref = lss(y)
+        ys = np.array([y] * 12)
+        result = lss(ys)
+        assert result.shape == (len(ys), len(gradient))
         assert np.allclose(result, result_ref)
+        assert lss.model().shape == ys.shape
+        assert lss.chi2().shape == (len(ys), )
 
-    lss = LeastSquareSolver(gradient, precision=np.eye(x.size))
-    result_ref = lss(y)
-    ys = np.array([y] * 12)
-    result = lss(ys)
-    assert result.shape == (len(ys), len(gradient))
-    assert np.allclose(result, result_ref)
-    assert lss.model().shape == ys.shape
-    assert lss.chi2().shape == (len(ys), )
-
-    gradient = np.ones_like(x)
-    lss = LeastSquareSolver(gradient, precision=np.eye(x.size))
-    assert lss(y).ndim == 0
-    assert lss(ys).shape == (len(ys), )
+        gradient = np.ones_like(x)
+        lss = LeastSquareSolver(gradient, precision=np.eye(x.size), compute_inverse=compute_inverse)
+        assert lss(y).ndim == 0
+        assert lss(ys).shape == (len(ys), )
 
 
 def test_redshift_array():
@@ -76,4 +78,4 @@ def test_redshift_array():
 if __name__ == '__main__':
 
     test_least_squares()
-    #test_redshift_array()
+    test_redshift_array()
