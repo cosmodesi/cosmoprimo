@@ -168,16 +168,6 @@ class CambEngine(BaseEngine):
             self.fo = self.hr = self.le = self.tr
             self.ready.fo = True
 
-    def _rescale_sigma8(self):
-        """Rescale perturbative quantities to match input sigma8."""
-        if hasattr(self, '_rsigma8'):
-            return self._rsigma8
-        self._rsigma8 = 1.
-        if 'sigma8' in self._params:
-            self.compute('fourier')
-            self._rsigma8 = self['sigma8'] / self.fo.get_sigma8_0()
-        return self._rsigma8
-
 
 class Background(BaseBackground):
 
@@ -368,14 +358,14 @@ class Primordial(BaseSection):
 
     def __init__(self, engine):
         self._engine = engine
-        self.pr = self._engine._camb_params.InitPower
+        self.pm = self._engine._camb_params.InitPower
         self._h = self._engine._camb_params.h
         self._rsigma8 = self._engine._rescale_sigma8()
 
     @property
     def A_s(self):
         r"""Scalar amplitude of the primordial power spectrum at :math:`k_\mathrm{pivot}`, unitless."""
-        return self.pr.As * self._rsigma8**2
+        return self.pm.As * self._rsigma8**2
 
     @property
     def ln_1e10_A_s(self):
@@ -385,12 +375,17 @@ class Primordial(BaseSection):
     @property
     def n_s(self):
         r"""Power-law index i.e. tilt of the primordial power spectrum, unitless."""
-        return self.pr.ns
+        return self.pm.ns
+
+    @property
+    def alpha_s(self):
+        r"""Running of the spectral index at :math:`k_\mathrm{pivot}`, unitless."""
+        return self.pm.nrun
 
     @property
     def k_pivot(self):
         r"""Primordial power spectrum pivot scale, where the primordial power is equal to :math:`A_{s}`, in :math:`h/\mathrm{Mpc}`."""
-        return self.pr.pivot_scalar / self._h
+        return self.pm.pivot_scalar / self._h
 
     def pk_k(self, k, mode='scalar'):
         r"""
@@ -512,7 +507,7 @@ class Fourier(BaseSection):
     @property
     def sigma8_m(self):
         r"""Current r.m.s. of matter perturbations in a sphere of :math:`8 \mathrm{Mpc}/h`, unitless."""
-        return self.fo.get_sigma8_0()
+        return self.fo.get_sigma8_0() * self._rsigma8
 
     @staticmethod
     def _index_pk_of(of='delta_m'):
@@ -581,7 +576,7 @@ class Fourier(BaseSection):
         if pka is None:
             ka, za, pka = get_pk(*of)
 
-        pka *= self._rsigma8**2
+        pka = pka * self._rsigma8**2
         return ka, za, pka
 
     def pk_interpolator(self, nonlinear=False, of='delta_m', **kwargs):

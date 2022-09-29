@@ -27,6 +27,7 @@ class BBKSEngine(BaseEngine):
         if self._has_fld:
             warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
         self.compute()
+        self._A_s = self._get_A_s_fid()
 
     def compute(self):
         """Precompute coefficients for the transfer function."""

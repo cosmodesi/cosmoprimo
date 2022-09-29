@@ -6,6 +6,7 @@ from .cosmology import BaseSection, BaseEngine
 from .eisenstein_hu import Background, Thermodynamics, Primordial, CosmologyError
 from .eisenstein_hu import Fourier as EHFourier
 from .interpolator import PowerSpectrumInterpolator2D
+from . import constants
 
 
 class EisensteinHuNoWiggleVariantsEngine(BaseEngine):
@@ -23,6 +24,7 @@ class EisensteinHuNoWiggleVariantsEngine(BaseEngine):
         if self._has_fld:
             warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
         self.compute()
+        self._A_s = self._get_A_s_fid()
 
     def _set_rsdrag(self):
         """Set sound horizon at the drag epoch."""
@@ -144,7 +146,7 @@ class Transfer(BaseSection):
 
 class Fourier(EHFourier):
 
-    def pk_interpolator(self, of='delta_m', ignore_norm=False, **kwargs):
+    def pk_interpolator(self, of='delta_m', **kwargs):
         """
         Return :class:`PowerSpectrumInterpolator2D` instance.
 
@@ -154,10 +156,6 @@ class Fourier(EHFourier):
             Perturbed quantities: 'delta_m', 'theta_m', 'delta_cb', 'theta_cb'.
             No difference made between 'theta_cb' and 'theta_m'.
             Requesting velocity divergence 'theta_xx' will rescale the power spectrum by the growth rate as a function of ``z``.
-
-        ignore_norm : bool
-            Whether to ignore power spectrum normalisation.
-            If ``False``, ``sigma8`` should be provided as part of the parameters.
 
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
@@ -170,21 +168,18 @@ class Fourier(EHFourier):
         of = tuple(of_.replace('theta_', 'delta_') for of_ in of)
         if ntheta:
             def growth_factor_sq(z):
-                return self.ba.growth_factor(z)**2 * self.ba.growth_rate(z)**ntheta
+                return self.ba.growth_factor(z, znorm=0.)**2 * self.ba.growth_rate(z)**ntheta
         else:
             def growth_factor_sq(z):
-                return self.ba.growth_factor(z)**2
+                return self.ba.growth_factor(z, znorm=0.)**2
 
         def pk_callable(k, z=0, grid=True):
             tr = transfer(k, z=z, grid=grid, of=of[0])
             if of[1] == of[0]: tr **= 2
             else: tr *= transfer(k, z=z, grid=grid, of=of[1])
-            return tr * growth_factor_sq(z) * k.reshape(k.shape + (1,) * (tr.ndim - k.ndim)) ** self._engine['n_s']
+            potential_to_density = (3. * self.ba.Omega0_m * 100**2 / (2. * (constants.c / 1e3)**2 * k**2)) ** (-2)
+            curvature_to_potential = 9. / 25. * 2. * np.pi**2 / k**3 / self._h ** 3
+            pdd = potential_to_density * curvature_to_potential * self.pm.pk_k(k)
+            return tr * growth_factor_sq(z) * pdd.reshape(pdd.shape + (1,) * (tr.ndim - pdd.ndim))
 
-        toret = PowerSpectrumInterpolator2D.from_callable(pk_callable=pk_callable, growth_factor_sq=None, **kwargs)
-        if not ignore_norm:
-            if 'sigma8' in self._engine._params:
-                toret.rescale_sigma8(self.ba.growth_rate(0)**(0.5 * ntheta) * self._engine['sigma8'])
-            else:
-                raise CosmologyError('A sigma8 value must be provided to normalise EH power spectrum.')
-        return toret
+        return PowerSpectrumInterpolator2D.from_callable(pk_callable=pk_callable, growth_factor_sq=None, **kwargs)

@@ -84,22 +84,7 @@ def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
     return 7. / 8. * 4 / constants.c**3 * constants.Stefan_Boltzmann * (T_eff / a)**4 * toret / (1e10 * constants.msun) * constants.megaparsec**3
 
 
-class RegisteredEngine(type(BaseClass)):
-
-    """Metaclass registering :class:`BaseEngine`-derived classes."""
-
-    _registry = {}
-
-    def __new__(meta, name, bases, class_dict):
-        cls = super().__new__(meta, name, bases, class_dict)
-        meta._registry[cls.name] = cls
-        return cls
-
-
-class BaseEngine(BaseClass, metaclass=RegisteredEngine):
-
-    """Base engine for cosmological calculation."""
-    name = 'base'
+class BaseCosmology(BaseClass):
 
     def __init__(self, extra_params=None, **params):
         """
@@ -116,11 +101,6 @@ class BaseEngine(BaseClass, metaclass=RegisteredEngine):
         self._params = params
         self._derived = {}
         self.extra_params = extra_params or {}
-        self._Sections = {}
-        module = sys.modules[self.__class__.__module__]
-        for name in _Sections:
-            self._Sections[name.lower()] = getattr(module, name, None)
-        self._sections = {}
 
     def __getitem__(self, name):
         """Return an input (or easily derived) parameter."""
@@ -190,13 +170,6 @@ class BaseEngine(BaseClass, metaclass=RegisteredEngine):
     def _has_fld(self):
         return (self._params['w0_fld'], self._params['wa_fld']) != (-1, 0.)
 
-    def _get_A_s_fid(self):
-        r"""First guess for power spectrum amplitude :math:`A_{s}` (given input :math:`sigma_{8}`)."""
-        # https://github.com/lesgourg/class_public/blob/4724295b527448b00faa28bce973e306e0e82ef5/source/input.c#L1161
-        if 'A_s' in self._params:
-            return self._params['A_s']
-        return 2.43e-9 * (self['sigma8'] / 0.87659)**2
-
     def _get_rho_ncdm(self, z=0, epsrel=1e-7):
         r"""
         Return energy density of non-CDM components (massive neutrinos) for each species by integrating over the phase-space distribution (frozen since CMB),
@@ -240,6 +213,62 @@ class BaseEngine(BaseClass, metaclass=RegisteredEngine):
     def __eq__(self, other):
         r"""Is ``other`` same as ``self``?"""
         return type(other) == type(self) and _deepeq(other._params, self._params) and _deepeq(other.extra_params, self.extra_params)
+
+
+class RegisteredEngine(type(BaseCosmology)):
+
+    """Metaclass registering :class:`BaseEngine`-derived classes."""
+
+    _registry = {}
+
+    def __new__(meta, name, bases, class_dict):
+        cls = super().__new__(meta, name, bases, class_dict)
+        meta._registry[cls.name] = cls
+        return cls
+
+
+class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
+
+    """Base engine for cosmological calculation."""
+    name = 'base'
+
+    def __init__(self, extra_params=None, **params):
+        """
+        Initialize engine.
+
+        Parameters
+        ----------
+        extra_params : dict, default=None
+            Extra engine parameters, typically precision parameters.
+
+        params : dict
+            Engine parameters.
+        """
+        super(BaseEngine, self).__init__(extra_params=extra_params, **params)
+        self._Sections = {}
+        module = sys.modules[self.__class__.__module__]
+        for name in _Sections:
+            self._Sections[name.lower()] = getattr(module, name, None)
+        self._sections = {}
+
+    def _get_A_s_fid(self):
+        r"""First guess for power spectrum amplitude :math:`A_{s}` (given input :math:`sigma_{8}`)."""
+        # https://github.com/lesgourg/class_public/blob/4724295b527448b00faa28bce973e306e0e82ef5/source/input.c#L1161
+        if 'A_s' in self._params:
+            return self._params['A_s']
+        return 2.43e-9 * (self['sigma8'] / 0.87659)**2
+
+    def _rescale_sigma8(self):
+        """Rescale perturbative quantities to match input sigma8."""
+        if hasattr(self, '_rsigma8'):
+            return self._rsigma8
+        self._rsigma8 = 1.
+        if 'sigma8' in self._params:
+            self._sections.clear()  # to remove fourier with potential _rsigma8 != 1
+            fo = self.get_fourier()
+            self._rsigma8 = self['sigma8'] / fo.sigma8_m
+            self._sections.clear()  # to reinitialize fourier with correct _rsigma8
+        return self._rsigma8
 
 
 def _make_section_getter(section):
@@ -379,7 +408,7 @@ def _include_conflicts(params):
 
 
 @utils.addproperty('engine', 'params')
-class Cosmology(BaseEngine):
+class Cosmology(BaseCosmology):
 
     """Cosmology, defined as a set of parameters (and possibly a current engine attached to it)."""
 

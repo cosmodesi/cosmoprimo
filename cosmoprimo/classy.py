@@ -39,16 +39,6 @@ class ClassEngine(pyclass.ClassEngine, BaseEngine):
         super(ClassEngine, self).__init__(params=params)
         # print(self.get_params_str())
 
-    def _rescale_sigma8(self):
-        """Rescale perturbative quantities to match input sigma8."""
-        if hasattr(self, '_rsigma8'):
-            return self._rsigma8
-        self._rsigma8 = 1.
-        if 'sigma8' in self._params:
-            self.compute('peturbations')
-            self._rsigma8 = self['sigma8'] / self.get_fourier().sigma8_m
-        return self._rsigma8
-
 
 Background = pyclass.Background
 Thermodynamics = pyclass.Thermodynamics

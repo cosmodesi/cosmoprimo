@@ -4,7 +4,8 @@ import tempfile
 import pytest
 import numpy as np
 
-from cosmoprimo import Cosmology, Background, Thermodynamics, Primordial, Harmonic, Fourier, CosmologyError
+from cosmoprimo import (Cosmology, Background, Thermodynamics, Primordial,
+                        Harmonic, Fourier, CosmologyError, constants)
 
 
 def test_params():
@@ -43,9 +44,12 @@ def test_engine():
     ba = cosmo.get_background(engine='camb', set_engine=False)
     ba = Background(cosmo, engine='camb', set_engine=False)
     assert cosmo.engine is not ba._engine
+    assert type(ba) is not type(Background(cosmo, engine='class'))
+    assert type(cosmo.get_background()) is not type(cosmo.get_background(engine='camb'))
+    assert type(cosmo.get_background()) is type(cosmo.get_background(engine='camb'))
 
 
-list_params = [{}, {'sigma8': 1.}, {'A_s': 2e-9}, {'lensing': True}, {'m_ncdm': 0.1, 'neutrino_hierarchy': 'normal'}, {'Omega_k': 0.1}, {'w0_fld': -0.9, 'wa_fld': 0.1}]
+list_params = [{}, {'sigma8': 1.}, {'A_s': 2e-9, 'alpha_s': 0.1}, {'lensing': True}, {'m_ncdm': 0.1, 'neutrino_hierarchy': 'normal'}, {'Omega_k': 0.1}, {'w0_fld': -0.9, 'wa_fld': 0.1}]
 
 
 @pytest.mark.parametrize('params', list_params)
@@ -135,32 +139,41 @@ def test_thermodynamics(params):
 def test_primordial(params, seed=42):
     rng = np.random.RandomState(seed=seed)
     cosmo = Cosmology(**params)
-    pr_class = Primordial(cosmo, engine='class')
+    pm_class = Primordial(cosmo, engine='class')
+
+    for engine in ['camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
+        pm = Primordial(cosmo, engine=engine)
+        for name in ['n_s', 'alpha_s', 'k_pivot']:
+            assert np.allclose(getattr(pm_class, name), cosmo['k_pivot'] / cosmo['h'] if name == 'k_pivot' else cosmo[name])
+            assert np.allclose(getattr(pm, name), getattr(pm_class, name), atol=0, rtol=1e-5)
 
     for engine in ['camb']:
-        pr = Primordial(cosmo, engine=engine)
-        for name in ['A_s', 'ln_1e10_A_s', 'n_s', 'k_pivot']:
-            assert np.allclose(getattr(pr, name), getattr(pr_class, name), atol=0, rtol=2e-3)
+        pm = Primordial(cosmo, engine=engine)
+        for name in ['A_s', 'ln_1e10_A_s']:
+            assert np.allclose(getattr(pm, name), getattr(pm_class, name), atol=0, rtol=2e-3)
         k = rng.uniform(1e-3, 10., 100)
         for mode in ['scalar', 'tensor']:
-            assert np.allclose(pr.pk_k(k, mode=mode), pr_class.pk_k(k, mode=mode), atol=0, rtol=2e-3)
-            assert np.allclose(pr.pk_interpolator(mode=mode)(k), pr_class.pk_interpolator(mode=mode)(k), atol=0, rtol=2e-3)
-
-    k = np.logspace(-3, 1, 100)
-    for engine in ['camb', 'class']:
-        pr = Primordial(cosmo, engine=engine)
-        assert np.allclose(pr.pk_interpolator(mode='scalar')(k), (cosmo.h**3 * pr.A_s * (k / pr.k_pivot) ** (pr.n_s - 1.)))
+            assert np.allclose(pm.pk_k(k, mode=mode), pm_class.pk_k(k, mode=mode), atol=0, rtol=2e-3)
+            assert np.allclose(pm.pk_interpolator(mode=mode)(k), pm_class.pk_interpolator(mode=mode)(k), atol=0, rtol=2e-3)
 
     for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
-        pr = Primordial(cosmo, engine=engine)
-        for name in ['n_s']:
-            assert np.allclose(getattr(pr, name), getattr(pr_class, name), atol=0, rtol=1e-4)
+        pm = Primordial(cosmo, engine=engine)
+        for name in ['A_s', 'ln_1e10_A_s']:
+            assert np.allclose(getattr(pm, name), getattr(pm_class, name), atol=0, rtol=1e-1)
+
+    k = np.logspace(-3, 1, 100)
+    for engine in ['camb', 'class', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
+        pm = Primordial(cosmo, engine=engine)
+        assert np.allclose(pm.pk_interpolator(mode='scalar')(k), (cosmo.h**3 * pm.A_s * (k / pm.k_pivot) ** (pm.n_s - 1. + pm.alpha_s * np.log(k / pm.k_pivot))))
 
 
 @pytest.mark.parametrize('params', list_params)
 def test_harmonic(params):
     cosmo = Cosmology(**params)
     hr_class = Harmonic(cosmo, engine='class')
+    test = hr_class.unlensed_cl()
+    ref = hr_class.unlensed_table(of=['tt', 'ee', 'bb', 'te'])
+    assert all(np.allclose(test[key], ref[key]) for key in ref.dtype.names)
 
     for engine in ['camb']:
         hr = Harmonic(cosmo, engine=engine)
@@ -241,24 +254,40 @@ def test_fourier(params, seed=42):
 
     for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
         fo = Fourier(cosmo, engine=engine)
-        if 'sigma8' not in cosmo.params:
-            with pytest.raises(CosmologyError):
-                fo.pk_interpolator()
-        else:
-            pk_class = fo_class.pk_interpolator(nonlinear=False, of='delta_m')
-            pk = fo.pk_interpolator()
-            rtol = 0.25 if engine == 'bbks' else 0.15
-            assert np.allclose(pk(k, z=z), pk_class(k, z=z), atol=0., rtol=rtol)
-            r = rng.uniform(1., 10., 10)
-            assert np.allclose(pk.growth_rate_rz(r=r, z=z), pk_class.growth_rate_rz(r=r, z=z), atol=0., rtol=0.15)
+        pk_class = fo_class.pk_interpolator(nonlinear=False, of='delta_m')
+        pk = fo.pk_interpolator()
+        rtol = 0.25 if engine == 'bbks' else 0.15
+        assert np.allclose(pk(k, z=z), pk_class(k, z=z), atol=0., rtol=rtol)
+        r = rng.uniform(1., 10., 10)
+        assert np.allclose(pk.growth_rate_rz(r=r, z=z), pk_class.growth_rate_rz(r=r, z=z), atol=0., rtol=0.15)
+
+
+def test_pk_norm():
+    cosmo = Cosmology(engine='class')
+    power_prim = cosmo.get_primordial().pk_interpolator()
+    z = 1.
+    k = np.logspace(-3., 1., 1000)
+    assert np.allclose(cosmo.sigma8_z(0, of='delta_m'), cosmo['sigma8'], rtol=1e-3)
+    power = cosmo.get_fourier().pk_interpolator().to_1d(z=z)
+    pk = power(k)
+    pk_prim = power_prim(k)
+    k0 = power.k[0]
+    tk = (pk / power_prim(k) / k / (power(k0) / power_prim(k0) / k0))**0.5
+
+    potential_to_density = (3. * cosmo.Omega0_m * 100**2 / (2. * (constants.c / 1e3)**2 * k**2)) ** (-2)
+    curvature_to_potential = 9. / 25. * 2. * np.pi**2 / k**3 / cosmo.h**3
+    znorm = 10.
+    normalized_growth_factor = cosmo.growth_factor(z) / cosmo.growth_factor(znorm) / (1 + znorm)
+    pk_test = normalized_growth_factor**2 * tk**2 * potential_to_density * curvature_to_potential * pk_prim
+    assert np.allclose(pk_test, pk, atol=0., rtol=1e-3)
 
 
 def plot_primordial_power_spectrum():
     from matplotlib import pyplot as plt
     cosmo = Cosmology()
-    pr_class = Primordial(cosmo, engine='class')
+    pm_class = Primordial(cosmo, engine='class')
     pr_camb = Primordial(cosmo, engine='camb')
-    pk = pr_class.pk_interpolator()
+    pk = pm_class.pk_interpolator()
     k = np.logspace(-6, 2, 500)
     plt.loglog(k, pk(k), label='class')
     pk = pr_camb.pk_interpolator()
@@ -505,6 +534,7 @@ if __name__ == '__main__':
     test_neutrinos()
     test_clone()
     test_shortcut()
+    test_pk_norm()
     # plot_primordial_power_spectrum()
     # plot_harmonic()
     # plot_matter_power_spectrum()

@@ -271,7 +271,7 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
             krange = krange / self.rs_drag_ratio()
         mask = (self.k >= krange[0]) & (self.k <= krange[1])
         k = self.k[mask]
-        ratio = self.pk[mask].T / Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(k, z=0.)
+        ratio = self.pk[mask].T / Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(k, z=0.)
 
         gradient = np.array([k**(i - 2) for i in range(6)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
@@ -384,10 +384,10 @@ class Brieden2022PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         self.kmask_fid = (self.k >= 1e-3) & (self.k <= 1.)
         self.k_fid = self.k[self.kmask_fid]
         try:
-            pk_fid = Fourier(self.cosmo_fid).pk_interpolator(ignore_norm=True)(self.k_fid, z=0.)  # to cope with A_s-parameterized E&H
+            pk_fid = Fourier(self.cosmo_fid).pk_interpolator()(self.k_fid, z=0.)  # to cope with A_s-parameterized E&H
         except TypeError:
             pk_fid = Fourier(self.cosmo_fid).pk_interpolator()(self.k_fid, z=0.)
-        pknow_fid = Fourier(self.cosmo_fid, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(self.k_fid, z=0.)
+        pknow_fid = Fourier(self.cosmo_fid, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k_fid, z=0.)
         ratio = pk_fid / pknow_fid
         gradient = np.array([self.k_fid**(i - 1) for i in range(4)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
@@ -419,7 +419,7 @@ class Brieden2022PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         else:
             pk = self.pk_interpolator(self.k_fid / rescale)[:, None]
 
-        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(self.k_fid * rescale, z=0.)[:, None]
+        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k_fid * rescale, z=0.)[:, None]
         pknow *= self.pknow_correction
         ratio = pk / pknow / self.ratio_fid
         pknow = self._interp(*self.ik_fid_peaks, self.k_fid, ratio) * pknow * self.ratio_now_fid
@@ -446,10 +446,10 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         index = np.flatnonzero((self.k >= 1e-4) & (self.k <= 1.))
         k_fid = self.k[index]
         try:
-            pk_fid = Fourier(self.cosmo_fid).pk_interpolator(ignore_norm=True)(k_fid, z=0.)  # to cope with A_s-parameterized E&H
+            pk_fid = Fourier(self.cosmo_fid).pk_interpolator()(k_fid, z=0.)  # to cope with A_s-parameterized E&H
         except TypeError:
             pk_fid = Fourier(self.cosmo_fid).pk_interpolator()(k_fid, z=0.)
-        pknow_fid = Fourier(self.cosmo_fid, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(k_fid, z=0.)
+        pknow_fid = Fourier(self.cosmo_fid, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(k_fid, z=0.)
         ratio = pk_fid / pknow_fid
         gradient = np.array([k_fid**(i - 1) for i in range(4)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
@@ -477,7 +477,7 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
 
     def _compute(self):
         rescale = self.rs_drag_ratio()
-        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator(ignore_norm=True)(self.k)[:, None]
+        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k)[:, None]
         self.pknow = self._interp(self.k_peaks[0] / rescale, self.k_peaks[1] / rescale, self.k, self.pk / pknow) * pknow
 
 
