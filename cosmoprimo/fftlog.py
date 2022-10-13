@@ -9,6 +9,25 @@ import numpy as np
 
 from scipy.special import gamma, loggamma
 
+try:
+    import jax, jaxlib
+    import jax.numpy as jnp
+except ImportError:
+    jax = None
+    import numpy as jnp
+
+
+def use_jax(array):
+    """Whether to use jax.numpy depending on whether array is jax's object"""
+    return jax and isinstance(array, (jaxlib.xla_extension.DeviceArrayBase, jax.core.Tracer))
+
+
+def np_jax(array):
+    """Return numpy or jax.numpy depending on whether array is jax's object"""
+    if use_jax(array):
+        return jnp
+    return np
+
 
 class FFTlog(object):
     r"""
@@ -192,16 +211,19 @@ class FFTlog(object):
         fftloged : array
             Transformed function.
         """
+        jnp = np_jax(fun)
+        fun = jnp.asarray(fun)
         padded_fun = pad(fun, (self.padded_size_in_left, self.padded_size_in_right), axis=-1, extrap=extrap)
         fftloged = self._engine.backward(self._engine.forward(padded_fun * self.padded_prefactor) * self.padded_u) * self.padded_postfactor
 
         if not keep_padding:
-            y, fftloged = self.y, fftloged[..., self.padded_size_out_left:self.padded_size_out_left + self.size]
+            y = self.y
+            fftloged = fftloged[..., self.padded_size_out_left:self.padded_size_out_left + self.size]
         else:
-            y, fftloged = self.padded_y, fftloged
+            y = self.padded_y
         if not self.inparallel:
             y = y[0]
-            fftloged.shape = fun.shape if not keep_padding else fun.shape[:-1] + (self.padded_size,)
+            fftloged = jnp.reshape(fftloged, fun.shape if not keep_padding else fun.shape[:-1] + (self.padded_size,))
         return y, fftloged
 
     def inv(self):
@@ -419,7 +441,8 @@ def pad(array, pad_width, axis=-1, extrap=0):
     array : array
         Padded array.
     """
-    array = np.asarray(array)
+    jnp = np_jax(array)
+    array = jnp.asarray(array)
 
     try:
         pad_width_left, pad_width_right = pad_width
@@ -436,28 +459,28 @@ def pad(array, pad_width, axis=-1, extrap=0):
     to_axis[axis] = -1
 
     if extrap_left == 'edge':
-        end = np.take(array, [0], axis=axis)
-        pad_left = np.repeat(end, pad_width_left, axis=axis)
+        end = jnp.take(array, [0], axis=axis)
+        pad_left = jnp.repeat(end, pad_width_left, axis=axis)
     elif extrap_left == 'log':
-        end = np.take(array, [0], axis=axis)
-        ratio = np.take(array, [1], axis=axis) / end
-        exp = np.arange(-pad_width_left, 0).reshape(to_axis)
+        end = jnp.take(array, [0], axis=axis)
+        ratio = jnp.take(array, [1], axis=axis) / end
+        exp = jnp.arange(-pad_width_left, 0).reshape(to_axis)
         pad_left = end * ratio ** exp
     else:
-        pad_left = np.full(array.shape[:axis] + (pad_width_left,) + array.shape[axis + 1:], extrap_left)
+        pad_left = jnp.full(array.shape[:axis] + (pad_width_left,) + array.shape[axis + 1:], extrap_left)
 
     if extrap_right == 'edge':
-        end = np.take(array, [-1], axis=axis)
-        pad_right = np.repeat(end, pad_width_right, axis=axis)
+        end = jnp.take(array, [-1], axis=axis)
+        pad_right = jnp.repeat(end, pad_width_right, axis=axis)
     elif extrap_right == 'log':
-        end = np.take(array, [-1], axis=axis)
-        ratio = np.take(array, [-2], axis=axis) / end
-        exp = np.arange(1, pad_width_right + 1).reshape(to_axis)
+        end = jnp.take(array, [-1], axis=axis)
+        ratio = jnp.take(array, [-2], axis=axis) / end
+        exp = jnp.arange(1, pad_width_right + 1).reshape(to_axis)
         pad_right = end / ratio ** exp
     else:
-        pad_right = np.full(array.shape[:axis] + (pad_width_right,) + array.shape[axis + 1:], extrap_right)
+        pad_right = jnp.full(array.shape[:axis] + (pad_width_right,) + array.shape[axis + 1:], extrap_right)
 
-    return np.concatenate([pad_left, array, pad_right], axis=axis)
+    return jnp.concatenate([pad_left, array, pad_right], axis=axis)
 
 
 class BaseFFTEngine(object):
@@ -492,11 +515,11 @@ class NumpyFFTEngine(BaseFFTEngine):
 
     def forward(self, fun):
         """Forward transform of ``fun``."""
-        return np.fft.rfft(fun, axis=-1)
+        return np_jax(fun).fft.rfft(fun, axis=-1)
 
     def backward(self, fun):
         """Backward transform of ``fun``."""
-        return np.fft.irfft(fun.conj(), n=self.size, axis=-1)
+        return np_jax(fun).fft.irfft(fun.conj(), n=self.size, axis=-1)
 
 
 def apply_along_last_axes(func, array, naxes=1, toret=None):

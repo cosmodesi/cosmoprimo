@@ -415,7 +415,9 @@ def external_test_camb():
 
 
 def external_test_pyccl():
-    import pyccl
+    try: import pyccl
+    except ImportError: return
+    print('With pyccl')
     params = {'sigma8': 0.8, 'Omega_c': 0.28, 'Omega_b': 0.02, 'h': 0.8, 'n_s': 0.96, 'm_nu': 0.1, 'm_nu_type': 'normal'}
     cosmo = pyccl.Cosmology(**params)
     print(pyccl.background.growth_rate(cosmo, 1))
@@ -566,10 +568,4 @@ if __name__ == '__main__':
     # plot_matter_power_spectrum()
     # plot_eisenstein_hu_nowiggle_variants()
     # external_test_camb()
-
-    try: import pyccl
-    except ImportError: pyccl = None
-
-    if pyccl is not None:
-        print('With pyccl')
-        external_test_pyccl()
+    external_test_pyccl()

@@ -168,6 +168,21 @@ def external_test_mcfit():
     assert np.allclose(var, var_ref)
 
 
+def test_jax():
+    from cosmoprimo import fftlog
+    jax = fftlog.jax
+    if jax is None:
+        return
+    print('With jax')
+
+    k = np.logspace(-3, 1, 10)
+    fftlog = PowerToCorrelation(k)
+
+    jac = jax.jacfwd(fftlog, argnums=0, has_aux=False, holomorphic=False)
+    pk = np.exp(-k)
+    print(jac(pk))
+
+
 def benchmark():
     cosmo = Cosmology()
     fo = Fourier(cosmo, engine='eisenstein_hu')
@@ -216,6 +231,7 @@ if __name__ == '__main__':
     test_sigmar()
     test_odd()
     test_multi()
+    test_jax()
     # external_test_mcfit()
     # benchmark()
     # plot()
