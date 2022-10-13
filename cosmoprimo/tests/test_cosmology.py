@@ -49,7 +49,8 @@ def test_engine():
     assert type(cosmo.get_background()) is type(cosmo.get_background(engine='camb'))
 
 
-list_params = [{}, {'sigma8': 1.}, {'A_s': 2e-9, 'alpha_s': 0.1}, {'lensing': True}, {'m_ncdm': 0.1, 'neutrino_hierarchy': 'normal'}, {'Omega_k': 0.1}, {'w0_fld': -0.9, 'wa_fld': 0.1}]
+list_params = [{}, {'sigma8': 1.}, {'A_s': 2e-9, 'alpha_s': 0.1}, {'lensing': True},
+               {'m_ncdm': 0.1, 'neutrino_hierarchy': 'normal'}, {'Omega_k': 0.1}, {'w0_fld': -0.9, 'wa_fld': 0.1}]
 
 
 @pytest.mark.parametrize('params', list_params)
@@ -232,12 +233,12 @@ def test_fourier(params, seed=42):
         k = rng.uniform(1e-3, 1., 20)
 
         for of in ['delta_m', 'delta_cb']:
-            assert np.allclose(fo.pk_interpolator(nonlinear=False, of=of)(k, z=z), fo_class.pk_interpolator(nonlinear=False, of=of)(k, z=z), rtol=2.5e-3)
-            assert np.allclose(fo.pk_interpolator(nonlinear=False, of=of).sigma8_z(z=z), fo.sigma8_z(z, of=of), rtol=1e-4)
+            assert np.allclose(fo.pk_interpolator(non_linear=False, of=of)(k, z=z), fo_class.pk_interpolator(non_linear=False, of=of)(k, z=z), rtol=2.5e-3)
+            assert np.allclose(fo.pk_interpolator(non_linear=False, of=of).sigma8_z(z=z), fo.sigma8_z(z, of=of), rtol=1e-4)
 
         z = np.linspace(0., 4., 5)
         for of in ['theta_cb', ('delta_cb', 'theta_cb')]:
-            assert np.allclose(fo.pk_interpolator(nonlinear=False, of=of)(k, z=z), fo_class.pk_interpolator(nonlinear=False, of=of)(k, z=z), rtol=2.5e-3)
+            assert np.allclose(fo.pk_interpolator(non_linear=False, of=of)(k, z=z), fo_class.pk_interpolator(non_linear=False, of=of)(k, z=z), rtol=2.5e-3)
 
         # if not cosmo['N_ncdm']:
         z = rng.uniform(0., 10., 20)
@@ -254,7 +255,7 @@ def test_fourier(params, seed=42):
 
     for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
         fo = Fourier(cosmo, engine=engine)
-        pk_class = fo_class.pk_interpolator(nonlinear=False, of='delta_m')
+        pk_class = fo_class.pk_interpolator(non_linear=False, of='delta_m')
         pk = fo.pk_interpolator()
         rtol = 0.25 if engine == 'bbks' else 0.15
         assert np.allclose(pk(k, z=z), pk_class(k, z=z), atol=0., rtol=rtol)
@@ -318,6 +319,30 @@ def plot_harmonic():
     plt.show()
 
 
+def plot_non_linear():
+    from matplotlib import pyplot as plt
+    cosmo = Cosmology(non_linear='mead')
+    k = np.logspace(-3, 1, 1000)
+    z = 1.
+    for of in ['delta_m', 'delta_cb']:
+        for engine, color in zip(['class', 'camb'], ['C0', 'C1']):
+            for non_linear, linestyle in zip([False, True], ['-', '--']):
+                pk = cosmo.get_fourier(engine=engine).pk_interpolator(non_linear=non_linear, of=of)(k, z=z)
+                plt.loglog(k, pk, color=color, linestyle=linestyle, label=engine + (' non-linear' if non_linear else ''))
+        plt.legend()
+        plt.show()
+
+    for engine, color in zip(['class', 'camb'], ['C0', 'C1']):
+        for non_linear, linestyle in zip([False, True], ['-', '--']):
+            cosmo = Cosmology(lensing=True, non_linear='mead' if non_linear else '')
+            cls = cosmo.get_harmonic(engine=engine).lens_potential_cl()
+            ells_factor = (cls['ell'] + 1)**2 * cls['ell']**2 / (2 * np.pi)
+            plt.plot(cls['ell'], ells_factor * cls['pp'], color=color, linestyle=linestyle, label=engine + (' non-linear' if non_linear else ''))
+            plt.xscale('log')
+    plt.legend()
+    plt.show()
+
+
 def plot_matter_power_spectrum():
     from matplotlib import pyplot as plt
     cosmo = Cosmology()
@@ -326,10 +351,10 @@ def plot_matter_power_spectrum():
     # plt.loglog(k, pk)
     z = 1.
     k = np.logspace(-6, 2, 500)
-    pk = fo_class.pk_interpolator(nonlinear=False, of='delta_m', extrap_kmin=1e-7)
+    pk = fo_class.pk_interpolator(non_linear=False, of='delta_m', extrap_kmin=1e-7)
     # pk = fo_class.pk_kz
     plt.loglog(k, pk(k, z=z), label='class')
-    pk = Fourier(cosmo, engine='camb').pk_interpolator(nonlinear=False, of='delta_m', extrap_kmin=1e-7)
+    pk = Fourier(cosmo, engine='camb').pk_interpolator(non_linear=False, of='delta_m', extrap_kmin=1e-7)
     plt.loglog(k, pk(k, z=z), label='camb')
     pk = Fourier(cosmo, engine='eisenstein_hu').pk_interpolator()
     plt.loglog(k, pk(k, z=z), label='eisenstein_hu')
@@ -535,6 +560,7 @@ if __name__ == '__main__':
     test_clone()
     test_shortcut()
     test_pk_norm()
+    # plot_non_linear()
     # plot_primordial_power_spectrum()
     # plot_harmonic()
     # plot_matter_power_spectrum()

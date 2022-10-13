@@ -94,19 +94,28 @@ class CambEngine(BaseEngine):
         self._camb_params.set_classes(dark_energy_model=camb.dark_energy.DarkEnergyFluid)
         self._camb_params.DarkEnergy.set_params(w=self['w0_fld'], wa=self['wa_fld'])
 
+        self._camb_params.DoLensing = self['lensing']
+        self._camb_params.Want_CMB_lensing = self['lensing']
+        self._camb_params.set_for_lmax(lmax=self['ellmax_cl'])
+        self._camb_params.set_matter_power(redshifts=self['z_pk'], kmax=self['kmax_pk'] * self['h'], nonlinear=self['non_linear'], silent=True)
+
         if self['non_linear']:
+            self._camb_params.NonLinear = camb.model.NonLinear_both
             self._camb_params.NonLinearModel = camb.nonlinear.Halofit()
-            halofit_version = self.get('halofit_version', 'mead')
+
+            non_linear = self['non_linear']
+            if non_linear in ['mead', 'hmcode']:
+                halofit_version = 'mead'
+            elif non_linear in ['halofit']:
+                halofit_version = 'original'
+            else:
+                halofit_version = non_linear
+
             options = {}
             for name in ['HMCode_A_baryon', 'HMCode_eta_baryon', 'HMCode_logT_AGN']:
                 tmp = self.get(name, None)
                 if tmp is not None: options[name] = tmp
             self._camb_params.NonLinearModel.set_params(halofit_version=halofit_version, **options)
-
-        self._camb_params.DoLensing = self['lensing']
-        self._camb_params.Want_CMB_lensing = self['lensing']
-        self._camb_params.set_for_lmax(lmax=self['ellmax_cl'])
-        self._camb_params.set_matter_power(redshifts=self['z_pk'], kmax=self['kmax_pk'] * self['h'], nonlinear=self['non_linear'], silent=True)
 
         if not self['non_linear']:
             assert self._camb_params.NonLinear == camb.model.NonLinear_none
@@ -440,7 +449,7 @@ class Harmonic(BaseSection):
         self.ellmax_cl = self._engine['ellmax_cl']
 
     def unlensed_cl(self, ellmax=-1):
-        r"""Return unlensed :math:`C_{\ell}` ['tt','ee','bb','te'], unitless."""
+        r"""Return unlensed :math:`C_{\ell}` ['tt', 'ee', 'bb', 'te'], unitless."""
         if ellmax < 0:
             ellmax = self.ellmax_cl + 1 + ellmax
         table = self.hr.get_unlensed_total_cls(lmax=ellmax, CMB_unit=None, raw_cl=True)
@@ -451,7 +460,7 @@ class Harmonic(BaseSection):
         return toret
 
     def lens_potential_cl(self, ellmax=-1):
-        r"""Return potential :math:`C_{\ell}` ['pp','tp','ep'], unitless."""
+        r"""Return potential :math:`C_{\ell}` ['pp', 'tp', 'ep'], unitless."""
         # self._engine.compute('lensing')
         if not self.hr.Params.DoLensing:
             raise CAMBError('You asked for potential cl, but they have not been calculated. Please set lensing = True.')
@@ -466,7 +475,7 @@ class Harmonic(BaseSection):
         return toret
 
     def lensed_cl(self, ellmax=-1):
-        r"""Return lensed :math:`C_{\ell}` ['tt','ee','bb','te'], unitless."""
+        r"""Return lensed :math:`C_{\ell}` ['tt', 'ee', 'bb', 'te'], unitless."""
         if ellmax < 0:
             ellmax = self.ellmax_cl + 1 + ellmax
         if not self.hr.Params.DoLensing:
@@ -498,7 +507,7 @@ class Fourier(BaseSection):
 
     def sigma_rz(self, r, z, of='delta_m', **kwargs):
         r"""Return the r.m.s. of `of` perturbations in sphere of :math:`r \mathrm{Mpc}/h`."""
-        return self.pk_interpolator(nonlinear=False, of=of, **kwargs).sigma_rz(r, z)
+        return self.pk_interpolator(non_linear=False, of=of, **kwargs).sigma_rz(r, z)
 
     def sigma8_z(self, z, of='delta_m'):
         r"""Return the r.m.s. of `of` perturbations in sphere of :math:`8 \mathrm{Mpc}/h`."""
@@ -514,14 +523,14 @@ class Fourier(BaseSection):
         """Convert to CAMB naming conventions."""
         return {'delta_m': 'delta_tot', 'delta_cb': 'delta_nonu', 'theta_cdm': 'v_newtonian_cdm', 'theta_b': 'v_newtonian_baryon'}[of]
 
-    def table(self, nonlinear=False, of='m'):
+    def table(self, non_linear=False, of='m'):
         r"""
         Return power spectrum table, in :math:`(\mathrm{Mpc}/h)^{3}`.
 
         Parameters
         ----------
-        nonlinear : bool, default=False
-            Whether to return the nonlinear power spectrum (if requested in parameters, with 'nonlinear':'halofit' or 'HMcode').
+        non_linear : bool, default=False
+            Whether to return the non_linear power spectrum (if requested in parameters, with 'non_linear': 'halofit' or 'mead').
             Computed only for of == 'delta_m' or 'delta_cb'.
 
         of : string, tuple, default='delta_m'
@@ -547,7 +556,7 @@ class Fourier(BaseSection):
         def get_pk(var1, var2):
             var1 = self._index_pk_of(var1)
             var2 = self._index_pk_of(var2)
-            ka, za, pka = self.fo.get_linear_matter_power_spectrum(var1=var1, var2=var2, hubble_units=True, k_hunit=True, have_power_spectra=True, nonlinear=nonlinear)
+            ka, za, pka = self.fo.get_linear_matter_power_spectrum(var1=var1, var2=var2, hubble_units=True, k_hunit=True, have_power_spectra=True, nonlinear=non_linear)
             return ka, za, pka.T
 
         pka = None
@@ -579,14 +588,14 @@ class Fourier(BaseSection):
         pka = pka * self._rsigma8**2
         return ka, za, pka
 
-    def pk_interpolator(self, nonlinear=False, of='delta_m', **kwargs):
+    def pk_interpolator(self, non_linear=False, of='delta_m', **kwargs):
         r"""
         Return :class:`PowerSpectrumInterpolator2D` instance.
 
         Parameters
         ----------
-        nonlinear : bool, default=False
-            Whether to return the nonlinear power spectrum (if requested in parameters, with 'nonlinear':'halofit' or 'HMcode').
+        non_linear : bool, default=False
+            Whether to return the non_linear power spectrum (if requested in parameters, with 'non_linear': 'halofit' or 'mead').
             Computed only for of == 'delta_m'.
 
         of : string, tuple, default='delta_m'
@@ -596,10 +605,10 @@ class Fourier(BaseSection):
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
         """
-        ka, za, pka = self.table(nonlinear=nonlinear, of=of)
+        ka, za, pka = self.table(non_linear=non_linear, of=of)
         return PowerSpectrumInterpolator2D(ka, za, pka, **kwargs)
 
-    def pk_kz(self, k, z, nonlinear=False, of='delta_m'):
+    def pk_kz(self, k, z, non_linear=False, of='delta_m'):
         r"""
         Return power spectrum, in :math:`(\mathrm{Mpc}/h)^{3}`.
 
@@ -611,8 +620,8 @@ class Fourier(BaseSection):
         z : array_like
             Redshifts.
 
-        nonlinear : bool, default=False
-            Whether to return the nonlinear power spectrum (if requested in parameters, with 'nonlinear':'halofit' or 'HMcode').
+        non_linear : bool, default=False
+            Whether to return the non_linear power spectrum (if requested in parameters, with 'non_linear': 'halofit' or 'mead').
 
         of : string, default='delta_m'
             Perturbed quantities.
@@ -624,5 +633,5 @@ class Fourier(BaseSection):
             Power spectrum array of shape (len(k),len(z)).
         """
         self._checkz(z)
-        interp = self.pk_interpolator(nonlinear=nonlinear, of=of)
+        interp = self.pk_interpolator(non_linear=non_linear, of=of)
         return interp(k, z)

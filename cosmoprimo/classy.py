@@ -2,6 +2,7 @@
 
 import numpy as np
 import pyclass
+from pyclass import ClassParserError
 
 from .cosmology import BaseEngine
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
@@ -15,6 +16,7 @@ class ClassEngine(pyclass.ClassEngine, BaseEngine):
     def __init__(self, *args, **kwargs):
         BaseEngine.__init__(self, *args, **kwargs)
         params = self._params.copy()
+        extra_params = self.extra_params.copy()
         lensing = params.pop('lensing')
         params['k_pivot'] = params['k_pivot']
         params['lensing'] = 'yes' if lensing else 'no'
@@ -25,7 +27,17 @@ class ClassEngine(pyclass.ClassEngine, BaseEngine):
         params['z_max_pk'] = max(params.pop('z_pk'))
         params['P_k_max_h/Mpc'] = params.pop('kmax_pk')
         params['l_max_scalars'] = params.pop('ellmax_cl')
-        if not params['non_linear']: del params['non_linear']
+        if params['non_linear']:
+            params['z_max_pk'] = min(params['z_max_pk'], 2.)  # otherwise error
+            non_linear = params['non_linear']
+            if non_linear in ['mead', 'hmcode']:
+                params['non_linear'] = 'hmcode'
+            elif non_linear in ['halofit']:
+                params['non_linear'] = 'halofit'
+            else:
+                raise ClassParserError('Unknown non-linear code {}'.format(non_linear))
+        else:
+            del params['non_linear']
         params['N_ncdm'] = self['N_ncdm']
         params['T_ncdm'] = params.pop('T_ncdm_over_cmb')
         if not params['N_ncdm']:
@@ -35,7 +47,7 @@ class ClassEngine(pyclass.ClassEngine, BaseEngine):
             params['Omega_Lambda'] = 0.  # will force non-zero Omega_fld
         else:
             for name in ['w0_fld', 'wa_fld']: del params[name]
-        params.update(self.extra_params)
+        params.update(extra_params)
         super(ClassEngine, self).__init__(params=params)
         # print(self.get_params_str())
 
@@ -207,13 +219,13 @@ class Fourier(pyclass.Fourier):
 
     def sigma_rz(self, r, z, of='delta_m', **kwargs):
         r"""Return the r.m.s. of `of` perturbations in sphere of :math:`r \mathrm{Mpc}/h`."""
-        return self.pk_interpolator(nonlinear=False, of=of, **kwargs).sigma_rz(r, z)
+        return self.pk_interpolator(non_linear=False, of=of, **kwargs).sigma_rz(r, z)
 
     def sigma8_z(self, z, of='delta_m'):
         r"""Return the r.m.s. of `of` perturbations in sphere of :math:`8 \mathrm{Mpc}/h`."""
         return self.sigma_rz(8., z, of=of)
 
-    def pk_kz(self, k, z, nonlinear=False, of='m'):
+    def pk_kz(self, k, z, non_linear=False, of='m'):
         r"""
         Return power spectrum, in :math:`(\mathrm{Mpc}/h)^{3}`, using original CLASS routine.
 
@@ -225,8 +237,8 @@ class Fourier(pyclass.Fourier):
         z : array_like
             Redshifts.
 
-        nonlinear : bool, default=False
-            Whether to return the nonlinear power spectrum (if requested in parameters, with 'nonlinear':'halofit' or 'HMcode').
+        non_linear : bool, default=False
+            Whether to return the non_linear power spectrum (if requested in parameters, with 'non_linear': 'halofit' or 'mead').
 
         of : string, default='delta_m'
             Perturbed quantities.
@@ -237,16 +249,16 @@ class Fourier(pyclass.Fourier):
         pk : array
             Power spectrum array of shape (len(k),len(z)).
         """
-        return super(Fourier, self).pk_kz(k, z, nonlinear=nonlinear, of=of) * self._rsigma8**2
+        return super(Fourier, self).pk_kz(k, z, non_linear=non_linear, of=of) * self._rsigma8**2
 
-    def table(self, nonlinear=False, of='delta_m'):
+    def table(self, non_linear=False, of='delta_m'):
         r"""
         Return power spectrum table, in :math:`(\mathrm{Mpc}/h)^{3}`.
 
         Parameters
         ----------
-        nonlinear : bool, default=False
-            Whether to return the nonlinear power spectrum (if requested in parameters, with 'nonlinear':'halofit' or 'HMcode').
+        non_linear : bool, default=False
+            Whether to return the non_linear power spectrum (if requested in parameters, with 'non_linear': 'halofit' or 'mead').
             Computed only for ``of == 'delta_m'`` or 'delta_cb'.
 
         of : string, tuple, default='delta_m'
@@ -265,18 +277,18 @@ class Fourier(pyclass.Fourier):
         pk : array
             Power spectrum array of shape (len(k),len(z)).
         """
-        k, z, pk = super(Fourier, self).table(nonlinear=nonlinear, of=of)
+        k, z, pk = super(Fourier, self).table(non_linear=non_linear, of=of)
         pk *= self._rsigma8**2
         return k, z, pk
 
-    def pk_interpolator(self, nonlinear=False, of='delta_m', **kwargs):
+    def pk_interpolator(self, non_linear=False, of='delta_m', **kwargs):
         """
         Return :class:`PowerSpectrumInterpolator2D` instance.
 
         Parameters
         ----------
-        nonlinear : bool, default=False
-            Whether to return the nonlinear power spectrum (if requested in parameters, with 'nonlinear':'halofit' or 'HMcode').
+        non_linear : bool, default=False
+            Whether to return the non_linear power spectrum (if requested in parameters, with 'non_linear': 'halofit' or 'mead').
             Computed only for ``of == 'delta_m'`` or 'delta_cb'.
 
         of : string, tuple, default='delta_m'
@@ -287,5 +299,5 @@ class Fourier(pyclass.Fourier):
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
         """
-        ka, za, pka = self.table(nonlinear=nonlinear, of=of)
+        ka, za, pka = self.table(non_linear=non_linear, of=of)
         return PowerSpectrumInterpolator2D(ka, za, pka, **kwargs)
