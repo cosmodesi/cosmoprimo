@@ -719,7 +719,7 @@ def compile_params(args):
         raise TypeError('{} must be a list'.format(name))
 
     T_ncdm_over_cmb = params.get('T_ncdm_over_cmb', None)
-    if T_ncdm_over_cmb is None:
+    if T_ncdm_over_cmb in (None, []):
         T_ncdm_over_cmb = constants.TNCDM_OVER_CMB
 
     if 'm_ncdm' in params:
@@ -739,6 +739,8 @@ def compile_params(args):
             if np.ndim(T_ncdm_over_cmb) == 0:
                 T_ncdm_over_cmb = [T_ncdm_over_cmb] * len(Omega_ncdm)
             T_ncdm_over_cmb = _make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
+            if len(T_ncdm_over_cmb) != len(Omega_ncdm):
+                raise TypeError('T_ncdm_over_cmb and Omega_ncdm must be of same length')
             m_ncdm = []
             h = params['h']
 
@@ -753,8 +755,9 @@ def compile_params(args):
                     omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
 
                 return m
+
             for Omega, T in zip(Omega_ncdm, T_ncdm_over_cmb):
-                if Omega == 0:
+                if Omega == 0.:
                     m_ncdm.append(0.)
                 else:
                     T_ncdm = params['T_cmb'] * T
