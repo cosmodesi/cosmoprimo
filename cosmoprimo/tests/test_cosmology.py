@@ -129,8 +129,9 @@ def test_thermodynamics(params):
 
     for engine in ['camb']:
         th = Thermodynamics(cosmo, engine=engine)
-        for name in ['z_drag', 'rs_drag', 'z_star', 'rs_star'][: 2]:
+        for name in ['z_drag', 'rs_drag', 'z_star', 'rs_star'][:2]:
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-4)
+        assert 0.005 < th.theta_cosmomc < 0.02
     for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants']:
         for name in ['z_drag', 'rs_drag']:
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-2)

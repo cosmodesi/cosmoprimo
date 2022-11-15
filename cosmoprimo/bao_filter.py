@@ -142,8 +142,8 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
         if self._cosmo_fid is None:
             rs_drag_fid = 100.91463132327911
         else:
-            rs_drag_fid = self.cosmo_fid.get_thermodynamics().rs_drag
-        return self.cosmo.get_thermodynamics().rs_drag / rs_drag_fid
+            rs_drag_fid = self.cosmo_fid.rs_drag
+        return self.cosmo.rs_drag / rs_drag_fid
 
 
 class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
@@ -607,8 +607,8 @@ class BaseCorrelationFunctionBAOFilter(BaseClass, metaclass=RegisteredCorrelatio
         if self._cosmo_fid is None:
             rs_drag_fid = 100.91463132327911
         else:
-            rs_drag_fid = self.cosmo_fid.get_thermodynamics().rs_drag
-        return self.cosmo.get_thermodynamics().rs_drag / rs_drag_fid
+            rs_drag_fid = self.cosmo_fid.rs_drag
+        return self.cosmo.rs_drag / rs_drag_fid
 
 
 class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):

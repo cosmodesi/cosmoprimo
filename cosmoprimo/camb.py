@@ -316,7 +316,7 @@ class Background(BaseBackground):
         return self.angular_diameter_distance(z) * (1. + z)
 
 
-@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star')
+@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star', 'theta_cosmomc')
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
@@ -331,6 +331,7 @@ class Thermodynamics(BaseSection):
         self._z_drag = derived['zdrag']
         self._rs_star = derived['rstar'] * self._h
         self._z_star = derived['zstar']
+        self._theta_cosmomc = self.th.cosmomc_theta()
 
     @utils.flatarray(dtype=np.float64)
     def rs_z(self, z):
@@ -563,7 +564,6 @@ class Fourier(BaseSection):
         for iof, of_ in enumerate(of):
             if of_ == 'theta_cb':
                 tmpof = of.copy()
-                ba = Background(self._engine)
                 Omegas = self._engine['Omega_cdm'], self._engine['Omega_b']
                 Omega_tot = sum(Omegas)
                 Omega_cdm, Omega_b = (Omega / Omega_tot for Omega in Omegas)
