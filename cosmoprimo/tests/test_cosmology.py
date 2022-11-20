@@ -60,6 +60,8 @@ def test_background(params, seed=42):
     cosmo = Cosmology(**params)
     if 'A_s' in params:
         assert cosmo['A_s'] == params['A_s']
+        for name in ['ln10^{10}A_s', 'ln10^10A_s']:
+            assert cosmo[name] == np.log(10**10 * cosmo['A_s'])
         with pytest.raises(CosmologyError):
             cosmo['sigma8']
     else:

@@ -121,8 +121,8 @@ class BaseCosmology(BaseClass):
             return self.get('O' + name[1:]) * self._params['h']**2
         if name == 'H0':
             return self._params['h'] * 100
-        if name == 'ln10^{10}A_s':
-            return np.log(10**10 * self._params['As'])
+        if name in ['ln10^{10}A_s', 'ln10^10A_s']:
+            return np.log(10**10 * self._params['A_s'])
         # if name == 'rho_crit':
         #     return constants.rho_crit_Msunph_per_Mpcph3
         if name == 'Omega_g':
@@ -707,8 +707,9 @@ def compile_params(args):
     set_alias('Omega_ncdm', 'Omega0_ncdm')
     set_alias('Omega_g', 'Omega0_g')
 
-    if 'ln10^{10}A_s' in params:
-        params['A_s'] = np.exp(params.pop('ln10^{10}A_s')) * 10**(-10)
+    for name in ['ln10^{10}A_s', 'ln10^10A_s']:
+        if name in params:
+            params['A_s'] = np.exp(params.pop(name)) * 10**(-10)
 
     if 'Omega_g' in params:
         params['T_cmb'] = (params.pop('Omega_g') * h**2 * constants.rho_crit_kgph_per_mph3 / (4. / constants.c**3 * constants.Stefan_Boltzmann))**(0.25)
@@ -952,7 +953,7 @@ def find_conflicts(name):
                  ('N_ur', 'Omega_ur', 'omega_ur', 'Omega0_ur', 'N_eff'),
                  ('Omega_cdm', 'omega_cdm', 'Omega0_cdm', 'Omega_c', 'omega_c', 'Omega_m', 'omega_m', 'Omega0_m'),
                  ('m_ncdm', 'Omega_ncdm', 'omega_ncdm', 'Omega0_ncdm'),
-                 ('A_s', 'ln10^{10}A_s', 'sigma8'),
+                 ('A_s', 'ln10^{10}A_s', 'ln10^10A_s', 'sigma8'),
                  ('tau_reio', 'z_reio')]
 
     for conf in conflicts:
