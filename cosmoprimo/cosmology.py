@@ -117,6 +117,8 @@ class BaseCosmology(BaseClass):
             has_default = True
         if name in self._params:
             return self._params[name]
+        if name in self._derived:
+            return self._derived[name]
         if name.startswith('omega'):
             return self.get('O' + name[1:]) * self._params['h']**2
         if name == 'H0':
@@ -139,12 +141,12 @@ class BaseCosmology(BaseClass):
             rho = (self._params['T_cmb']**4 + self._params['N_ur'] * 7. / 8. * self.get('T_ur')**4) * 4. / constants.c**3 * constants.Stefan_Boltzmann
             return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3) + self.get('Omega_pncdm_tot')
         if name == 'Omega_ncdm':
-            self._derived['Omega_ncdm'] = self._derived.get('Omega_ncdm', self._get_rho_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3)
+            self._derived['Omega_ncdm'] = self._get_rho_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
             return self._derived['Omega_ncdm']
         if name == 'Omega_ncdm_tot':
             return np.sum(self.get('Omega_ncdm'))
         if name == 'Omega_pncdm':
-            self._derived['Omega_pncdm'] = self._derived.get('Omega_pncdm', 3. * self._get_p_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3)
+            self._derived['Omega_pncdm'] = 3. * self._get_p_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
             return self._derived['Omega_pncdm']
         if name == 'Omega_pncdm_tot':
             return np.sum(self.get('Omega_pncdm'))
