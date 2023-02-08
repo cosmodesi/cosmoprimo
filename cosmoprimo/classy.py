@@ -81,7 +81,7 @@ class Primordial(pyclass.Primordial):
 
         .. math::
 
-            \mathcal{P_R}(k) = A_s \left (\frac{k}{k_0} \right )^{n_s - 1 + 1/2 \ln(k/k_0) (dn_s / d\ln k)}
+            \mathcal{P_R}(k) = A_s \left (\frac{k}{k_\mathrm{pivot}} \right )^{n_s - 1 + 1/2 \alpha_s \ln(k/k_\mathrm{pivot})}
 
         See also: eq. 2 of `this reference <https://arxiv.org/abs/1303.5076>`_.
 

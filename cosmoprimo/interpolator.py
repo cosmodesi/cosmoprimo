@@ -129,7 +129,7 @@ def _sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
     kmax : float, default=1e2
         Maximum wavenumber.
 
-    epsrel : float, default1e-5
+    epsrel : float, default=1e-5
         Relative precision (for :meth:`scipy.integrate.quad` integration)
 
     Returns

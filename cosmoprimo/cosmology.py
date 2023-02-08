@@ -140,6 +140,8 @@ class BaseCosmology(BaseClass):
         if name == 'Omega_r':
             rho = (self._params['T_cmb']**4 + self._params['N_ur'] * 7. / 8. * self.get('T_ur')**4) * 4. / constants.c**3 * constants.Stefan_Boltzmann
             return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3) + self.get('Omega_pncdm_tot')
+        if name == 'm_ncdm_tot':
+            return sum(self._params['m_ncdm'])
         if name == 'Omega_ncdm':
             self._derived['Omega_ncdm'] = self._get_rho_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
             return self._derived['Omega_ncdm']
@@ -425,6 +427,8 @@ class Cosmology(BaseCosmology):
 
         Note
         ----
+        If ``Omega_m`` (or ``omega_m``) is provided, ``Omega_cdm`` is infered by subtracting ``Omega_b`` and the non-relativistic part of ``Omega_ncdm``
+        from ``Omega_m``.
         Massive neutrinos can be provided e.g. through ``m_ncdm`` or ``Omega_ncdm``/``omega_ncdm`` with their temperatures w.r.t. CMB ``T_ncdm_over_cmb``.
         In the case of ``Omega_ncdm``, the neutrino energy density (see :func:`_compute_ncdm_momenta`) will be inverted to recover ``m_ncdm``.
         If a single value for ``m_ncdm`` or ``Omega_ncdm`` is provided, ``neutrino_hierarchy`` can be set to ``None`` (default, single massive neutrino)
@@ -658,9 +662,11 @@ for section in _Sections:
 def compile_params(args):
     """
     Compile parameters ``args``:
+
     - normalise parameter names
     - perform immediate parameter derivations (e.g. omega => Omega)
     - set neutrino masses if relevant
+    - if Omega_m provided, compute Omega_cdm from Omega_b and non-relativistic ncdm
 
     Parameters
     ----------

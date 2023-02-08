@@ -19,7 +19,7 @@ except ImportError:
 
 def use_jax(array):
     """Whether to use jax.numpy depending on whether array is jax's object"""
-    return jax and isinstance(array, (jaxlib.xla_extension.DeviceArrayBase, jax.core.Tracer))
+    return jax and isinstance(array, (jaxlib.xla_extension.DeviceArrayBase, type(jnp.array(0)), jax.core.Tracer))
 
 
 def np_jax(array):

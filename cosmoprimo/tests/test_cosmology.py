@@ -49,7 +49,7 @@ def test_engine():
     assert type(cosmo.get_background()) is type(cosmo.get_background(engine='camb'))
 
 
-list_params = [{}, {'sigma8': 1.}, {'A_s': 2e-9, 'alpha_s': 0.1}, {'lensing': True},
+list_params = [{}, {'sigma8': 1.}, {'A_s': 2e-9, 'alpha_s': 0.3}, {'lensing': True},
                {'m_ncdm': 0.1, 'neutrino_hierarchy': 'normal'}, {'Omega_k': 0.1}, {'w0_fld': -0.9, 'wa_fld': 0.1}]
 
 
@@ -168,7 +168,7 @@ def test_primordial(params, seed=42):
     k = np.logspace(-3, 1, 100)
     for engine in ['camb', 'class', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
         pm = Primordial(cosmo, engine=engine)
-        assert np.allclose(pm.pk_interpolator(mode='scalar')(k), (cosmo.h**3 * pm.A_s * (k / pm.k_pivot) ** (pm.n_s - 1. + pm.alpha_s * np.log(k / pm.k_pivot))))
+        assert np.allclose(pm.pk_interpolator(mode='scalar')(k), (cosmo.h**3 * pm.A_s * (k / pm.k_pivot) ** (pm.n_s - 1. + 1. / 2. * pm.alpha_s * np.log(k / pm.k_pivot))))
 
 
 @pytest.mark.parametrize('params', list_params)

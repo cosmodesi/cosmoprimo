@@ -202,7 +202,7 @@ class Primordial(BaseSection):
 
         .. math::
 
-            \mathcal{P_R}(k) = A_s \left (\frac{k}{k_0} \right )^{n_s - 1 + 1/2 \ln(k/k_0) (dn_s / d\ln k)}
+            \mathcal{P_R}(k) = A_s \left (\frac{k}{k_\mathrm{pivot}} \right )^{n_s - 1 + 1/2 \alpha_s \ln(k/k_\mathrm{pivot})}
 
         See also: eq. 2 of `this reference <https://arxiv.org/abs/1303.5076>`_.
 
@@ -220,7 +220,7 @@ class Primordial(BaseSection):
             The primordial power spectrum.
         """
         index = ['scalar'].index(mode)
-        return self._h**3 * self.A_s * (k / self.k_pivot) ** (self.n_s - 1. + 1. / 2. * np.log(k / self.k_pivot) * self.alpha_s)
+        return self._h**3 * self.A_s * (k / self.k_pivot) ** (self.n_s - 1. + 1. / 2. * self.alpha_s * np.log(k / self.k_pivot))
 
     def pk_interpolator(self, mode='scalar'):
         """
