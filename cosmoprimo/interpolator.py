@@ -116,7 +116,7 @@ def _sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
 
     .. math::
 
-        \sigma_{d} = \frac{1}{6 \pi^{2}} \int dk P(k)
+        \sigma_{d} = \sqrt{\frac{1}{6 \pi^{2}} \int dk P(k)}
 
     Parameters
     ----------
@@ -153,7 +153,7 @@ def _sigma_r(r, pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
 
     .. math::
 
-        \sigma_{r} = \frac{1}{2 \pi^{2}} \int dk k^{2} P(k) W^{2}(kr)
+        \sigma_{r} = \sqrt{\frac{1}{2 \pi^{2}} \int dk k^{2} P(k) W^{2}(kr)}
 
     Parameters
     ----------
@@ -543,7 +543,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
 
         .. math::
 
-            \sigma_{d} = \frac{1}{6 \pi^{2}} \int dk P(k)
+            \sigma_{d} = \sqrt{\frac{1}{6 \pi^{2}} \int dk P(k)}
 
         Parameters
         ----------
@@ -570,7 +570,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
 
         .. math::
 
-            \sigma_{r} = \frac{1}{2 \pi^{2}} \int dk k^{2} P(k) W^{2}(kr)
+            \sigma_{r} = \sqrt{\frac{1}{2 \pi^{2}} \int dk k^{2} P(k) W^{2}(kr))
 
         Parameters
         ----------
@@ -833,7 +833,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
 
         .. math::
 
-            \sigma_{d}(z) = \frac{1}{6 \pi^{2}} \int dk P(k,z)
+            \sigma_{d}(z) = \sqrt{\frac{1}{6 \pi^{2}} \int dk P(k,z)}
 
         Parameters
         ----------
@@ -867,7 +867,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
 
         .. math::
 
-            \sigma_{r}(z) = \frac{1}{2 \pi^{2}} \int dk k^{2} P(k,z) W^{2}(kr)
+            \sigma_{r}(z) = \sqrt{\frac{1}{2 \pi^{2}} \int dk k^{2} P(k, z) W^{2}(kr)}
 
         Parameters
         ----------
