@@ -67,7 +67,7 @@ def flatarray(dtype=None):
             array = np.asarray(args[0], dtype=input_dtype)
             shape = array.shape
             array.shape = (-1,)
-            toret = func(self, array, *args[1:], **kwargs)
+            toret = np.asarray(func(self, array, *args[1:], **kwargs))
             array.shape = shape
             toret.shape = toret.shape[:-1] + shape
             return toret.astype(dtype=toret_dtype, copy=False)

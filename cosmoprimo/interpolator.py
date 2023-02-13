@@ -112,7 +112,7 @@ def wtophat_scalar(x):
 
 def _sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
     r"""
-    Return the r.m.s. of the displacement field, i.e. the square root of:
+    Return the r.m.s. of the displacement field, i.e.:
 
     .. math::
 
@@ -149,7 +149,7 @@ def _sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
 @np.vectorize
 def _sigma_r(r, pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
     r"""
-    Return the r.m.s. of perturbations in a sphere of :math:`r`, i.e. the square root of:
+    Return the r.m.s. of perturbations in a sphere of :math:`r`, i.e.:
 
     .. math::
 
@@ -539,7 +539,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
 
     def sigma_d(self, nk=1024, epsrel=1e-5):
         r"""
-        Return the r.m.s. of the displacement field, i.e. the square root of:
+        Return the r.m.s. of the displacement field, i.e.:
 
         .. math::
 
@@ -566,7 +566,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
 
     def sigma_r(self, r, nk=1024, epsrel=1e-5):
         r"""
-        Return the r.m.s. of perturbations in a sphere of :math:`r`, i.e. the square root of:
+        Return the r.m.s. of perturbations in a sphere of :math:`r`, i.e.:
 
         .. math::
 
@@ -575,7 +575,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         Parameters
         ----------
         r : array_like
-            Sphere radii.
+            Sphere radius.
 
         nk : int, default=1024
             If not ``None``, performs trapezoidal integration with ``nk`` points between :attr:`extrap_kmin` and :attr:`extrap_kmax`.
@@ -829,7 +829,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
 
     def sigma_dz(self, z=0, nk=1024, epsrel=1e-5):
         r"""
-        Return the r.m.s. of the displacement field, i.e. the square root of:
+        Return the r.m.s. of the displacement field, i.e.:
 
         .. math::
 
@@ -863,7 +863,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
 
     def sigma_rz(self, r, z=0, nk=1024, epsrel=1e-5):
         r"""
-        Return the r.m.s. of perturbations in a sphere of :math:`r`, i.e. the square root of:
+        Return the r.m.s. of perturbations in a sphere of :math:`r`, i.e.:
 
         .. math::
 
