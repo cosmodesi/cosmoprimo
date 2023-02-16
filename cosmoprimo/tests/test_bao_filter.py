@@ -245,8 +245,6 @@ def plot_peakaverage(engine='class'):
 
 if __name__ == '__main__':
 
-    plot_2d_pk()
-    exit()
     plot_pk()
     test_2d_pk()
     plot_2d_pk()

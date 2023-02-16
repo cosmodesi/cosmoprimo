@@ -1093,8 +1093,8 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         self.interp_order_s = self.spline.interp_order_x
         self.is_from_callable = False
 
-        def interp(k, islogs=False, **kwargs):
-            return self.spline(k, islogx=islogs, **kwargs) * self._rsigma8sq
+        def interp(s, islogs=False, **kwargs):
+            return self.spline(s, islogx=islogs, **kwargs) * self._rsigma8sq
 
         self.interp = interp
 

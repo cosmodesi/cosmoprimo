@@ -52,6 +52,8 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
         self.set_pk(pk_interpolator, cosmo=cosmo)
         self._prepare()
         self._compute()
+        if not self.is2d:
+            self.pk, self.pknow = self.pk[..., 0], self.pknow[..., 0]
 
     def _prepare(self):
         """Anything that can be done once."""
