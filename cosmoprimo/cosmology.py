@@ -61,7 +61,7 @@ def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
     Returns
     -------
     out : float
-        Required momentum, in units of :math:`10^{10} M_{\odot} / \mathrm{Mpc}^{3}` (/ :math:`\mathrm{eV}` if ``out`` is 'p')
+        Required momentum, in units of :math:`10^{10} M_{\odot} / \mathrm{Mpc}^{3}` (/ :math:`\mathrm{eV}` if ``out`` is 'drhodm')
     """
     a = 1. / (1. + z)
     over_T = constants.electronvolt / (constants.Boltzmann * (T_eff / a))
@@ -78,7 +78,7 @@ def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
         def phase_space_integrand(q):
             return 1. / 3. * q**4 / np.sqrt(q**2 + m2_over_T2) / (1. + np.exp(q))
     else:
-        raise ValueError('Cannot compute ncdm momenta {}; choices are ["rho","drhodm","p"]', out)
+        raise ValueError('Cannot compute ncdm momenta {}; choices are ["rho", "drhodm", "p"]', out)
     # upper bound of 100 enough (10^⁻16 error)
     toret = integrate.quad(phase_space_integrand, 0, 100, epsrel=epsrel)[0] / (7. * np.pi**4 / 120.)
     return 7. / 8. * 4 / constants.c**3 * constants.Stefan_Boltzmann * (T_eff / a)**4 * toret / (1e10 * constants.msun) * constants.megaparsec**3
@@ -172,7 +172,7 @@ class BaseCosmology(BaseClass):
 
     @property
     def _has_fld(self):
-        return (self._params['w0_fld'], self._params['wa_fld']) != (-1, 0.)
+        return (self._params['w0_fld'], self._params['wa_fld'], self._params['cs2_fld']) != (-1, 0., 1.)
 
     def _get_rho_ncdm(self, z=0, epsrel=1e-7):
         r"""
@@ -418,7 +418,7 @@ class Cosmology(BaseCosmology):
 
     _default_cosmological_parameters = dict(h=0.7, Omega_cdm=0.25, Omega_b=0.05, Omega_k=0., sigma8=0.8, k_pivot=0.05, n_s=0.96, alpha_s=0., r=0., T_cmb=constants.TCMB,
                                             m_ncdm=None, neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
-                                            tau_reio=0.06, reionization_width=0.5, A_L=1.0, w0_fld=-1., wa_fld=0.)
+                                            tau_reio=0.06, reionization_width=0.5, A_L=1.0, w0_fld=-1., wa_fld=0., cs2_fld=1., use_ppf=True)
     _default_calculation_parameters = dict(non_linear='', modes='s', lensing=False, z_pk=None, kmax_pk=10., ellmax_cl=2500)
 
     def __init__(self, engine=None, extra_params=None, **params):
@@ -862,7 +862,15 @@ def compile_params(args):
     N_eff = params.pop('N_eff', constants.NEFF)
     # We remove massive neutrinos
     if N_ur is None:
-        N_ur = N_eff - sum(T_ncdm_over_cmb[mask_m]**4) * (4. / 11.)**(-4. / 3.)
+        N_ur = N_eff - sum(T_ncdm_over_cmb[mask_m]**4 * (4. / 11.)**(-4. / 3.))
+        # Which is just the high-redshift limit of what is below; leaving it there for clarity
+        # N_eff = (rho_r / rho_g - 1) / (7. / 8. * (4. / 11.)**(4. / 3.))  # as defined in class_public https://github.com/lesgourg/class_public/blob/aa92943e4ab86b56970953589b4897adf2bd0f99/source/background.c#L2051
+        # with rho_r = rho_g + rho_ur + 3. * pncdm and rho_ur = 7. / 8. * (4. / 11.)**(4. / 3.) * N_ur * rho_g
+        # so N_ur = N_eff - 3 * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
+        # z = 1e10
+        # pncdm = sum(_compute_ncdm_momenta(params['T_cmb'] * T, m, z=z, out='p') for T, m in zip(T_ncdm_over_cmb, m_ncdm))
+        # rho_g = params['T_cmb']**4 * (1. + z)**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann * constants.megaparsec**3 / (1e10 * constants.msun)
+        # N_ur = N_eff - 3. * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
     if N_ur < 0.:
         raise ValueError('N_ur and m_ncdm must result in a number of relativistic neutrino species greater than or equal to zero.')
     # Fill an array with the non-relativistic neutrino masses
@@ -889,6 +897,10 @@ def compile_params(args):
     if 'Omega_m' in params:
         nonrelativistic_ncdm = (BaseEngine._get_rho_ncdm(params, z=0).sum() - 3 * BaseEngine._get_p_ncdm(params, z=0).sum()) / constants.rho_crit_Msunph_per_Mpcph3
         params['Omega_cdm'] = params.pop('Omega_m') - params['Omega_b'] - nonrelativistic_ncdm
+
+    defaults = {'w0_fld': (float, -1.), 'wa_fld': (float, 0.), 'cs2_fld': (float, 1.), 'use_ppf': (bool, True)}
+    for name, (type, default) in defaults.items():
+        params[name] = type(params.get(name, default))
 
     return params
 
@@ -970,7 +982,7 @@ def find_conflicts(name):
     return ()
 
 
-@utils.addproperty('H0', 'h', 'N_ur', 'N_ncdm', 'N_eff', 'T0_cmb', 'T0_ncdm', 'w0_fld', 'wa_fld',
+@utils.addproperty('H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'T0_cmb', 'T0_ncdm', 'w0_fld', 'wa_fld', 'cs2_fld',
                    'Omega0_cdm', 'Omega0_b', 'Omega0_k', 'Omega0_g', 'Omega0_ur', 'Omega0_r',
                    'Omega0_pncdm', 'Omega0_pncdm_tot', 'Omega0_ncdm', 'Omega0_ncdm_tot',
                    'Omega0_m', 'Omega0_Lambda', 'Omega0_fld', 'Omega0_de')
@@ -980,12 +992,14 @@ class BaseBackground(BaseSection):
 
     def __init__(self, engine):
         self._engine = engine
-        for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'N_eff', 'w0_fld', 'wa_fld']:
+        for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'w0_fld', 'wa_fld', 'cs2_fld']:
             setattr(self, '_{}'.format(name), self._engine[name])
         self._T0_cmb = self._engine['T_cmb']
         self._T0_ncdm = np.array(self._engine['T_ncdm_over_cmb']) * self._T0_cmb
         for name in ['cdm', 'b', 'k', 'g', 'ur', 'r', 'ncdm', 'ncdm_tot', 'pncdm', 'pncdm_tot', 'm', 'Lambda', 'fld', 'de']:
             setattr(self, '_Omega0_{}'.format(name), self._engine['Omega_{}'.format(name)])
+        for name in ['_m_ncdm', '_Omega0_pncdm', '_Omega0_ncdm']:
+            setattr(self, name, np.array(getattr(self, name), dtype='f8'))
 
     @utils.flatarray()
     def rho_ncdm(self, z, species=None):

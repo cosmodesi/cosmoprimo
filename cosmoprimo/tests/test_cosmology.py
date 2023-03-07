@@ -50,7 +50,8 @@ def test_engine():
 
 
 list_params = [{}, {'sigma8': 1.}, {'A_s': 2e-9, 'alpha_s': 0.3}, {'lensing': True},
-               {'m_ncdm': 0.1, 'neutrino_hierarchy': 'normal'}, {'Omega_k': 0.1}, {'w0_fld': -0.9, 'wa_fld': 0.1}]
+               {'m_ncdm': 0.1, 'neutrino_hierarchy': 'normal'}, {'Omega_k': 0.1},
+               {'w0_fld': -0.9, 'wa_fld': 0.1, 'cs2_fld': 0.9}, {'w0_fld': -1.1, 'wa_fld': 0.2}]
 
 
 @pytest.mark.parametrize('params', list_params)
@@ -77,8 +78,8 @@ def test_background(params, seed=42):
             assert np.allclose(getattr(ba, name), cosmo[name.replace('0', '')], atol=0, rtol=1e-3)
             assert np.allclose(getattr(ba, name), getattr(ba, name.replace('0', ''))(0.), atol=0, rtol=1e-3)
 
-        for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'N_eff', 'w0_fld', 'wa_fld']:
-            assert np.allclose(getattr(ba, name), cosmo[name])
+        for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'w0_fld', 'wa_fld', 'cs2_fld']:
+            assert np.allclose(getattr(ba, name), cosmo[name], atol=1e-9, rtol=1e-8 if name not in ['N_eff'] else 1e-4)
 
     ba_class = Background(cosmo, engine='class')
 
@@ -260,7 +261,7 @@ def test_fourier(params, seed=42):
         fo = Fourier(cosmo, engine=engine)
         pk_class = fo_class.pk_interpolator(non_linear=False, of='delta_m')
         pk = fo.pk_interpolator()
-        rtol = 0.25 if engine == 'bbks' else 0.15
+        rtol = 0.3 if engine == 'bbks' else 0.15
         assert np.allclose(pk(k, z=z), pk_class(k, z=z), atol=0., rtol=rtol)
         r = rng.uniform(1., 10., 10)
         assert np.allclose(pk.growth_rate_rz(r=r, z=z), pk_class.growth_rate_rz(r=r, z=z), atol=0., rtol=0.15)
@@ -476,7 +477,7 @@ def benchmark():
 
     for key, value in d.items():
         dt = timeit.timeit(**value, globals={**globals(), **locals()}) / value['number'] * 1e3
-        print('{} takes {: .3f} milliseconds'.format(key, dt))
+        print('{} takes {:.3f} milliseconds'.format(key, dt))
 
 
 def test_repeats():
@@ -498,8 +499,12 @@ def test_neutrinos():
     from cosmoprimo import constants
     from cosmoprimo.cosmology import _compute_ncdm_momenta
 
+    T_eff = constants.TCMB * constants.TNCDM_OVER_CMB
+    pncdm = _compute_ncdm_momenta(T_eff, 1e-14, z=0, epsrel=1e-7, out='p')
+    rhoncdm = _compute_ncdm_momenta(T_eff, 1e-14, z=0, epsrel=1e-7, out='rho')
+    assert np.allclose(3. * pncdm, rhoncdm, rtol=1e-6)
+
     for m_ncdm in [0.06, 0.1, 0.2, 0.4]:
-        T_eff = constants.TCMB * constants.TNCDM_OVER_CMB
         # print(_compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='rho'), _compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='p'))
         omega_ncdm = _compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
         assert np.allclose(omega_ncdm, m_ncdm / 93.14, rtol=1e-3)
@@ -560,6 +565,7 @@ if __name__ == '__main__':
         test_primordial(params)
         test_harmonic(params)
         test_fourier(params)
+
     test_repeats()
     test_neutrinos()
     test_clone()

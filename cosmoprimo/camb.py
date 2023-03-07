@@ -72,8 +72,7 @@ class CambEngine(BaseEngine):
         delta_neff = self['N_eff'] - constants.NEFF  # used for BBN YHe comps
 
         # CAMB defines a neutrino degeneracy factor as T_i = g^(1/4)*T_nu
-        # where T_nu is the standard neutrino temperature from first order
-        # computations
+        # where T_nu is the standard neutrino temperature from first order computations
         # CLASS defines the temperature of each neutrino species to be
         # T_i_eff = TNCDM * T_cmb where TNCDM is a fudge factor to get the
         # total mass in terms of eV to match second-order computations of the
@@ -91,8 +90,9 @@ class CambEngine(BaseEngine):
         self._camb_params.bbn_predictor = camb.bbn.get_predictor()
         self._camb_params.YHe = self._camb_params.bbn_predictor.Y_He(self._camb_params.ombh2 * (camb.constants.COBE_CMBTemp / self._camb_params.TCMB)**3, delta_neff)
 
-        self._camb_params.set_classes(dark_energy_model=camb.dark_energy.DarkEnergyFluid)
-        self._camb_params.DarkEnergy.set_params(w=self['w0_fld'], wa=self['wa_fld'])
+        if self._has_fld:
+            self._camb_params.set_classes(dark_energy_model=camb.dark_energy.DarkEnergyPPF if self['use_ppf'] else camb.dark_energy.DarkEnergyFluid)
+            self._camb_params.DarkEnergy.set_params(w=self['w0_fld'], wa=self['wa_fld'], cs2=self['cs2_fld'])
 
         self._camb_params.DoLensing = self['lensing']
         self._camb_params.Want_CMB_lensing = self['lensing']

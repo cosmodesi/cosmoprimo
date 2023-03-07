@@ -43,10 +43,12 @@ class ClassEngine(pyclass.ClassEngine, BaseEngine):
         if not params['N_ncdm']:
             params.pop('m_ncdm')
             params.pop('T_ncdm')
+        params['use_ppf'] = 'yes' if params['use_ppf'] else 'no'
+        params['fluid_equation_of_state'] = 'CLP'
         if self._has_fld:
             params['Omega_Lambda'] = 0.  # will force non-zero Omega_fld
         else:
-            for name in ['w0_fld', 'wa_fld']: del params[name]
+            for name in ['w0_fld', 'wa_fld', 'cs2_fld', 'use_ppf', 'fluid_equation_of_state']: del params[name]
         params.update(extra_params)
         super(ClassEngine, self).__init__(params=params)
         # print(self.get_params_str())

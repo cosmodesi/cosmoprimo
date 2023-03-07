@@ -15,11 +15,11 @@ from . import constants
 
 
 def get_default_k_callable():
-    return np.logspace(-6, 2, 500)
+    return np.logspace(-6., 2., 500)
 
 
 def get_default_s_callable():
-    return np.logspace(-6, 2, 500)
+    return np.logspace(-6., 2., 500)
 
 
 def get_default_z_callable():
