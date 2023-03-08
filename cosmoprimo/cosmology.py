@@ -477,9 +477,9 @@ class Cosmology(BaseCosmology):
             Cosmological and calculation parameters which take priority over the default ones.
         """
         check_params(params)
-        self._input_params = params.copy()
         self._derived = {}
-        self._params = compile_params(merge_params(self.__class__.get_default_parameters(include_conflicts=False), params))
+        self._input_params = merge_params(self.__class__.get_default_parameters(include_conflicts=False), params)
+        self._params = compile_params(self._input_params)
         self._engine = engine
         if self._engine is not None:
             self.set_engine(self._engine, **(extra_params or {}))
@@ -569,12 +569,13 @@ class Cosmology(BaseCosmology):
         check_params(params)
         new._derived = {}
         if base == 'input':
-            base_params = merge_params(self.__class__.get_default_parameters(include_conflicts=False), self._input_params)
+            base_params = self._input_params.copy()
         elif base is None:
             base_params = self._params.copy()
         else:
             raise CosmologyError('Unknown parameter base {}'.format(base))
-        new._params = compile_params(merge_params(base_params, params))
+        new._input_params = merge_params(base_params, params)
+        new._params = compile_params(new._input_params)
         if engine is None and self._engine is not None:
             engine = self._engine.name
         if engine is not None:
