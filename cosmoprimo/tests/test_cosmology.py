@@ -132,9 +132,10 @@ def test_thermodynamics(params):
 
     for engine in ['camb']:
         th = Thermodynamics(cosmo, engine=engine)
-        for name in ['z_drag', 'rs_drag', 'z_star', 'rs_star'][:2]:
-            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-4)
-        assert 0.005 < th.theta_cosmomc < 0.02
+        for name in ['z_drag', 'rs_drag', 'z_star', 'rs_star']:  # weirdly enough, class's z_rec seems to match camb's z_star much better
+            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 1e-4)
+        for name in ['theta_star', 'theta_cosmomc']:
+            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 5e-5)
     for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants']:
         for name in ['z_drag', 'rs_drag']:
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-2)
@@ -521,7 +522,7 @@ def test_neutrinos():
 
 def test_clone():
 
-    cosmo = Cosmology(engine='class')
+    cosmo = Cosmology(omega_cdm=0.2, engine='class')
     engine = cosmo.engine
 
     for factor in [1., 1.1]:
@@ -536,6 +537,10 @@ def test_clone():
             assert not test
         cosmo_clone = cosmo.clone(sigma8=cosmo.sigma8_m * factor)
         assert np.allclose(cosmo_clone.get_fourier().sigma_rz(8, 0, of='delta_m'), cosmo.sigma8_m * factor, rtol=1e-4)  # interpolation error
+        cosmo_clone = cosmo.clone(h=cosmo.h * factor)
+        assert np.allclose(cosmo_clone.Omega0_m, cosmo.Omega0_m)
+        cosmo_clone = cosmo.clone(base='input', h=cosmo.h * factor)
+        assert np.allclose(cosmo_clone.Omega0_cdm, cosmo.Omega0_cdm / factor**2)
 
 
 def test_shortcut():
@@ -553,6 +558,16 @@ def test_shortcut():
     assert cosmo.gauge == 'synchronous'  # default
     cosmo.set_engine('class', gauge='newtonian')
     assert cosmo.gauge == 'newtonian'
+
+
+def test_theta_cosmomc():
+
+    cosmo = Cosmology(engine='camb')
+    from cosmoprimo.cosmology import _compute_rs_cosmomc
+
+    rs, zstar = _compute_rs_cosmomc(cosmo.Omega0_b * cosmo.h**2, cosmo.Omega0_m * cosmo.h**2, cosmo.hubble_function)
+    theta_cosmomc = rs * cosmo.h / cosmo.comoving_angular_distance(zstar)
+    assert np.allclose(theta_cosmomc, cosmo.theta_cosmomc, atol=0., rtol=2e-6)
 
 
 if __name__ == '__main__':

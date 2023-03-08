@@ -84,6 +84,30 @@ def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
     return 7. / 8. * 4 / constants.c**3 * constants.Stefan_Boltzmann * (T_eff / a)**4 * toret / (1e10 * constants.msun) * constants.megaparsec**3
 
 
+def _compute_rs_cosmomc(omega_b, omega_m, hubble_function):
+
+    """Return sound horizon in proper Mpc, and redshift of the last scattering surface in the CosmoMC approximation."""
+
+    zstar = 1048 * (1 + 0.00124 * omega_b**(-0.738))\
+            * (1 + (0.0783 * omega_b**(-0.238) / (1 + 39.5 * omega_b**0.763))\
+            * omega_m**(0.560 / (1 + 21.1 * omega_b**1.81)))
+
+    astart = 1e-8
+    astar = 1. / (1 + zstar)
+    atol = 1e-6
+
+    def dtauda(a):
+        return 1. / (a**2 * hubble_function(1 / a - 1.) / (constants.c / 1e3))
+
+    def dsoundda_approx(a):
+        # https://github.com/cmbant/CAMB/blob/758c6c2359764297e332ee2108df599506a754c3/fortran/results.f90#L1138
+        R = 3e4 * a * omega_b
+        cs = (3 * (1 + R))**(-0.5)
+        return dtauda(a) * cs
+
+    return integrate.romberg(dsoundda_approx, astart, astar, tol=atol, rtol=atol, vec_func=True), zstar
+
+
 class BaseCosmology(BaseClass):
 
     def __init__(self, extra_params=None, **params):
@@ -453,6 +477,7 @@ class Cosmology(BaseCosmology):
             Cosmological and calculation parameters which take priority over the default ones.
         """
         check_params(params)
+        self._input_params = params.copy()
         self._derived = {}
         self._params = compile_params(merge_params(self.__class__.get_default_parameters(include_conflicts=False), params))
         self._engine = engine
@@ -510,12 +535,21 @@ class Cosmology(BaseCosmology):
             return toret
         raise CosmologyError('No default parameters for {}'.format(of))
 
-    def clone(self, engine=None, extra_params=None, **params):
-        """
+    def clone(self, base=None, engine=None, extra_params=None, **params):
+        r"""
         Clone current cosmology instance, optionally updating engine and parameters.
 
         Parameters
         ----------
+        base : string, default=None
+            If 'input', update input parameters.
+            Else, update parameters in the internal :math:`h, \Omega, m_{cdm}` basis.
+            If, e.g. input parameters are :math:`h, \omega_{b}, \omega_{cdm}`, ``clone(h=0.7)``
+            returns the same cosmology, but with :math:`h = 0.7`; since :math:`\Omega_{b}, \Omega_{cdm}` are kept fixed,
+            :math:`\omega_{b}, \omega_{cdm}` are modified.
+            Instead, with ``clone(h=0.7, base='input')`` :math:`\omega_{b}, \omega_{cdm}` are left unchanged,
+            but :math:`\Omega_{b}, \Omega_{cdm}` are modified.
+
         engine : string, default=None
             Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
             If ``None``, use same engine (class) as current instance.
@@ -534,7 +568,13 @@ class Cosmology(BaseCosmology):
         new = self.copy()
         check_params(params)
         new._derived = {}
-        new._params = compile_params(merge_params(self._params.copy(), params))
+        if base == 'input':
+            base_params = merge_params(self.__class__.get_default_parameters(include_conflicts=False), self._input_params)
+        elif base is None:
+            base_params = self._params.copy()
+        else:
+            raise CosmologyError('Unknown parameter base {}'.format(base))
+        new._params = compile_params(merge_params(base_params, params))
         if engine is None and self._engine is not None:
             engine = self._engine.name
         if engine is not None:
@@ -545,15 +585,15 @@ class Cosmology(BaseCosmology):
 
     def __setstate__(self, state):
         """Set the class state dictionary."""
-        for name in ['params', 'derived']:
-            setattr(self, '_{}'.format(name), state[name])
+        for name in ['params', 'input_params', 'derived']:
+            setattr(self, '_{}'.format(name), state.get(name, {}))
         if state.get('engine', None) is not None:
             self.set_engine(state['engine']['name'], **state['engine']['extra_params'])
 
     def __getstate__(self):
         """Return this class state dictionary."""
         state = {'engine': None}
-        for name in ['params', 'derived']:
+        for name in ['params', 'input_params', 'derived']:
             state[name] = getattr(self, '_{}'.format(name))
         if getattr(self, '_engine', None) is not None:
             state['engine'] = {'name': self._engine.name, 'extra_params': self._engine.extra_params}

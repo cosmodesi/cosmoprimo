@@ -60,6 +60,19 @@ Transfer = pyclass.Transfer
 Perturbations = pyclass.Perturbations
 
 
+class Thermodynamics(pyclass.Thermodynamics):
+
+    def __init__(self, engine):
+        super(Thermodynamics, self).__init__(engine)
+        self.ba = engine.get_background()
+
+    @property
+    def theta_cosmomc(self):
+        from .cosmology import _compute_rs_cosmomc
+        rs, zstar = _compute_rs_cosmomc(self.ba.Omega0_b * self.ba.h**2, self.ba.Omega0_m * self.ba.h**2, self.ba.hubble_function)
+        return rs * self.ba.h / self.ba.comoving_angular_distance(zstar)
+
+
 class Primordial(pyclass.Primordial):
 
     def __init__(self, engine):

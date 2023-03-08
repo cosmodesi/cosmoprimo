@@ -316,13 +316,14 @@ class Background(BaseBackground):
         return self.angular_diameter_distance(z) * (1. + z)
 
 
-@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star', 'theta_cosmomc')
+@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star')
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
         self._engine = engine
         self._engine.compute('thermodynamics')
         self.th = self._engine.th
+        self.ba = self._engine.ba
         # convert RHO to 1e10 Msun/h
         self._h = self.th.Params.H0 / 100
 
@@ -331,12 +332,19 @@ class Thermodynamics(BaseSection):
         self._z_drag = derived['zdrag']
         self._rs_star = derived['rstar'] * self._h
         self._z_star = derived['zstar']
-        self._theta_cosmomc = self.th.cosmomc_theta()
 
     @utils.flatarray(dtype=np.float64)
     def rs_z(self, z):
         """Comoving sound horizon."""
         return self.th.sound_horizon(z) * self._h
+
+    @property
+    def theta_cosmomc(self):
+        return self.th.cosmomc_theta()
+
+    @property
+    def theta_star(self):
+        return self.rs_star / (self.ba.angular_diameter_distance(self.z_star) * self._h) / (1 + self.z_star)
 
 
 class Transfer(BaseSection):
