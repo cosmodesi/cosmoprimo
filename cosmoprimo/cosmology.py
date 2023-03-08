@@ -190,6 +190,11 @@ class BaseCosmology(BaseClass):
             return len(self._params['m_ncdm'])
         if name == 'N_eff':
             return sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in self._params['T_ncdm_over_cmb']) + self._params['N_ur']
+        if name == 'theta_cosmomc':
+            ba = self.get_background()
+            rs, zstar = _compute_rs_cosmomc(self['omega_b'], self['omega_m'], ba.hubble_function)
+            self._derived['theta_cosmomc'] = rs * ba.h / ba.comoving_angular_distance(zstar)
+            return self._derived['theta_cosmomc']
         if has_default:
             return default
         raise CosmologyError('Parameter {} not found.'.format(name))

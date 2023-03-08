@@ -136,6 +136,8 @@ def test_thermodynamics(params):
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 1e-4)
         for name in ['theta_star', 'theta_cosmomc']:
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 5e-5)
+        assert np.allclose(th_class.theta_cosmomc, cosmo['theta_cosmomc'], atol=0., rtol=3e-6)
+        assert np.allclose(th.theta_cosmomc, cosmo['theta_cosmomc'], atol=0., rtol=3e-6)
     for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants']:
         for name in ['z_drag', 'rs_drag']:
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-2)
