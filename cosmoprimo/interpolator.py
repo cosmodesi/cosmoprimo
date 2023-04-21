@@ -87,10 +87,10 @@ def _pad_log(k, pk, extrap_kmin=1e-6, extrap_kmax=1e2):
     return logk, logpk
 
 
-def _wtophat_lowx(x2):
+def _kernel_tophat_lowx(x2):
     r"""
-    Maclaurin expansion of :math:`W(x) = 3 (\sin(x)-x\cos(x))/x^{3}` to :math:`\mathcal{O}(x^{10})`, with.
-    Necessary numerically because at low x W(x) relies on the fine cancellation of two terms
+    Maclaurin expansion of :math:`W(x) = 3 (\sin(x)-x\cos(x))/x^{3}` to :math:`\mathcal{O}(x^{10})`.
+    Necessary numerically because at low x W(x) relies on the fine cancellation of two terms.
 
     Note
     ----
@@ -99,18 +99,18 @@ def _wtophat_lowx(x2):
     return 1. + x2 * (-1.0 / 10.0 + x2 * (1.0 / 280.0 + x2 * (-1.0 / 15120.0 + x2 * (1.0 / 1330560.0 + x2 * (-1.0 / 172972800.0)))))
 
 
-def _wtophat_highx(x):
-    r"""Return the tophat function math:`W(x) = 3 (\sin(x)-x\cos(x))/x^{3}` to :math:`\mathcal{O}(x^{10})`."""
+def _kernel_tophat_highx(x):
+    r"""Tophat function math:`W(x) = 3 (\sin(x)-x\cos(x))/x^{3}`."""
     return 3. * (np.sin(x) - x * np.cos(x)) / x**3
 
 
-def wtophat_scalar(x):
-    """Non vectorized tophat function."""
-    if x < 0.1: return _wtophat_lowx(x**2)
-    return _wtophat_highx(x)
+def kernel_tophat2(x):
+    """Non-vectorized tophat function."""
+    if x < 0.1: return _kernel_tophat_lowx(x**2)**2
+    return _kernel_tophat_highx(x)**2
 
 
-def _sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
+def integrate_sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
     r"""
     Return the r.m.s. of the displacement field, i.e.:
 
@@ -142,23 +142,23 @@ def _sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
         k = np.exp(logk)
         return k * pk(k)  # extra k factor because log integration
 
-    sigmasq = 1. / 6. / np.pi**2 * integrate.quad(integrand, np.log(kmin), np.log(kmax), epsrel=epsrel)[0]
-    return np.sqrt(sigmasq)
+    sigma2 = 1. / 6. / np.pi**2 * integrate.quad(integrand, np.log(kmin), np.log(kmax), epsrel=epsrel)[0]
+    return np.sqrt(sigma2)
 
 
 @np.vectorize
-def _sigma_r(r, pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
+def integrate_sigma_r2(r, pk, kmin=1e-6, kmax=1e2, epsrel=1e-5, kernel=kernel_tophat2):
     r"""
-    Return the r.m.s. of perturbations in a sphere of :math:`r`, i.e.:
+    Return the variance of perturbations smoothed by a kernel :math:`W` of radius :math:`r`, i.e.:
 
     .. math::
 
-        \sigma_{r} = \sqrt{\frac{1}{2 \pi^{2}} \int dk k^{2} P(k) W^{2}(kr)}
+        \sigma_{r}^{2} = \frac{1}{2 \pi^{2}} \int dk k^{2} P(k) W^{2}(kr)
 
     Parameters
     ----------
     r : float
-        Sphere radius.
+        Smoothing radius.
 
     pk : callable
         Power spectrum.
@@ -172,17 +172,19 @@ def _sigma_r(r, pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
     epsrel : float, default=1e-5
         Relative precision (for :meth:`scipy.integrate.quad` integration).
 
+    kernel : callable, default=kernel_tophat2
+        Kernel :math:`W^{2}`; defaults to (square of) top-hat kernel.
+
     Returns
     -------
-    sigmar : float
-        r.m.s. of perturbations.
+    sigmar2 : float
+        Variance of perturbations.
     """
     def integrand(logk):
         k = np.exp(logk)
-        return pk(k) * (wtophat_scalar(r * k) * k)**2 * k  # extra k factor because log integration
+        return pk(k) * kernel(k * r) * k**3  # extra k factor because log integration
 
-    sigmasq = 1. / 2. / np.pi**2 * integrate.quad(integrand, np.log(kmin), np.log(kmax), epsrel=epsrel)[0]
-    return np.sqrt(sigmasq)
+    return 1. / 2. / np.pi**2 * integrate.quad(integrand, np.log(kmin), np.log(kmax), epsrel=epsrel)[0]
 
 
 def _get_default_kwargs(func, start=0, remove=()):
@@ -559,7 +561,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         sigmad : array_like
         """
         if nk is None:
-            return _sigma_d(self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, epsrel=epsrel)
+            return integrate_sigma_d(self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, epsrel=epsrel)
         k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
         sigmasq = 1. / 6. / constants.pi**2 * integrate.trapz(self(k), x=k, axis=-1)
         return np.sqrt(sigmasq)
@@ -590,7 +592,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
             Array of shape ``(r.size,)`` (null dimensions are squeezed).
         """
         if nk is None:
-            return _sigma_r(r, self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, epsrel=epsrel)
+            return integrate_sigma_r2(r, self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, epsrel=epsrel)**0.5
         k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
         s, var = TophatVariance(k)(self(k))
         return np.sqrt(GenericSpline(s, [0], var[:, None])(r))
