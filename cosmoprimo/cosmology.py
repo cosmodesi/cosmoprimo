@@ -264,6 +264,7 @@ class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
 
     """Base engine for cosmological calculation."""
     name = 'base'
+    specific_params = {}
 
     def __init__(self, extra_params=None, **params):
         """
@@ -340,6 +341,8 @@ def get_engine(engine):
             from . import classy
         elif engine == 'camb':
             from . import camb
+        elif engine == 'isitgr':
+            from . import isitgr
         elif engine == 'eisenstein_hu':
             from . import eisenstein_hu
         elif engine == 'eisenstein_hu_nowiggle':
@@ -937,8 +940,9 @@ def compile_params(args):
     for name in ['modes', 'z_pk']:
         if np.ndim(params[name]) == 0:
             params[name] = [params[name]]
+    params['z_pk'] = np.sort(params['z_pk'])
     if 0. not in params['z_pk']:
-        params['z_pk'].append(0.)  # in order to normalise CAMB power spectrum with sigma8
+        params['z_pk'] = np.insert(params['z_pk'], 0, 0.)  # in order to normalise CAMB power spectrum with sigma8
 
     if 'Omega_m' in params:
         nonrelativistic_ncdm = (BaseEngine._get_rho_ncdm(params, z=0).sum() - 3 * BaseEngine._get_p_ncdm(params, z=0).sum()) / constants.rho_crit_Msunph_per_Mpcph3

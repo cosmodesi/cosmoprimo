@@ -193,7 +193,7 @@ def test_harmonic(params):
                         with pytest.raises(ClassBadValueError):
                             getattr(hr, name)(ellmax=ellmax)
                     if engine == 'camb':
-                        from cosmoprimo.camb import CAMBError
+                        from camb import CAMBError
                         with pytest.raises(CAMBError):
                             getattr(hr, name)(ellmax=ellmax)
                 else:
@@ -386,7 +386,7 @@ def plot_eisenstein_hu_nowiggle_variants():
     plt.show()
 
 
-def external_test_camb():
+def test_external_camb():
     import camb
     from camb import CAMBdata
 
@@ -421,7 +421,7 @@ def external_test_camb():
     # print(tr.get_total_cls(lmax=100, CMB_unit=None, raw_cl=True))
 
 
-def external_test_pyccl():
+def test_external_pyccl():
     try: import pyccl
     except ImportError: return
     print('With pyccl')
@@ -572,6 +572,23 @@ def test_theta_cosmomc():
     assert np.allclose(theta_cosmomc, cosmo.theta_cosmomc, atol=0., rtol=2e-6)
 
 
+def test_isitgr():
+    try: import isitgr
+    except ImportError: return
+
+    cosmo_camb = Cosmology(engine='camb')
+    cosmo = Cosmology(engine='isitgr')
+
+    k = np.linspace(0.01, 1., 200)
+    z = np.linspace(0., 2., 10)
+    assert np.allclose(cosmo_camb.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=1e-4)
+
+    cosmo = Cosmology(engine='isitgr', parameterization='mueta', E11=-0.5, E22=-0.5)
+    assert not np.allclose(cosmo_camb.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=1e-4)
+    cosmo.comoving_radial_distance(z)
+
+
+
 if __name__ == '__main__':
 
     test_params()
@@ -593,5 +610,6 @@ if __name__ == '__main__':
     # plot_harmonic()
     # plot_matter_power_spectrum()
     # plot_eisenstein_hu_nowiggle_variants()
-    # external_test_camb()
-    external_test_pyccl()
+    # test_external_camb()
+    test_external_pyccl()
+    test_isitgr()
