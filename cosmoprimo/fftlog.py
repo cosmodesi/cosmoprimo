@@ -9,17 +9,30 @@ import numpy as np
 
 from scipy.special import gamma, loggamma
 
+
+# jax array types
+jax_array_types = ()
+
 try:
+    # raise ImportError
     import jax, jaxlib
+    from jax.config import config; config.update('jax_enable_x64', True)
     import jax.numpy as jnp
+    jax_array_types = []
+    for line in ['jaxlib.xla_extension.DeviceArrayBase', 'type(jnp.array(0))', 'jax.core.Tracer']:
+        try:
+            jax_array_types.append(eval(line))
+        except AttributeError:
+            pass
+    jax_array_types = tuple(jax_array_types)
 except ImportError:
     jax = None
     import numpy as jnp
 
 
 def use_jax(array):
-    """Whether to use jax.numpy depending on whether array is jax's object"""
-    return jax and isinstance(array, (jaxlib.xla_extension.DeviceArrayBase, type(jnp.array(0)), jax.core.Tracer))
+    """Whether to use jax.numpy depending on whether array is jax's object."""
+    return isinstance(array, tuple(jax_array_types))
 
 
 def np_jax(array):
