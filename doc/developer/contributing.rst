@@ -28,10 +28,10 @@ and extend the engine and sections of :mod:`classy.py` in :mod:`yourengine.py` a
 
 .. code-block:: python
 
-    from . import classy
     from pyclass import yourengine
 
     from .cosmology import BaseEngine
+    from . import classy
 
 
     class YourEngine(classy.BaseClassEngine, yourengine.ClassEngine, BaseEngine):
@@ -41,25 +41,16 @@ and extend the engine and sections of :mod:`classy.py` in :mod:`yourengine.py` a
 
     class Background(classy.BaseClassBackground, yourengine.Background):
 
-        pass
-
-
-    class Transfer(classy.BaseClassTransfer, yourengine.Transfer):
-
-        pass
-
-
-    class Perturbations(classy.BaseClassPerturbations, yourengine.Perturbations):
-
-        pass
+        """Your modifications, if any."""
 
 
     class Thermodynamics(classy.BaseClassThermodynamics, yourengine.Thermodynamics):
 
-        """Your modifications, if any"""
+        """Your modifications, if any."""
 
 
-    """Same for :class:`Primodial`, :class:`Harmonic`, :class:`Fourier`."""
+    """Same for :class:`Primordial`, :class:`Perturbations`, :class:`Transfer`, :class:`Harmonic` and :class:`Fourier`."""
+
 
 Finally, this new engine can be trivially added to :func:`cosmology.get_engine`,
 and one will be able to invoke it as:

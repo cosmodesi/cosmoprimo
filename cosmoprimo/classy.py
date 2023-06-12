@@ -58,16 +58,6 @@ class BaseClassBackground(object):
     pass
 
 
-class BaseClassTransfer(object):
-
-    pass
-
-
-class BaseClassPerturbations(object):
-
-    pass
-
-
 class BaseClassThermodynamics(object):
 
     def __init__(self, engine):
@@ -163,6 +153,16 @@ class BaseClassPrimordial(object):
         for name in table.dtype.names:
             if not name.startswith('k'):
                 table[name] *= self._rsigma8**2
+
+
+class BaseClassPerturbations(object):
+
+    pass
+
+
+class BaseClassTransfer(object):
+
+    pass
 
 
 class BaseClassHarmonic(object):
