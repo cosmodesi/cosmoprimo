@@ -9,6 +9,9 @@ from .camb import CambEngine, Background, Thermodynamics, Primordial, Transfer, 
 from . import utils, constants
 
 
+np.int = int  # Otherwise, AttributeError in isitgr in recent numpy, see https://numpy.org/devdocs/release/1.20.0-notes.html#deprecations
+
+
 class IsitgrEngine(CambEngine):
 
     """Engine for the isitgr version of the Boltzmann code CAMB."""

@@ -573,11 +573,12 @@ def test_theta_cosmomc():
 
 
 def test_isitgr():
-    try: import isitgr
-    except ImportError: return
 
     cosmo_camb = Cosmology(engine='camb')
-    cosmo = Cosmology(engine='isitgr')
+    try:
+        cosmo = Cosmology(engine='isitgr')
+    except ImportError:
+        return
 
     k = np.linspace(0.01, 1., 200)
     z = np.linspace(0., 2., 10)

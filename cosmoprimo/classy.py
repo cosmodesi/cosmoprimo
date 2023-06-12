@@ -1,14 +1,13 @@
 """Cosmological calculation with the Boltzmann code CLASS."""
 
 import numpy as np
-import pyclass
-from pyclass import ClassParserError
+from pyclass import base, ClassParserError
 
 from .cosmology import BaseEngine
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 
 
-class ClassEngine(pyclass.ClassEngine, BaseEngine):
+class BaseClassEngine(object):
 
     """Engine for the Boltzmann code CLASS."""
     name = 'class'
@@ -50,20 +49,29 @@ class ClassEngine(pyclass.ClassEngine, BaseEngine):
         else:
             for name in ['w0_fld', 'wa_fld', 'cs2_fld', 'use_ppf', 'fluid_equation_of_state']: del params[name]
         params.update(extra_params)
-        super(ClassEngine, self).__init__(params=params)
+        super(BaseClassEngine, self).__init__(params=params)
         # print(self.get_params_str())
 
 
-Background = pyclass.Background
-Thermodynamics = pyclass.Thermodynamics
-Transfer = pyclass.Transfer
-Perturbations = pyclass.Perturbations
+class BaseClassBackground(object):
+
+    pass
 
 
-class Thermodynamics(pyclass.Thermodynamics):
+class BaseClassTransfer(object):
+
+    pass
+
+
+class BaseClassPerturbations(object):
+
+    pass
+
+
+class BaseClassThermodynamics(object):
 
     def __init__(self, engine):
-        super(Thermodynamics, self).__init__(engine)
+        super(BaseClassThermodynamics, self).__init__(engine)
         self.ba = engine.get_background()
 
     @property
@@ -73,16 +81,16 @@ class Thermodynamics(pyclass.Thermodynamics):
         return rs * self.ba.h / self.ba.comoving_angular_distance(zstar)
 
 
-class Primordial(pyclass.Primordial):
+class BaseClassPrimordial(object):
 
     def __init__(self, engine):
-        super(Primordial, self).__init__(engine)
+        super(BaseClassPrimordial, self).__init__(engine)
         self._rsigma8 = engine._rescale_sigma8()
 
     @property
     def A_s(self):
         r"""Scalar amplitude of the primordial power spectrum at :math:`k_\mathrm{pivot}`, unitless."""
-        return super(Primordial, self).A_s * self._rsigma8**2
+        return super(BaseClassPrimordial, self).A_s * self._rsigma8**2
 
     @property
     def ln_1e10_A_s(self):
@@ -114,7 +122,7 @@ class Primordial(pyclass.Primordial):
             The primordial power spectrum if only one type of initial conditions (typically adiabatic),
             else dictionary of primordial power spectra corresponding to the tuples of initial conditions.
         """
-        toret = super(Primordial, self).pk_k(k, mode=mode)
+        toret = super(BaseClassPrimordial, self).pk_k(k, mode=mode)
         if isinstance(toret, dict):
             for key, value in toret.items():
                 toret[key] = value * self._rsigma8**2
@@ -151,16 +159,16 @@ class Primordial(pyclass.Primordial):
         data : array
             Structured array containing thermodynamics data.
         """
-        table = super(Primordial, self).table()
+        table = super(BaseClassPrimordial, self).table()
         for name in table.dtype.names:
             if not name.startswith('k'):
                 table[name] *= self._rsigma8**2
 
 
-class Harmonic(pyclass.Harmonic):
+class BaseClassHarmonic(object):
 
     def __init__(self, engine):
-        super(Harmonic, self).__init__(engine)
+        super(BaseClassHarmonic, self).__init__(engine)
         self._rsigma8 = engine._rescale_sigma8()
 
     def unlensed_table(self, ellmax=-1, of=None):
@@ -186,7 +194,7 @@ class Harmonic(pyclass.Harmonic):
         the lensing potential ``pp`` spectrum).
         Usually multiplied by CMB temperature in :math:`\mu K`.
         """
-        table = super(Harmonic, self).unlensed_table(ellmax=ellmax, of=of)
+        table = super(BaseClassHarmonic, self).unlensed_table(ellmax=ellmax, of=of)
         for name in table.dtype.names:
             if not name.startswith('ell'):
                 table[name] *= self._rsigma8**2
@@ -209,28 +217,28 @@ class Harmonic(pyclass.Harmonic):
         cell : array
             Structured array.
         """
-        table = super(Harmonic, self).lensed_table(ellmax=ellmax, of=of)
+        table = super(BaseClassHarmonic, self).lensed_table(ellmax=ellmax, of=of)
         for name in table.dtype.names:
             if not name.startswith('ell'):
                 table[name] *= self._rsigma8**2
         return table
 
 
-class Fourier(pyclass.Fourier):
+class BaseClassFourier(object):
 
     def __init__(self, engine):
-        super(Fourier, self).__init__(engine)
+        super(BaseClassFourier, self).__init__(engine)
         self._rsigma8 = engine._rescale_sigma8()
 
     @property
     def sigma8_m(self):
         r"""Current r.m.s. of matter perturbations in a sphere of :math:`8 \mathrm{Mpc}/h`, unitless."""
-        return super(Fourier, self).sigma8_m * self._rsigma8
+        return super(BaseClassFourier, self).sigma8_m * self._rsigma8
 
     @property
     def sigma8_cb(self):
         r"""Current r.m.s. of cold dark matter + baryons perturbations in a sphere of :math:`8 \mathrm{Mpc}/h` unitless."""
-        return super(Fourier, self).sigma8_cb * self._rsigma8
+        return super(BaseClassFourier, self).sigma8_cb * self._rsigma8
 
     def sigma_rz(self, r, z, of='delta_m', **kwargs):
         r"""Return the r.m.s. of `of` perturbations in sphere of :math:`r \mathrm{Mpc}/h`."""
@@ -264,7 +272,7 @@ class Fourier(pyclass.Fourier):
         pk : array
             Power spectrum array of shape (len(k),len(z)).
         """
-        return super(Fourier, self).pk_kz(k, z, non_linear=non_linear, of=of) * self._rsigma8**2
+        return super(BaseClassFourier, self).pk_kz(k, z, non_linear=non_linear, of=of) * self._rsigma8**2
 
     def table(self, non_linear=False, of='delta_m'):
         r"""
@@ -292,7 +300,7 @@ class Fourier(pyclass.Fourier):
         pk : array
             Power spectrum array of shape (len(k),len(z)).
         """
-        k, z, pk = super(Fourier, self).table(non_linear=non_linear, of=of)
+        k, z, pk = super(BaseClassFourier, self).table(non_linear=non_linear, of=of)
         pk *= self._rsigma8**2
         return k, z, pk
 
@@ -316,3 +324,44 @@ class Fourier(pyclass.Fourier):
         """
         ka, za, pka = self.table(non_linear=non_linear, of=of)
         return PowerSpectrumInterpolator2D(ka, za, pka, **kwargs)
+
+
+
+class ClassEngine(BaseClassEngine, base.ClassEngine, BaseEngine):
+
+    pass
+
+
+class Background(BaseClassBackground, base.Background):
+
+    pass
+
+
+class Transfer(BaseClassTransfer, base.Transfer):
+
+    pass
+
+
+class Perturbations(BaseClassPerturbations, base.Perturbations):
+
+    pass
+
+
+class Thermodynamics(BaseClassThermodynamics, base.Thermodynamics):
+
+    pass
+
+
+class Primordial(BaseClassPrimordial, base.Primordial):
+
+    pass
+
+
+class Harmonic(BaseClassHarmonic, base.Harmonic):
+
+    pass
+
+
+class Fourier(BaseClassFourier, base.Fourier):
+
+    pass
