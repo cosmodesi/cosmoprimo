@@ -572,6 +572,74 @@ def test_theta_cosmomc():
     assert np.allclose(theta_cosmomc, cosmo.theta_cosmomc, atol=0., rtol=2e-6)
 
 
+def test_bisect():
+
+    from scipy import optimize
+
+    def clone(fiducial, params):
+
+        theta_MC_100 = params.pop('theta_MC_100', None)
+        fiducial = fiducial.clone(base='input', **params)
+
+        if theta_MC_100 is not None:
+            if 'h' in params:
+                raise ValueError('Cannot provide both theta_MC_100 and h')
+
+            # With cosmo.get_thermodynamics().theta_cosmomc
+            # Typically takes 18 iterations and ~0.8 s
+            # The computation of the thermodynamics is the most time consuming
+            # The 'theta_cosmomc' call takes ~0.1 s and is accurate within 3e-6 (rel.), ~1% of Planck errors
+            def f(h):
+                cosmo = fiducial.clone(base='input', h=h)
+                return theta_MC_100 - 100. * cosmo['theta_cosmomc']
+                #return theta_MC_100 - 100. * cosmo.get_thermodynamics().theta_cosmomc
+
+            limits = [0.1, 2.]  # h-limits
+            xtol = 1e-6  # 1 / 5000 of Planck errors
+            rtol = xtol
+            try:
+                h = optimize.bisect(f, *limits, xtol=xtol, rtol=rtol, disp=True)
+            except ValueError as exc:
+                raise ValueError('Could not find proper h value in the interval that matches theta_MC_100 = {:.4f} with [f({:.3f}), f({:.3f})] = [{:.4f}, {:.4f}]'.format(theta_MC_100, *limits, *list(map(f, limits)))) from exc
+            cosmo = fiducial.clone(base='input', h=h)
+
+        return cosmo
+
+    cosmo = clone(Cosmology(engine='class'), dict(theta_MC_100=1.04092))
+    #from cosmoprimo.fiducial import DESI
+    #cosmo = clone(DESI(engine='class'), dict(theta_MC_100=1.04092))
+    print(cosmo.get_thermodynamics().theta_cosmomc)
+
+
+    def clone(fiducial, params):
+
+        theta = params.pop('theta_star', None)
+        fiducial = fiducial.clone(base='input', **params)
+
+        if theta is not None:
+            if 'h' in params:
+                raise ValueError('Cannot provide both theta_star and h')
+
+            def f(h):
+                cosmo = fiducial.clone(base='input', h=h)
+                return 100. * (theta - cosmo.get_thermodynamics().theta_star)
+
+            limits = [0.6, 0.9]  # h-limits
+            xtol = 1e-6  # 1 / 5000 of Planck errors
+            rtol = xtol
+            try:
+                h = optimize.bisect(f, *limits, xtol=xtol, rtol=rtol, disp=True)
+            except ValueError as exc:
+                raise ValueError('Could not find proper h value in the interval that matches theta_star = {:.4f} with [f({:.3f}), f({:.3f})] = [{:.4f}, {:.4f}]'.format(theta, *limits, *list(map(f, limits)))) from exc
+            cosmo = fiducial.clone(base='input', h=h)
+
+        return cosmo
+
+    from cosmoprimo.fiducial import DESI
+    cosmo = clone(DESI(engine='class'), dict(theta_star=0.0104))
+    print(cosmo.get_thermodynamics().theta_star)
+
+
 def test_isitgr():
 
     cosmo_camb = Cosmology(engine='camb')
@@ -614,3 +682,4 @@ if __name__ == '__main__':
     # test_external_camb()
     test_external_pyccl()
     test_isitgr()
+    # test_bisect()

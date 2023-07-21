@@ -229,7 +229,7 @@ class GenericSpline(BaseClass):
 
     """Base class that handles 1D and 2D splines."""
 
-    def __init__(self, x, y=0, fun=None, interp_x='log', extrap_fun='lin', extrap_xmin=1e-6, extrap_xmax=1e2, interp_order_x=3, interp_order_y=None, extrap_y=False):
+    def __init__(self, x, y=0, fun=None, interp_x='log', extrap_fun='lin', extrap_xmin=None, extrap_xmax=None, interp_order_x=3, interp_order_y=None, extrap_y=False):
         """
         Initialize :class:`GenericSpline`.
 
@@ -289,6 +289,10 @@ class GenericSpline(BaseClass):
         if self.extrap_fun == 'log':
             if self.interp_x != 'log':
                 raise ValueError('log-log extrapolation requires log-x interpolation')
+            if extrap_xmin is None:
+                extrap_xmin = min(1e-6, self.x[0])
+            if extrap_xmax is None:
+                extrap_xmax = max(1e2, self.x[-1])
             x, fun = _pad_log(self.x, self.fun, extrap_kmin=extrap_xmin, extrap_kmax=extrap_xmax)
             self.extrap_xmin = 10**x[0]
             self.extrap_xmax = 10**x[-1]
@@ -437,7 +441,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
     such as :meth:`sigma_r` or :meth:`to_xi`.
     """
 
-    def __init__(self, k, pk, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=1e2, interp_order_k=3):
+    def __init__(self, k, pk, interp_k='log', extrap_pk='log', extrap_kmin=None, extrap_kmax=None, interp_order_k=3):
         """
         Initialize :class:`PowerSpectrumInterpolator1D`.
 
@@ -637,7 +641,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     such as :meth:`sigma_rz` or :meth:`to_xi`.
     """
 
-    def __init__(self, k, z=0, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=1e2,
+    def __init__(self, k, z=0, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=None, extrap_kmax=None,
                  interp_order_k=3, interp_order_z=None, extrap_z=None, growth_factor_sq=None):
         r"""
         Initialize :class:`PowerSpectrumInterpolator2D`.

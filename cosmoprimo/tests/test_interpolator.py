@@ -146,7 +146,7 @@ def test_extrap_1d(plot=True):
     k_extrap = np.logspace(-6, 3, 1000)
     k_eval = k_extrap[1:-1]  # to avoid error with rounding
     pk_interp_callable = fo.pk_interpolator(k=k_extrap).to_1d()
-    pk_interp_tab = PowerSpectrumInterpolator1D(k, pk_interp_callable(k), extrap_kmin=k[1], extrap_kmax=k[-2])
+    pk_interp_tab = PowerSpectrumInterpolator1D(k, pk_interp_callable(k))
     assert np.allclose(pk_interp_tab(k), pk_interp_callable(k), atol=0, rtol=0.1)
     pk_interp_tab = PowerSpectrumInterpolator1D(k, pk_interp_callable(k), extrap_kmin=k_extrap[0], extrap_kmax=k_extrap[-1])
     assert np.allclose(pk_interp_tab(k_eval), pk_interp_callable(k_eval), atol=0, rtol=0.1)
@@ -208,7 +208,7 @@ def test_extrap_2d(plot=False):
     k_eval = k_extrap[1:-1]  # to avoid error with rounding
     z_eval = z
     pk_interp_callable = fo.pk_interpolator(k=k_extrap, z=z)
-    pk_interp_tab = PowerSpectrumInterpolator2D(k, z, pk_interp_callable(k, z), extrap_kmin=k[1], extrap_kmax=k[-2])
+    pk_interp_tab = PowerSpectrumInterpolator2D(k, z, pk_interp_callable(k, z))
     assert np.allclose(pk_interp_tab(k, z_eval), pk_interp_callable(k, z_eval), atol=0, rtol=0.1)
     pk_interp_tab = PowerSpectrumInterpolator2D(k, z, pk_interp_callable(k, z), extrap_kmin=k_extrap[0], extrap_kmax=k_extrap[-1])
     assert np.allclose(pk_interp_tab(k_eval, z_eval), pk_interp_callable(k_eval, z_eval), atol=0, rtol=0.1)
