@@ -4,7 +4,7 @@ import warnings
 
 import numpy as np
 
-from .cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyError
+from .cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyInputError, CosmologyComputationError
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 from . import utils, constants
 
@@ -57,82 +57,90 @@ class CambEngine(BaseEngine):
             warnings.warn('{} cannot cope with dynamic dark energy + cosmological constant'.format(self.__class__.__name__))
         self._set_camb()
         self._camb_params = self.camb.CAMBparams()
-        kwargs = {name: self.get(name, value) for name, value in self.specific_params.items()}
-        self._camb_params.set_cosmology(H0=self['H0'], ombh2=self['omega_b'], omch2=self['omega_cdm'], omk=self['Omega_k'],
-                                        TCMB=self['T_cmb'], Alens=self['A_L'], **kwargs)  # + neutrinos
-        # Let's do this by hand for backward-compatibility (for isitgr)
-        tau_reio, z_reio, reionization_width  = self.get('tau_reio', None), self.get('z_reio', None), self['reionization_width']
-        if tau_reio is not None:
-            self._camb_params.Reion.set_tau(tau_reio, delta_redshift=reionization_width)
-        elif z_reio is not None:
-            self._camb_params.Reion.set_zrei(z_reio, delta_redshift=reionization_width)
-        self._camb_params.InitPower.set_params(As=self._get_A_s_fid(), ns=self['n_s'], nrun=self['alpha_s'], pivot_scalar=self['k_pivot'],
-                                               pivot_tensor=self['k_pivot'], parameterization='tensor_param_rpivot', r=self['r'])
 
-        self._camb_params.share_delta_neff = False
-        self._camb_params.omnuh2 = self['omega_ncdm'].sum()
-        self._camb_params.num_nu_massless = self['N_ur']
-        self._camb_params.num_nu_massive = self['N_ncdm']
-        self._camb_params.nu_mass_eigenstates = self['N_ncdm']
-        delta_neff = self['N_eff'] - constants.NEFF  # used for BBN YHe comps
+        try:
 
-        # CAMB defines a neutrino degeneracy factor as T_i = g^(1/4)*T_nu
-        # where T_nu is the standard neutrino temperature from first order computations
-        # CLASS defines the temperature of each neutrino species to be
-        # T_i_eff = TNCDM * T_cmb where TNCDM is a fudge factor to get the
-        # total mass in terms of eV to match second-order computations of the
-        # relationship between m_nu and Omega_nu.
-        # We are trying to get both codes to use the same neutrino temperature.
-        # thus we set T_i_eff = T_i = g^(1/4) * T_nu and solve for the right
-        # value of g for CAMB. We get g = (TNCDM / (11/4)^(-1/3))^4
-        g = np.array(self['T_ncdm_over_cmb'], dtype=np.float64)**4 * (4. / 11.)**(-4. / 3.)
-        m_ncdm = np.array(self['m_ncdm'])
-        self._camb_params.nu_mass_numbers = np.ones(self['N_ncdm'], dtype=np.int32)
-        self._camb_params.nu_mass_fractions = m_ncdm / m_ncdm.sum()
-        self._camb_params.nu_mass_degeneracies = g
+            kwargs = {name: self.get(name, value) for name, value in self.specific_params.items()}
+            YHe = None if self['YHe'] == 'BBN' else self['YHe']
+            self._camb_params.set_cosmology(H0=self['H0'], ombh2=self['omega_b'], omch2=self['omega_cdm'], omk=self['Omega_k'],
+                                            TCMB=self['T_cmb'], Alens=self['A_L'], YHe=YHe, **kwargs)  # + neutrinos
+            # Let's do this by hand for backward-compatibility (for isitgr)
+            tau_reio, z_reio, reionization_width = self.get('tau_reio', None), self.get('z_reio', None), self['reionization_width']
+            if tau_reio is not None:
+                self._camb_params.Reion.set_tau(tau_reio, delta_redshift=reionization_width)
+            elif z_reio is not None:
+                self._camb_params.Reion.set_zrei(z_reio, delta_redshift=reionization_width)
+            self._camb_params.InitPower.set_params(As=self._get_A_s_fid(), ns=self['n_s'], nrun=self['alpha_s'], pivot_scalar=self['k_pivot'],
+                                                   pivot_tensor=self['k_pivot'], parameterization='tensor_param_rpivot', r=self['r'])
 
-        # get YHe from BBN
-        self._camb_params.bbn_predictor = self.camb.bbn.get_predictor()
-        self._camb_params.YHe = self._camb_params.bbn_predictor.Y_He(self._camb_params.ombh2 * (self.camb.constants.COBE_CMBTemp / self._camb_params.TCMB)**3, delta_neff)
+            self._camb_params.share_delta_neff = False
+            self._camb_params.omnuh2 = self['omega_ncdm'].sum()
+            self._camb_params.num_nu_massless = self['N_ur']
+            self._camb_params.num_nu_massive = self['N_ncdm']
+            self._camb_params.nu_mass_eigenstates = self['N_ncdm']
+            delta_neff = self['N_eff'] - constants.NEFF  # used for BBN YHe comps
 
-        if self._has_fld:
-            self._camb_params.set_classes(dark_energy_model=self.camb.dark_energy.DarkEnergyPPF if self['use_ppf'] else self.camb.dark_energy.DarkEnergyFluid)
-            self._camb_params.DarkEnergy.set_params(w=self['w0_fld'], wa=self['wa_fld'], cs2=self['cs2_fld'])
+            # CAMB defines a neutrino degeneracy factor as T_i = g^(1/4)*T_nu
+            # where T_nu is the standard neutrino temperature from first order computations
+            # CLASS defines the temperature of each neutrino species to be
+            # T_i_eff = TNCDM * T_cmb where TNCDM is a fudge factor to get the
+            # total mass in terms of eV to match second-order computations of the
+            # relationship between m_nu and Omega_nu.
+            # We are trying to get both codes to use the same neutrino temperature.
+            # thus we set T_i_eff = T_i = g^(1/4) * T_nu and solve for the right
+            # value of g for CAMB. We get g = (TNCDM / (11/4)^(-1/3))^4
+            g = np.array(self['T_ncdm_over_cmb'], dtype=np.float64)**4 * (4. / 11.)**(-4. / 3.)
+            m_ncdm = np.array(self['m_ncdm'])
+            self._camb_params.nu_mass_numbers = np.ones(self['N_ncdm'], dtype=np.int32)
+            self._camb_params.nu_mass_fractions = m_ncdm / m_ncdm.sum()
+            self._camb_params.nu_mass_degeneracies = g
 
-        self._camb_params.DoLensing = self['lensing']
-        self._camb_params.Want_CMB_lensing = self['lensing']
-        self._camb_params.set_for_lmax(lmax=self['ellmax_cl'])
-        self._camb_params.set_matter_power(redshifts=self['z_pk'], kmax=self['kmax_pk'] * self['h'], nonlinear=self['non_linear'], silent=True)
+            # get YHe from BBN
+            self._camb_params.bbn_predictor = self.camb.bbn.get_predictor()
+            self._camb_params.YHe = self._camb_params.bbn_predictor.Y_He(self._camb_params.ombh2 * (self.camb.constants.COBE_CMBTemp / self._camb_params.TCMB)**3, delta_neff)
 
-        if self['non_linear']:
-            self._camb_params.NonLinear = self.camb.model.NonLinear_both
-            self._camb_params.NonLinearModel = self.camb.nonlinear.Halofit()
+            if self._has_fld:
+                self._camb_params.set_classes(dark_energy_model=self.camb.dark_energy.DarkEnergyPPF if self['use_ppf'] else self.camb.dark_energy.DarkEnergyFluid)
+                self._camb_params.DarkEnergy.set_params(w=self['w0_fld'], wa=self['wa_fld'], cs2=self['cs2_fld'])
 
-            non_linear = self['non_linear']
-            if non_linear in ['mead', 'hmcode']:
-                halofit_version = 'mead'
-            elif non_linear in ['halofit']:
-                halofit_version = 'original'
-            else:
-                halofit_version = non_linear
+            self._camb_params.DoLensing = self['lensing']
+            self._camb_params.Want_CMB_lensing = self['lensing']
+            self._camb_params.set_for_lmax(lmax=self['ellmax_cl'])
+            self._camb_params.set_matter_power(redshifts=self['z_pk'], kmax=self['kmax_pk'] * self['h'], nonlinear=self['non_linear'], silent=True)
 
-            options = {}
-            for name in ['HMCode_A_baryon', 'HMCode_eta_baryon', 'HMCode_logT_AGN']:
-                tmp = self.get(name, None)
-                if tmp is not None: options[name] = tmp
-            self._camb_params.NonLinearModel.set_params(halofit_version=halofit_version, **options)
+            if self['non_linear']:
+                self._camb_params.NonLinear = self.camb.model.NonLinear_both
+                self._camb_params.NonLinearModel = self.camb.nonlinear.Halofit()
 
-        if not self['non_linear']:
-            assert self._camb_params.NonLinear == self.camb.model.NonLinear_none
+                non_linear = self['non_linear']
+                if non_linear in ['mead', 'hmcode']:
+                    halofit_version = 'mead'
+                elif non_linear in ['halofit']:
+                    halofit_version = 'original'
+                else:
+                    halofit_version = non_linear
 
-        self._camb_params.WantScalars = 's' in self['modes']
-        self._camb_params.WantVectors = 'v' in self['modes']
-        self._camb_params.WantTensors = 't' in self['modes']
-        for key, value in self.extra_params.items():
-            if key == 'accuracy':
-                self._camb_params.set_accuracy(self.extra_params['accuracy'])
-            else:
-                setattr(self._camb_params, key, value)
+                options = {}
+                for name in ['HMCode_A_baryon', 'HMCode_eta_baryon', 'HMCode_logT_AGN']:
+                    tmp = self.get(name, None)
+                    if tmp is not None: options[name] = tmp
+                self._camb_params.NonLinearModel.set_params(halofit_version=halofit_version, **options)
+
+            if not self['non_linear']:
+                assert self._camb_params.NonLinear == self.camb.model.NonLinear_none
+
+            self._camb_params.WantScalars = 's' in self['modes']
+            self._camb_params.WantVectors = 'v' in self['modes']
+            self._camb_params.WantTensors = 't' in self['modes']
+            for key, value in self.extra_params.items():
+                if key == 'accuracy':
+                    self._camb_params.set_accuracy(self.extra_params['accuracy'])
+                else:
+                    setattr(self._camb_params, key, value)
+
+        except (self.camb.baseconfig.CAMBParamRangeError, self.camb.baseconfig.CAMBValueError, self.camb.baseconfig.CAMBError, self.camb.baseconfig.CAMBUnknownArgumentError) as exc:
+
+            raise CosmologyInputError from exc
 
         self.ready = enum(ba=False, th=False, tr=False, le=False, hr=False, fo=False)
 
@@ -147,39 +155,45 @@ class CambEngine(BaseEngine):
             ['background', 'thermodynamics', 'transfer', 'harmonic', 'lensing', 'fourier']
         """
         tasks = _build_task_dependency(tasks)
+        try:
 
-        if 'background' in tasks and not self.ready.ba:
-            self.ba = self.camb.get_background(self._camb_params, no_thermo=True)
-            self.ready.ba = True
+            if 'background' in tasks and not self.ready.ba:
+                self.ba = self.camb.get_background(self._camb_params, no_thermo=True)
+                self.ready.ba = True
 
-        if 'thermodynamics' in tasks and not self.ready.th:
-            self.ba = self.th = self.camb.get_background(self._camb_params, no_thermo=False)
-            self.ready.ba = self.ready.th = True
+            if 'thermodynamics' in tasks and not self.ready.th:
+                self.ba = self.th = self.camb.get_background(self._camb_params, no_thermo=False)
+                self.ready.ba = self.ready.th = True
 
-        if 'transfer' in tasks and not self.ready.tr:
-            self.tr = self.camb.get_transfer_functions(self._camb_params)
-            self.ready.tr = True
+            if 'transfer' in tasks and not self.ready.tr:
+                self.tr = self.camb.get_transfer_functions(self._camb_params)
+                self.ready.tr = True
 
-        if 'harmonic' in tasks and not self.ready.hr:
-            # self._camb_params.Want_CMB = True
-            # self._camb_params.DoLensing = self['lensing']
-            # self._camb_params.Want_CMB_lensing = self['lensing']
-            self.ready.hr = True
-            self.ready.fo = False
+            if 'harmonic' in tasks and not self.ready.hr:
+                # self._camb_params.Want_CMB = True
+                # self._camb_params.DoLensing = self['lensing']
+                # self._camb_params.Want_CMB_lensing = self['lensing']
+                self.ready.hr = True
+                self.ready.fo = False
 
-        if 'lensing' in tasks and not self.ready.le:
-            self._camb_params.DoLensing = True
-            self._camb_params.Want_CMB_lensing = True
-            self.ready.le = True
-            self.tr = self.camb.CAMBdata()
-            self.tr.calc_power_spectra(self._camb_params)
-            self.le = self.hr = self.fo = self.tr
-            self.ready.fo = True
+            if 'lensing' in tasks and not self.ready.le:
+                self._camb_params.DoLensing = True
+                self._camb_params.Want_CMB_lensing = True
+                self.ready.le = True
+                self.tr = self.camb.CAMBdata()
+                self.tr.calc_power_spectra(self._camb_params)
+                self.le = self.hr = self.fo = self.tr
+                self.ready.fo = True
 
-        if 'fourier' in tasks and not self.ready.fo:
-            self.tr.calc_power_spectra()
-            self.fo = self.hr = self.le = self.tr
-            self.ready.fo = True
+            if 'fourier' in tasks and not self.ready.fo:
+                self.tr.calc_power_spectra()
+                self.fo = self.hr = self.le = self.tr
+                self.ready.fo = True
+
+        except self.camb.baseconfig.CAMBError as exc:
+
+            raise CosmologyInputError from exc
+
 
     def _set_camb(self):
         import camb
@@ -199,6 +213,12 @@ class Background(BaseBackground):
         self._RH0_ = constants.rho_crit_Msunph_per_Mpcph3 * constants.c**2 / (self.H0 * 1e3)**2 / 3.
         # for name in ['m', 'ncdm_tot']:
         #     setattr(self,'_Omega0_{}'.format(name),getattr(self,'Omega_{}'.format(name))(0.))
+
+    @property
+    def age(self):
+        r"""The current age of the Universe, in :math:`\mathrm{Gy}`."""
+        self._engine.compute('thermodynamics')
+        return self._engine.th.get_derived_params()['age']
 
     @utils.flatarray(dtype=np.float64)
     def Omega_k(self, z):
@@ -314,6 +334,27 @@ class Background(BaseBackground):
         """
         return self.ba.angular_diameter_distance(z) * self._h
 
+    @utils.flatarray(iargs=[0, 1], dtype=np.float64)
+    def angular_diameter_distance_2(self, z1, z2):
+        r"""
+        Angular diameter distance of object at :math:`z_{2}` as seen by observer at :math:`z_{1}`,
+        that is, :math:`S_{K}((\chi(z_{2}) - \chi(z_{1})) \sqrt{|K|}) / \sqrt{|K|} / (1 + z_{2})`,
+        where :math:`S_{K}` is the identity if :math:`K = 0`, :math:`\sin` if :math:`K < 0`
+        and :math:`\sinh` if :math:`K > 0`.
+        camb's ``angular_diameter_distance2(z1, z2)`` is not used as it returns 0 when z2 < z1.
+        """
+        # return self.ba.angular_diameter_distance2(z1, z2) * self._h  # returns 0 when z2 < z1
+        if np.any(z2 < z1):
+            import warnings
+            warnings.warn(f"Second redshift(s) z2 ({z2}) is less than first redshift(s) z1 ({z1}).")
+        chi1, chi2 = self.comoving_radial_distance(z1), self.comoving_radial_distance(z2)
+        K = self.K  # in (h/Mpc)^2
+        if K == 0:
+            return (chi2 - chi1) / (1 + z2)
+        elif K > 0:
+            return np.sin(np.sqrt(K) * (chi2 - chi1)) / np.sqrt(K) / (1 + z2)
+        return np.sinh(np.sqrt(-K) * (chi2 - chi1)) / np.sqrt(-K) / (1 + z2)
+
     @utils.flatarray(dtype=np.float64)
     def comoving_angular_distance(self, z):
         r"""
@@ -324,7 +365,7 @@ class Background(BaseBackground):
         return self.angular_diameter_distance(z) * (1. + z)
 
 
-@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star')
+@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star', 'YHe')
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
@@ -340,6 +381,7 @@ class Thermodynamics(BaseSection):
         self._z_drag = derived['zdrag']
         self._rs_star = derived['rstar'] * self._h
         self._z_star = derived['zstar']
+        self._YHe = self._engine._camb_params.YHe
 
     @utils.flatarray(dtype=np.float64)
     def rs_z(self, z):
@@ -512,6 +554,7 @@ class Fourier(BaseSection):
         self._engine.compute('fourier')
         self.fo = self._engine.fo
         self._rsigma8 = self._engine._rescale_sigma8()
+        self._h = self._engine._camb_params.h
 
     def _checkz(self, z):
         """Check that perturbations are calculated at several redshifts, else raise an error if ``z`` not close to requested redshift."""
@@ -519,7 +562,7 @@ class Fourier(BaseSection):
         if nz == 1:
             zcalc = self.fo.transfer_redshifts[0]
             if not np.allclose(z, zcalc):
-                raise CosmologyError('Power spectrum computed for a single redshift z = {:.2g}, cannot interpolate to {:.2g}.'.format(zcalc, z))
+                raise CosmologyInputError('Power spectrum computed for a single redshift z = {:.2g}, cannot interpolate to {:.2g}.'.format(zcalc, z))
         return nz
 
     def sigma_rz(self, r, z, of='delta_m', **kwargs):
@@ -538,7 +581,7 @@ class Fourier(BaseSection):
     @staticmethod
     def _index_pk_of(of='delta_m'):
         """Convert to CAMB naming conventions."""
-        return {'delta_m': 'delta_tot', 'delta_cb': 'delta_nonu', 'theta_cdm': 'v_newtonian_cdm', 'theta_b': 'v_newtonian_baryon'}[of]
+        return {'delta_m': 'delta_tot', 'delta_cb': 'delta_nonu', 'theta_cdm': 'v_newtonian_cdm', 'theta_b': 'v_newtonian_baryon', 'phi_plus_psi': 'Weyl'}[of]
 
     def table(self, non_linear=False, of='m'):
         r"""
@@ -552,57 +595,48 @@ class Fourier(BaseSection):
 
         of : string, tuple, default='delta_m'
             Perturbed quantities.
-            No difference made between 'theta_cb' and 'theta_m'.
+            'delta_m' for matter perturbations, 'delta_cb' for cold dark matter + baryons, 'phi', 'psi' for Bardeen potentials, or 'phi_plus_psi' for Weyl potential.
+            Provide a tuple, e.g. ('delta_m', 'theta_cb') for the cross matter density - cold dark matter + baryons velocity power spectra.
 
         Returns
         -------
-        k : array
+        k : numpy.ndarray
             Wavenumbers.
 
-        z : array
+        z : numpy.ndarray
             Redshifts.
 
-        pk : array
-            Power spectrum array of shape (len(k),len(z)).
+        pk : numpy.ndarray
+            Power spectrum array of shape (len(k), len(z)).
         """
-        if not isinstance(of, (tuple, list)):
-            of = (of, of)
-
+        if isinstance(of, str): of = (of,)
         of = list(of)
+        of = of + [of[0]] * (2 - len(of))
 
-        def get_pk(var1, var2):
-            var1 = self._index_pk_of(var1)
-            var2 = self._index_pk_of(var2)
-            ka, za, pka = self.fo.get_linear_matter_power_spectrum(var1=var1, var2=var2, hubble_units=True, k_hunit=True, have_power_spectra=True, nonlinear=non_linear)
-            return ka, za, pka.T
-
-        pka = None
+        kpow, factor = 0, self._rsigma8**2
         for iof, of_ in enumerate(of):
             if of_ == 'theta_cb':
-                tmpof = of.copy()
                 Omegas = self._engine['Omega_cdm'], self._engine['Omega_b']
                 Omega_tot = sum(Omegas)
                 Omega_cdm, Omega_b = (Omega / Omega_tot for Omega in Omegas)
-                if of[iof - 1] == of_:
-                    pka_cdm = get_pk('theta_cdm', 'theta_cdm')[-1]
-                    pka_cdm_b = get_pk('theta_cdm', 'theta_b')[-1]
-                    ka, za, pka_b = get_pk('theta_b', 'theta_b')
-                    pka = Omega_cdm**2 * pka_cdm + 2. * Omega_b * Omega_cdm * pka_cdm_b + Omega_b**2 * pka_b
-                    # pka *= (ba.efunc(za) * 100 * self._engine['h'] * 1000 / (1+za) / constants.c)**2
-                    break
-                else:
-                    tmpof[iof] = 'theta_cdm'
-                    pka_cdm = get_pk(*tmpof)[-1]
-                    tmpof[iof] = 'theta_b'
-                    ka, za, pka_b = get_pk(*tmpof)
-                    pka = Omega_cdm * pka_cdm + Omega_b * pka_b
-                    break
+                tmpof = of.copy()
+                tmpof[iof] = 'theta_cdm'
+                pka_cdm = self.table(non_linear=non_linear, of=tmpof)[-1]
+                tmpof[iof] = 'theta_b'
+                ka, za, pka_b = self.table(non_linear=non_linear, of=tmpof)
+                pka = Omega_cdm * pka_cdm + Omega_b * pka_b
+                return ka, za, pka
+            if of_ == 'phi_plus_psi':  # we use Weyl ~ k^2 * (phi + psi) / 2
+                factor *= 2
+                kpow -= 2
 
-        if pka is None:
-            ka, za, pka = get_pk(*of)
-
-        pka = pka * self._rsigma8**2
-        return ka, za, pka
+        var1, var2 = [self._index_pk_of(of_) for of_ in of]
+        # Do the hubble_units, k_hunits conversion manually as it is incorrect for Weyl ~ k^2 (phi + psi) / 2
+        ka, za, pka = self.fo.get_linear_matter_power_spectrum(var1=var1, var2=var2, hubble_units=False, k_hunit=False, have_power_spectra=True, nonlinear=non_linear)
+        pka = pka.T
+        pka = pka * ka[:, None]**kpow * factor
+        h = self._h
+        return ka / h, za, pka * h**3
 
     def pk_interpolator(self, non_linear=False, of='delta_m', **kwargs):
         r"""
@@ -616,7 +650,6 @@ class Fourier(BaseSection):
 
         of : string, tuple, default='delta_m'
             Perturbed quantities.
-            No difference made between 'theta_cb' and 'theta_m'.
 
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
@@ -641,7 +674,6 @@ class Fourier(BaseSection):
 
         of : string, default='delta_m'
             Perturbed quantities.
-            No difference made between 'theta_cb' and 'theta_m'.
 
         Returns
         -------

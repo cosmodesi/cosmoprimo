@@ -310,8 +310,10 @@ class Fourier(BaseSection):
         """
         transfer = self.tr.transfer_k
 
-        if not isinstance(of, (tuple, list)):
-            of = (of, of)
+        if isinstance(of, str): of = (of,)
+        of = list(of)
+        of = of + [of[0]] * (2 - len(of))
+
         ntheta = sum(of_.startswith('theta_') for of_ in of)
         if ntheta:
             def growth_factor_sq(z):

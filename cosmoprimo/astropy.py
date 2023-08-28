@@ -54,6 +54,11 @@ class Background(BaseBackground):
         super(Background, self).__init__(engine=engine)
         self.ba = self._engine._astropy
 
+    @property
+    def age(self):
+        r"""The current age of the Universe, in :math:`\mathrm{Gy}`."""
+        return self.ba.age(0.).value
+
     @utils.flatarray()
     def Omega_k(self, z):
         r"""Density parameter of curvature, unitless."""
@@ -137,6 +142,18 @@ class Background(BaseBackground):
         if z.size:
             return self.ba.angular_diameter_distance(z).value * self.h
         return np.zeros_like(z)
+
+    @utils.flatarray(iargs=[0, 1])
+    def angular_diameter_distance_2(self, z1, z2):
+        r"""
+        Angular diameter distance of object at :math:`z_{2}` as seen by observer at :math:`z_{1}`,
+        that is, :math:`S_{K}((\chi(z_{2}) - \chi(z_{1})) \sqrt{|K|}) / \sqrt{|K|} / (1 + z_{2})`,
+        where :math:`S_{K}` is the identity if :math:`K = 0`, :math:`\sin` if :math:`K < 0`
+        and :math:`\sinh` if :math:`K > 0`.
+        """
+        if z1.size:
+            return self.ba.angular_diameter_distance_z1z2(z1, z2).value * self.h
+        return np.zeros_like(z1)
 
     @utils.flatarray()
     def comoving_angular_distance(self, z):

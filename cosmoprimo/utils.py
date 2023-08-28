@@ -2,6 +2,7 @@
 
 import os
 import functools
+import inspect
 
 import numpy as np
 from scipy import interpolate
@@ -52,25 +53,51 @@ def addproperty(*attrs):
     return decorator
 
 
-def flatarray(dtype=None):
-    """Decorator that flattens input array and reshapes the output in the same form."""
-    def make_wrapper(func):
+def _bcast_dtype(*args):
+    r"""If input arrays are all float32, return float32; else float64."""
+    toret = np.result_type(*(getattr(arg, 'dtype', None) for arg in args))
+    if not np.issubdtype(toret, np.floating):
+        toret = np.float64
+    return toret
 
+
+def flatarray(iargs=[0], dtype=np.float64):
+    """Decorator that flattens input array(s) and reshapes the output in the same form."""
+    def make_wrapper(func):
+        sig = inspect.signature(func)
         @functools.wraps(func)
-        def wrapper(self, *args, **kwargs):
-            toret_dtype = getattr(args[0], 'dtype', np.float64)
+        def wrapper(*args, **kwargs):
+            ba = sig.bind_partial(*args, **kwargs)
+            ba.apply_defaults()
+            self, args = ba.args[0], list(ba.args[1:])
+            toret_dtype = _bcast_dtype(*[args[iarg] for iarg in iargs])
             input_dtype = dtype
-            if not np.issubdtype(toret_dtype, np.floating):
-                toret_dtype = np.float64
             if input_dtype is None:
                 input_dtype = toret_dtype
-            array = np.asarray(args[0], dtype=input_dtype)
-            shape = array.shape
-            array.shape = (-1,)
-            toret = np.asarray(func(self, array, *args[1:], **kwargs))
-            array.shape = shape
-            toret.shape = toret.shape[:-1] + shape
-            return toret.astype(dtype=toret_dtype, copy=False)
+            shape = None
+            for iarg in iargs:
+                array = np.asarray(args[iarg], dtype=input_dtype)
+                if shape is not None:
+                    if array.shape != shape:
+                        raise ValueError('input arrays must have same shape, found {}, {}'.format(shape, array.shape))
+                else:
+                    shape = array.shape
+                args[iarg] = array.ravel()
+
+            toret = func(self, *args, **ba.kwargs)
+
+            def reshape(toret):
+                toret = np.asarray(toret, dtype=toret_dtype)
+                toret.shape = toret.shape[:-1] + shape
+                return toret
+
+            if isinstance(toret, dict):
+                for key, value in toret.items():
+                    toret[key] = reshape(value)
+            else:
+                toret = reshape(toret)
+
+            return toret
 
         return wrapper
 

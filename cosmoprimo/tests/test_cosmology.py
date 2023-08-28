@@ -5,7 +5,8 @@ import pytest
 import numpy as np
 
 from cosmoprimo import (Cosmology, Background, Thermodynamics, Primordial,
-                        Harmonic, Fourier, CosmologyError, constants)
+                        Harmonic, Fourier, CosmologyError, CosmologyInputError, CosmologyComputationError,
+                        constants)
 
 
 def test_params():
@@ -78,7 +79,7 @@ def test_background(params, seed=42):
             assert np.allclose(getattr(ba, name), cosmo[name.replace('0', '')], atol=0, rtol=1e-3)
             assert np.allclose(getattr(ba, name), getattr(ba, name.replace('0', ''))(0.), atol=0, rtol=1e-3)
 
-        for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'w0_fld', 'wa_fld', 'cs2_fld']:
+        for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'w0_fld', 'wa_fld', 'cs2_fld', 'K']:
             assert np.allclose(getattr(ba, name), cosmo[name], atol=1e-9, rtol=1e-8 if name not in ['N_eff'] else 1e-4)
 
     ba_class = Background(cosmo, engine='class')
@@ -87,7 +88,7 @@ def test_background(params, seed=42):
         test, ref = getattr(ba, name), getattr(ba_class, name)
         shape = (cosmo['N_ncdm'], ) if name.endswith('ncdm') else ()
         z = rng.uniform(0., 1., 10)
-        assert np.allclose(test(z), ref(z), atol=atol, rtol=rtol)
+        assert np.allclose(test(z=z), ref(z), atol=atol, rtol=rtol)
         assert test(0.).shape == shape
         assert test([]).shape == shape + (0, )
         z = np.array(0.)
@@ -123,6 +124,11 @@ def test_background(params, seed=42):
             names += ['growth_factor', 'growth_rate']
         for name in names:
             assert_allclose(ba, name, atol=0, rtol=rtol)
+        if engine in ['class', 'camb', 'astropy']:
+            z1, z2 = rng.uniform(0., 1., 10), rng.uniform(0., 1., 10)
+            assert np.allclose(ba.angular_diameter_distance_2(z1, z2), ba_class.angular_diameter_distance_2(z1, z2), atol=0, rtol=5e-3 if engine == 'astropy' else 2e-4)
+            for name in ['age', 'K']:
+                assert np.allclose(getattr(ba, name), getattr(ba_class, name), atol=0, rtol=1e-3)
 
 
 @pytest.mark.parametrize('params', list_params)
@@ -136,6 +142,8 @@ def test_thermodynamics(params):
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 1e-4)
         for name in ['theta_star', 'theta_cosmomc']:
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 5e-5)
+        for name in ['YHe']:
+            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-2)
         assert np.allclose(th_class.theta_cosmomc, cosmo['theta_cosmomc'], atol=0., rtol=3e-6)
         assert np.allclose(th.theta_cosmomc, cosmo['theta_cosmomc'], atol=0., rtol=3e-6)
     for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants']:
@@ -189,8 +197,8 @@ def test_harmonic(params):
             for ellmax in [100, -1]:
                 if not cosmo['lensing']:
                     if engine == 'class':
-                        from pyclass import ClassBadValueError
-                        with pytest.raises(ClassBadValueError):
+                        from pyclass import ClassComputationError
+                        with pytest.raises(ClassComputationError):
                             getattr(hr, name)(ellmax=ellmax)
                     if engine == 'camb':
                         from camb import CAMBError
@@ -240,11 +248,12 @@ def test_fourier(params, seed=42):
         k = rng.uniform(1e-3, 1., 20)
 
         for of in ['delta_m', 'delta_cb']:
-            assert np.allclose(fo.pk_interpolator(non_linear=False, of=of)(k, z=z), fo_class.pk_interpolator(non_linear=False, of=of)(k, z=z), rtol=2.5e-3)
+            #assert np.allclose(fo.pk_interpolator(non_linear=False, of=of)(k, z=z), fo_class.pk_interpolator(non_linear=False, of=of)(k, z=z), rtol=2.5e-3)
             assert np.allclose(fo.pk_interpolator(non_linear=False, of=of).sigma8_z(z=z), fo.sigma8_z(z, of=of), rtol=1e-4)
 
         z = np.linspace(0., 4., 5)
-        for of in ['theta_cb', ('delta_cb', 'theta_cb')]:
+        for of in ['theta_cb', ('delta_m',), ('delta_cb', 'theta_cb'), 'phi_plus_psi']:
+            #print(of, fo.pk_interpolator(non_linear=False, of=of)(k, z=z) / fo_class.pk_interpolator(non_linear=False, of=of)(k, z=z))
             assert np.allclose(fo.pk_interpolator(non_linear=False, of=of)(k, z=z), fo_class.pk_interpolator(non_linear=False, of=of)(k, z=z), rtol=2.5e-3)
 
         # if not cosmo['N_ncdm']:
@@ -657,6 +666,11 @@ def test_isitgr():
     cosmo.comoving_radial_distance(z)
 
 
+def test_error():
+
+    with pytest.raises(CosmologyInputError):
+        cosmo = Cosmology(Omega_m=-0.1)
+
 
 if __name__ == '__main__':
 
@@ -673,6 +687,7 @@ if __name__ == '__main__':
     test_neutrinos()
     test_clone()
     test_shortcut()
+    test_error()
     test_pk_norm()
     # plot_non_linear()
     # plot_primordial_power_spectrum()

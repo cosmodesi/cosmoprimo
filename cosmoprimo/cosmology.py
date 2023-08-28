@@ -34,6 +34,16 @@ class CosmologyError(Exception):
     """Exception raised by :class:`Cosmology`."""
 
 
+class CosmologyInputError(CosmologyError):
+
+    """Exception raised when error in input parameters."""
+
+
+class CosmologyComputationError(CosmologyError):
+
+    """Exception raised when error in cosmology computation."""
+
+
 def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
     r"""
     Return momenta of non-CDM components (massive neutrinos)
@@ -186,6 +196,8 @@ class BaseCosmology(BaseClass):
         if name == 'Omega_fld':
             if self._has_fld: return self.get('Omega_de')
             return 0.
+        if name == 'K':
+            return - 100.**2 / (constants.c / 1e3)**2 * self._params['Omega_k']  # in (h / Mpc)^2
         if name == 'N_ncdm':
             return len(self._params['m_ncdm'])
         if name == 'N_eff':
@@ -359,7 +371,7 @@ def get_engine(engine):
         try:
             engine = BaseEngine._registry[engine]
         except KeyError:
-            raise CosmologyError('Unknown engine {}.'.format(engine))
+            raise CosmologyInputError('Unknown engine {}.'.format(engine))
 
     return engine
 
@@ -390,7 +402,7 @@ def _get_cosmology_engine(cosmology, engine=None, set_engine=True, **extra_param
     """
     if engine is None:
         if cosmology._engine is None:
-            raise CosmologyError('Please provide an engine')
+            raise CosmologyInputError('Please provide an engine')
         engine = cosmology._engine
     elif not isinstance(engine, BaseEngine):
         engine = get_engine(engine)(**cosmology._params, extra_params=extra_params)
@@ -449,7 +461,7 @@ class Cosmology(BaseCosmology):
     """Cosmology, defined as a set of parameters (and possibly a current engine attached to it)."""
 
     _default_cosmological_parameters = dict(h=0.7, Omega_cdm=0.25, Omega_b=0.05, Omega_k=0., sigma8=0.8, k_pivot=0.05, n_s=0.96, alpha_s=0., r=0., T_cmb=constants.TCMB,
-                                            m_ncdm=None, neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
+                                            m_ncdm=None, neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF, YHe='BBN',
                                             tau_reio=0.06, reionization_width=0.5, A_L=1.0, w0_fld=-1., wa_fld=0., cs2_fld=1., use_ppf=True)
     _default_calculation_parameters = dict(non_linear='', modes='s', lensing=False, z_pk=None, kmax_pk=10., ellmax_cl=2500)
 
@@ -459,18 +471,17 @@ class Cosmology(BaseCosmology):
 
         Note
         ----
-        If ``Omega_m`` (or ``omega_m``) is provided, ``Omega_cdm`` is infered by subtracting ``Omega_b`` and the non-relativistic part of ``Omega_ncdm``
-        from ``Omega_m``.
+        If ``Omega_m`` (or ``omega_m``) is provided, ``Omega_cdm`` is infered by subtracting ``Omega_b`` and the non-relativistic part of ``Omega_ncdm`` from ``Omega_m``.
         Massive neutrinos can be provided e.g. through ``m_ncdm`` or ``Omega_ncdm``/``omega_ncdm`` with their temperatures w.r.t. CMB ``T_ncdm_over_cmb``.
         In the case of ``Omega_ncdm``, the neutrino energy density (see :func:`_compute_ncdm_momenta`) will be inverted to recover ``m_ncdm``.
         If a single value for ``m_ncdm`` or ``Omega_ncdm`` is provided, ``neutrino_hierarchy`` can be set to ``None`` (default, single massive neutrino)
         or 'normal', 'inverted', 'degenerate' (all neutrinos with same mass), which will determine the masses of the 3 neutrinos.
         If the number of relativistic species ``N_ur`` is not provided (or ``None``), it will be determined
         from the desired effective number of neutrinos ``N_eff`` (typically kept at 3.044 for 3 neutrinos whatever ``m_ncdm`` or ``Omega_ncdm``/``omega_ncdm``)
-        and the number of massless neutrinos (:math:`m \leq 0.00017`), which are then removed from the list ``m_ncdm``.
+        and the number of massless neutrinos (:math:`m \leq 0.00017 \; \mathrm{eV}`), which are then removed from the list ``m_ncdm``.
         Parameter ``Omega_ncdm``/``omega_ncdm`` (accessed as ``cosmo['Omega_ncdm']``/``cosmo['omega_ncdm']``)
         will always provide the total energy density of neutrinos (single value).
-        The pivot scale ``k_pivot`` is in :math:`\mathrm{Mpc}^{-1}`.`
+        The pivot scale ``k_pivot`` is in :math:`\mathrm{Mpc}^{-1}`.
 
         Parameters
         ----------
@@ -486,7 +497,7 @@ class Cosmology(BaseCosmology):
         """
         check_params(params)
         self._derived = {}
-        self._input_params = merge_params(self.__class__.get_default_parameters(include_conflicts=False), params)
+        self._input_params = merge_params(self.get_default_parameters(include_conflicts=False), params)
         self._params = compile_params(self._input_params)
         self._engine = engine
         if self._engine is not None:
@@ -518,7 +529,7 @@ class Cosmology(BaseCosmology):
         Parameters
         ----------
         of : string, default=None
-            One of ['cosmology','calculation'].
+            One of ['cosmology', 'calculation'].
             If ``None``, returns all parameters.
 
         include_conflicts : bool, default=True
@@ -541,7 +552,7 @@ class Cosmology(BaseCosmology):
             toret = cls.get_default_parameters(of='cosmology', include_conflicts=include_conflicts)
             toret.update(cls.get_default_parameters(of='calculation', include_conflicts=include_conflicts))
             return toret
-        raise CosmologyError('No default parameters for {}'.format(of))
+        raise CosmologyInputError('No default parameters for {}'.format(of))
 
     def clone(self, base=None, engine=None, extra_params=None, **params):
         r"""
@@ -581,7 +592,7 @@ class Cosmology(BaseCosmology):
         elif base is None:
             base_params = self._params.copy()
         else:
-            raise CosmologyError('Unknown parameter base {}'.format(base))
+            raise CosmologyInputError('Unknown parameter base {}'.format(base))
         new._input_params = merge_params(base_params, params)
         new._params = compile_params(new._input_params)
         if engine is None and self._engine is not None:
@@ -681,7 +692,7 @@ def _make_section_getter(section):
         engine = _get_cosmology_engine(self, engine=engine, set_engine=set_engine, **extra_params)
         toret = getattr(engine, 'get_{}'.format(section), None)
         if toret is None:
-            raise CosmologyError('Engine {} does not provide {}'.format(engine.__class__.__name__, section))
+            raise CosmologyInputError('Engine {} does not provide {}'.format(engine.__class__.__name__, section))
         return toret()
 
     getter.__doc__ = """
@@ -749,7 +760,6 @@ def compile_params(args):
         # pop because we copied everything
         params[params_name] = params.pop(args_name)
 
-    set_alias('T_cmb', 'T0_cmb')
     set_alias('Omega_m', 'Omega0_m')
     set_alias('Omega_cdm', 'Omega0_cdm')
     set_alias('Omega_cdm', 'Omega_c')
@@ -762,6 +772,7 @@ def compile_params(args):
     # set_alias('Omega_Lambda', 'Omega0_Lambda')
     set_alias('Omega_fld', 'Omega0_fld')
     set_alias('Omega_ncdm', 'Omega0_ncdm')
+    set_alias('T_cmb', 'T0_cmb')
     set_alias('Omega_g', 'Omega0_g')
 
     for name in ['ln10^{10}A_s', 'ln10^10A_s']:
@@ -850,11 +861,11 @@ def compile_params(args):
         # Sum changes in the lower bounds...
         if neutrino_hierarchy is not None:
             if not single_ncdm:
-                raise CosmologyError('neutrino_hierarchy {} cannot be passed with a list '
-                                     'for m_ncdm, only with a sum.'.format(neutrino_hierarchy))
+                raise CosmologyInputError('neutrino_hierarchy {} cannot be passed with a list '
+                                          'for m_ncdm, only with a sum.'.format(neutrino_hierarchy))
             sum_ncdm = m_ncdm[0]
             if sum_ncdm < 0:
-                raise CosmologyError('Sum of neutrino masses must be positive.')
+                raise CosmologyInputError('Sum of neutrino masses must be positive.')
             # Lesgourges & Pastor 2012, arXiv:1212.6154
             deltam21sq = 7.62e-5
 
@@ -891,7 +902,7 @@ def compile_params(args):
                 m_ncdm = [sum_ncdm / 3.] * 3
 
             else:
-                raise CosmologyError('Unkown neutrino mass type {}'.format(neutrino_hierarchy))
+                raise CosmologyInputError('Unkown neutrino mass type {}'.format(neutrino_hierarchy))
 
             T_ncdm_over_cmb = [T_ncdm_over_cmb[0]] * 3
 
@@ -952,6 +963,17 @@ def compile_params(args):
     for name, (type, default) in defaults.items():
         params[name] = type(params.get(name, default))
 
+    for basename in ['Omega_cdm', 'Omega_b', 'T_cmb', 'h', 'logA', 'sigma8', 'm_ncdm', 'T_ncdm_over_cmb']:
+        if basename in params:
+            value = np.asarray(params[basename])
+            if np.any(value < 0.):
+                raise CosmologyInputError('Parameter {} should be positive, found {}'.format(basename, value))
+
+    if params['YHe'] is None:
+        params['YHe'] = 'BBN'
+    if params['YHe'] != 'BBN':
+        params['YHe'] = float(params['YHe'])
+
     return params
 
 
@@ -997,7 +1019,7 @@ def check_params(args):
 
     for name in conf:
         if conf[name]:
-            raise CosmologyError('Conflicting parameters are given: {}'.format([name] + conf[name]))
+            raise CosmologyInputError('Conflicting parameters are given: {}'.format([name] + conf[name]))
 
 
 def find_conflicts(name):
@@ -1033,7 +1055,7 @@ def find_conflicts(name):
 
 
 @utils.addproperty('H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'T0_cmb', 'T0_ncdm', 'w0_fld', 'wa_fld', 'cs2_fld',
-                   'Omega0_cdm', 'Omega0_b', 'Omega0_k', 'Omega0_g', 'Omega0_ur', 'Omega0_r',
+                   'Omega0_cdm', 'Omega0_b', 'Omega0_k', 'K', 'Omega0_g', 'Omega0_ur', 'Omega0_r',
                    'Omega0_pncdm', 'Omega0_pncdm_tot', 'Omega0_ncdm', 'Omega0_ncdm_tot',
                    'Omega0_m', 'Omega0_Lambda', 'Omega0_fld', 'Omega0_de')
 class BaseBackground(BaseSection):
@@ -1042,7 +1064,7 @@ class BaseBackground(BaseSection):
 
     def __init__(self, engine):
         self._engine = engine
-        for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'w0_fld', 'wa_fld', 'cs2_fld']:
+        for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'w0_fld', 'wa_fld', 'cs2_fld', 'K']:
             setattr(self, '_{}'.format(name), self._engine[name])
         self._T0_cmb = self._engine['T_cmb']
         self._T0_ncdm = np.array(self._engine['T_ncdm_over_cmb']) * self._T0_cmb

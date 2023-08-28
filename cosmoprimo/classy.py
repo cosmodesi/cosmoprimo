@@ -1,9 +1,9 @@
 """Cosmological calculation with the Boltzmann code CLASS."""
 
 import numpy as np
-from pyclass import base, ClassParserError
+from pyclass import base
 
-from .cosmology import BaseEngine
+from .cosmology import BaseEngine, CosmologyInputError, CosmologyComputationError
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 
 
@@ -34,7 +34,7 @@ class BaseClassEngine(object):
             elif non_linear in ['halofit']:
                 params['non_linear'] = 'halofit'
             else:
-                raise ClassParserError('Unknown non-linear code {}'.format(non_linear))
+                raise CosmologyInputError('Unknown non-linear code {}'.format(non_linear))
         else:
             del params['non_linear']
         params['N_ncdm'] = self['N_ncdm']
@@ -51,6 +51,14 @@ class BaseClassEngine(object):
         params.update(extra_params)
         super(BaseClassEngine, self).__init__(params=params)
         # print(self.get_params_str())
+
+    def compute(self, tasks):
+        try:
+            return super(BaseClassEngine, self).compute(tasks)
+        except base.ClassInputError as exc:
+            raise CosmologyInputError from exc
+        except base.ClassComputationError as exc:
+            raise CosmologyComputationError from exc
 
 
 class BaseClassBackground(object):
@@ -324,7 +332,6 @@ class BaseClassFourier(object):
         """
         ka, za, pka = self.table(non_linear=non_linear, of=of)
         return PowerSpectrumInterpolator2D(ka, za, pka, **kwargs)
-
 
 
 class ClassEngine(BaseClassEngine, base.ClassEngine, BaseEngine):

@@ -1,0 +1,136 @@
+name: cosmoprimo
+version: 1.0.0
+purpose: Lightweight primordial cosmology package, including wrappers for CLASS, CAMB, Eisenstein and Hu...
+url: http://github.com/cosmodesi/cosmoprimo
+interface: cosmoprimo_interface.py
+attribution: []
+rules: []
+cite: []
+
+assumptions:
+-   The LCDM model
+-   Various choices for approximations and implementations of the Boltzmann and related
+    equations
+
+explanation:
+
+params:
+    lmax:
+        meaning: Max angular frequency ell to use for cmb calculation
+        type: int
+        default: 2000
+    kmax:
+        meaning: The max wavenumber k to use for P(k,z) calculation
+        type: int
+        default: 50.0
+    zmax:
+        meaning: Max redshift to save P(k,z) and distances
+        type: real
+        default: 4.0
+    cmb:
+        meaning: Whether to compute CMB spectra
+        type: bool
+        default: True
+    mpk:
+        meaning: Whether to compute matter power spectra
+        type: bool
+        default: True
+    lensing:
+        meaning: Whether to lens the output CMB power spectra
+        type: bool
+        default: True
+    debug:
+        meaning: Whether to give a fuller traceback on errors
+        type: bool
+        default: False
+inputs:
+    cosmological_parameters:
+        ombh2:
+            meaning: Physical baryon density fraction today, Omega_b * h**2
+            type: real
+            default:
+        omch2:
+            meaning: Physical cdm density fraction today, Omega_c * h**2
+            type: real
+            default:
+        h0:
+            meaning: Hubble parameter H0 / 100 km/s/Mpc
+            type: real
+            default:
+        tau:
+            meaning: Optical depth to last-scattering
+            type: real
+            default:
+        n_s:
+            meaning: Scalar spectral index
+            type: real
+            default:
+        A_s:
+            meaning: Scalar spectrum primordial amplitude
+            type: real
+            default:
+        massless_nu:
+            meaning: Effective number of massless neutrinos
+            type: real
+            default: 3.046
+        t_cmb:
+            meaning: The CMB temperature today in Kelvin
+            type: real
+            default: 2.726
+outputs:
+    cosmological_parameters:
+        sigma_8:
+            meaning: Amplitude of linear matter power at 8/h Mpc at z=0. Only calculated if mpk
+            type: real
+    distances:
+        nz:
+            meaning: Number of z samples
+            type: int
+        z:
+            meaning: Redshifts of samples
+            type: real 1d
+        d_a:
+            meaning: Angular diameter distance in Mpc
+            type: real 1d
+        d_m:
+            meaning: Co-moving distance in Mpc
+            type: real 1d
+        d_l:
+            meaning: Luminosity distance in Mpc
+            type: real 1d
+        age:
+            meaning: Age of universe in GYr
+            type: real
+        rs_zdrag:
+            meaning: Sound horizon size at zdrag. Only if mode!=background
+            type: real
+    matter_power_lin:
+        z:
+            meaning: Redshifts of samples. Only if mpk
+            type: real 1d
+        k_h:
+            meaning: K wavenumbers of samples in Mpc/h. Only if mpk
+            type: real 1d
+        p_k:
+            meaning: Matter power spectrum at samples in (Mpc/h)^-3. Only if mpk
+            type: real 2d
+    cmb_cl:
+        ell:
+            meaning: Angular frequencies. Only if mode=cmb or all
+            type: int 1d
+        tt:
+            meaning: ell * (ell+1) C_ell^TT / 2 pi in mu K^2. Only if mode=cmb or
+                all
+            type: real 1d
+        ee:
+            meaning: ell * (ell+1) C_ell^EE / 2 pi in mu K^2. Only if mode=cmb or
+                all
+            type: real 1d
+        bb:
+            meaning: ell * (ell+1) C_ell^BB / 2 pi in mu K^2. Only if mode=cmb or
+                all
+            type: real 1d
+        te:
+            meaning: ell * (ell+1) C_ell^TE / 2 pi in mu K^2. Only if mode=cmb or
+                all
+            type: real 1d

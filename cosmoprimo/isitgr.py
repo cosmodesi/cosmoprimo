@@ -5,7 +5,7 @@ import warnings
 
 import numpy as np
 
-from .camb import CambEngine, Background, Thermodynamics, Primordial, Transfer, Harmonic, Fourier, CosmologyError, enum
+from .camb import CambEngine, Background, Thermodynamics, Primordial, Transfer, Harmonic, Fourier
 from . import utils, constants
 
 
