@@ -15,6 +15,18 @@ assumptions:
 explanation:
 
 params:
+    zmin:
+        meaning: Min redshift value to save P(k, z) and distances
+        type: real
+        default: 0.0
+    zmax:
+        meaning: Max redshift value to save P(k, z) and distances
+        type: real
+        default: 3.01
+    nz:
+        meaning: Number of z values to save P(k, z)
+        type: int
+        default: 150
     lmax:
         meaning: Max angular frequency ell to use for cmb calculation
         type: int
@@ -23,22 +35,18 @@ params:
         meaning: The max wavenumber k to use for P(k,z) calculation
         type: int
         default: 50.0
-    zmax:
-        meaning: Max redshift to save P(k,z) and distances
-        type: real
-        default: 4.0
-    cmb:
+    harmonic:
         meaning: Whether to compute CMB spectra
         type: bool
-        default: True
-    mpk:
-        meaning: Whether to compute matter power spectra
-        type: bool
-        default: True
+        default: False
     lensing:
         meaning: Whether to lens the output CMB power spectra
         type: bool
         default: True
+    fourier:
+        meaning: Whether to compute matter power spectra
+        type: bool
+        default: False
     debug:
         meaning: Whether to give a fuller traceback on errors
         type: bool

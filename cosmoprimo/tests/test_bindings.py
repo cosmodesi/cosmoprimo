@@ -37,11 +37,19 @@ def test_cosmosis():
 
     import os
     import cosmoprimo
+
     os.environ['COSMOPRIMO_DIR'] = os.path.dirname(os.path.dirname(cosmoprimo.__file__))
     print(os.environ['COSMOPRIMO_DIR'])
     from cosmosis.main import run_cosmosis
-    run_cosmosis('cosmosis_config.ini')
-
+    for engine in ['class', 'camb', 'isitgr']:
+        with open('cosmosis_config.ini', 'r') as file:
+            config = file.read()
+        config = config.replace('engine = class', 'engine = {}'.format(engine))
+        tmp_fn = 'tmp.ini'
+        with open(tmp_fn, 'w') as file:
+            file.write(config)
+        run_cosmosis(tmp_fn)
+        os.remove(tmp_fn)
 
 if __name__ == '__main__':
 

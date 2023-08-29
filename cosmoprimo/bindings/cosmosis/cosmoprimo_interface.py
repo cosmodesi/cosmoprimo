@@ -15,13 +15,16 @@ def setup(options):
 
     # Read options from the ini file which are fixed across
     # the length of the chain
-    config = {'lmax': options.get_int(option_section, 'lmax', default=2000),
-              'zmax': options.get_double(option_section, 'zmax', default=3.0),
+    config = {'zmin': options.get_double(option_section, 'zmin', default=0.0),
+              'zmax': options.get_double(option_section, 'zmax', default=3.01),
+              'nz': options.get_int(option_section, 'nz', default=150),
+              'lmax': options.get_int(option_section, 'lmax', default=2000),
               'kmax': options.get_double(option_section, 'kmax', default=50.0),
               'debug': options.get_bool(option_section, 'debug', default=False),
+              'harmonic': options.get_bool(option_section, 'harmonic', default=False),
               'lensing': options.get_bool(option_section, 'lensing', default=True),
-              'cmb': options.get_bool(option_section, 'cmb', default=True),
-              'mpk': options.get_bool(option_section, 'mpk', default=True)}
+              'fourier': options.get_bool(option_section, 'fourier', default=False),
+              'engine': options.get_string(option_section, 'engine', default='class')}
 
 
     for _, key in options.keys(option_section):
@@ -44,7 +47,7 @@ def get_cosmoprimo_inputs(block, config):
     else:
         m_ncdm = [m_ncdm / nmassive] * nmassive
 
-    params = {'lensing': bool(config['lensing']),
+    params = {'lensing': config['harmonic'] and config['lensing'],
               'A_s': block[names.cosmological_parameters, 'A_s'],
               'n_s': block[names.cosmological_parameters, 'n_s'],
               'H0': 100 * block[names.cosmological_parameters, 'h0'],
@@ -54,24 +57,23 @@ def get_cosmoprimo_inputs(block, config):
               'T_cmb': block.get_double(names.cosmological_parameters, 'TCMB', default=2.726),
               'N_eff': nnu,
               'm_ncdm': m_ncdm,
-              'engine': config.get('engine', 'class')}
+              'engine': config['engine']}
 
-    if config["cmb"] or config["lensing"]:
+    if config['harmonic']:
         params.update({
-          'ellmax_cl': config["lmax"],
+          'ellmax_cl': config['lmax'],
         })
 
-    if config["mpk"]:
+    if config['fourier']:
         params.update({
-            'kmax_pk':  config["kmax"],
-            'z_pk': np.arange(0.0, config['zmax'], 0.01),
+            'z_pk': np.linspace(config['zmin'], config['zmax'], config['nz']),
         })
 
-    if block.has_value(names.cosmological_parameters, "massless_nu"):
-        warnings.warn("Parameter massless_nu is being ignored. Set nnu, the effective number of relativistic species in the early Universe.")
+    if block.has_value(names.cosmological_parameters, 'massless_nu'):
+        warnings.warn('Parameter massless_nu is being ignored. Set nnu, the effective number of relativistic species in the early Universe.')
 
-    if (block.has_value(names.cosmological_parameters, "omega_nu") or block.has_value(names.cosmological_parameters, "omnuh2")) and not (block.has_value(names.cosmological_parameters, "mnu")):
-        warnings.warn("Parameter omega_nu and omnuh2 are being ignored. Set mnu and num_massive_neutrinos instead.")
+    if (block.has_value(names.cosmological_parameters, 'omega_nu') or block.has_value(names.cosmological_parameters, 'omnuh2')) and not (block.has_value(names.cosmological_parameters, 'mnu')):
+        warnings.warn('Parameter omega_nu and omnuh2 are being ignored. Set mnu and num_massive_neutrinos instead.')
 
     for key, val in config.items():
         if key.startswith('cosmoprimo_'):
@@ -80,52 +82,69 @@ def get_cosmoprimo_inputs(block, config):
     return params
 
 
-def get_cosmoprimo_outputs(block, c, config):
+def get_cosmoprimo_outputs(block, cosmo, config):
 
     # Define z we want to sample
-    dz = 0.01
-    z = np.arange(0.0, config["zmax"] + dz, dz)
-    #k = np.logspace(np.log10(kmin), np.log10(kmax), nk)
-    nz = len(z)
+    ba = cosmo.get_background()
 
-    ba = c.get_background()
+    # The CMB C_ell
+    if config['harmonic']:
+        hr = cosmo.get_harmonic()
+        c_ell_data = hr.lensed_cl() if config['lensing'] else hr.unlensed_cl()
+        ell = c_ell_data['ell']
+        ell = ell[2:]
 
-    # Extract (interpolate) P(k,z) at the requested
-    # sample points.
-    if config["mpk"]:
-        fo = c.get_fourier()
+        # Save the ell range
+        block[names.cmb_cl, 'ell'] = ell
+
+        # t_cmb is in K, convert to mu_K, and add ell(ell+1) factor
+        tcmb_muk = block[names.cosmological_parameters, 'tcmb'] * 1e6
+        factor = ell * (ell + 1.0) / 2 / np.pi * tcmb_muk**2
+
+        # Save each of the four spectra
+        for s in ['tt', 'ee', 'te', 'bb']:
+            block[names.cmb_cl, s] = c_ell_data[s][2:] * factor
+
+    # Extract (interpolate) P(k, z) at the requested sample points.
+    if config['fourier']:
+        fo = cosmo.get_fourier()
         block[names.cosmological_parameters, 'sigma_8'] = fo.sigma8_m
 
         section_names = {'matter_power_lin': 'delta_m', 'cdm_baryon_power_lin': 'delta_cb'}
+        z = cosmo['z_pk']
 
         for section_name, of in section_names.items():
             pk_interpolator = fo.pk_interpolator(of=of)
-            block.put_grid(section_name, "k_h", pk_interpolator.k, "z", pk_interpolator.z, "p_k", pk_interpolator.pk)
+            block.put_grid(section_name, 'k_h', pk_interpolator.k, 'z', pk_interpolator.z, 'p_k', pk_interpolator.pk)
 
-        if c['non_linear']:
+        if cosmo['non_linear']:
             pk_interpolator = fo.pk_interpolator(of='delta_m', non_linear=True)
-            block.put_grid("matter_power_nl", "k_h", pk_interpolator.k, "z", pk_interpolator.z, "p_k", pk_interpolator.pk)
+            block.put_grid('matter_power_nl', 'k_h', pk_interpolator.k, 'z', pk_interpolator.z, 'p_k', pk_interpolator.pk)
 
         # Get growth rates and sigma_8
-        sigma_8, fsigma_8 = fo.sigma8_z(z, of='delta_m'), fo.sigma8_z(z, of='theta_m')
-        d_z = sigma_8 / fo.sigma8_z(0., of='delta_m')
-        f_z = fsigma_8 / sigma_8
-        block[names.growth_parameters, "z"] = z
-        block[names.growth_parameters, "sigma_8"] = sigma_8
-        block[names.growth_parameters, "fsigma_8"] = fsigma_8
-        block[names.growth_parameters, "d_z"] = d_z
-        block[names.growth_parameters, "f_z"] = f_z
-        block[names.growth_parameters, "a"] = 1 / (1 + z)
+        sigma_8_m, sigma_8_cb, fsigma_8_cb = fo.sigma8_z(z, of='delta_m'), fo.sigma8_z(z, of='delta_cb'), fo.sigma8_z(z, of='theta_cb')
+        sigma_8_m0 = fo.sigma8_z(0., of='delta_m')
+        d_z = sigma_8_m / sigma_8_m0
+        f_z = fsigma_8_cb / sigma_8_cb
+        block[names.growth_parameters, 'z'] = z
+        block[names.growth_parameters, 'sigma_8'] = sigma_8_m
+        block[names.growth_parameters, 'fsigma_8'] = fsigma_8_cb
+        block[names.growth_parameters, 'd_z'] = d_z
+        block[names.growth_parameters, 'f_z'] = f_z
+        block[names.growth_parameters, 'a'] = 1 / (1 + z)
 
-        block[names.cosmological_parameters, "sigma_8"] = sigma_8[0]
+        block[names.cosmological_parameters, 'sigma_8'] = sigma_8_m0
         # sigma12 and S_8 - other variants of sigma_8
-        block[names.cosmological_parameters, "sigma_12"] = fo.sigma_rz(12. / ba.h, 0.)
-        block[names.cosmological_parameters, "S_8"] = sigma_8[0] * np.sqrt(ba.Omega0_m / 0.3)
+        block[names.cosmological_parameters, 'sigma_12'] = fo.sigma_rz(12. / ba.h, 0., of='delta_m')
+        block[names.cosmological_parameters, 'S_8'] = sigma_8_m0 * np.sqrt(ba.Omega0_m / 0.3)
 
     ##
     # Distances and related quantities
     ##
 
+    step = 0.01
+    z = np.arange(config['zmin'], config['zmax'] + step, step)
+    nz = len(z)
     # save redshifts of samples
     block[names.distances, 'z'] = z
     block[names.distances, 'nz'] = nz
@@ -141,40 +160,22 @@ def get_cosmoprimo_outputs(block, c, config):
     block[names.distances, 'D_A'] = D_A
     block[names.distances, 'D_M'] = D_M
     block[names.distances, 'D_V'] = D_V
-    mu = np.full_like(D_L, -np.inf)
+    block[names.distances, 'H'] = H
+    MU = np.full_like(D_L, -np.inf)
     mask = D_L > 0
-    mu[mask] = 5. * np.log10(D_L[mask]) + 25.
-    block[names.distances, 'mu'] = mu
+    MU[mask] = 5. * np.log10(D_L[mask]) + 25.
+    block[names.distances, 'MU'] = MU
 
     # Save some auxiliary related parameters
     block[names.distances, 'age'] = ba.age
 
-    th = c.get_thermodynamics()
+    th = cosmo.get_thermodynamics()
     block[names.distances, 'rs_zdrag'] = th.rs_drag
 
     rs_DV = th.rs_drag * D_V
     F_AP = D_M * H
     block[names.distances, 'rs_DV'] = rs_DV
     block[names.distances, 'F_AP'] = F_AP
-
-    ##
-    # Now the CMB C_ell
-    ##
-    if config["cmb"]:
-        c_ell_data = c.lensed_cl() if config['lensing'] else c.unlensed_cl()
-        ell = c_ell_data['ell']
-        ell = ell[2:]
-
-        # Save the ell range
-        block[names.cmb_cl, "ell"] = ell
-
-        # t_cmb is in K, convert to mu_K, and add ell(ell+1) factor
-        tcmb_muk = block[names.cosmological_parameters, 'tcmb'] * 1e6
-        factor = ell * (ell + 1.0) / 2 / np.pi * tcmb_muk**2
-
-        # Save each of the four spectra
-        for s in ['tt', 'ee', 'te', 'bb']:
-            block[names.cmb_cl, s] = c_ell_data[s][2:] * factor
 
 
 def execute(block, config):
@@ -183,16 +184,16 @@ def execute(block, config):
     try:
         # Set input parameters
         params = get_cosmoprimo_inputs(block, config)
-        c = Cosmology(**params)
+        cosmo = Cosmology(**params)
 
         # Extract outputs
-        get_cosmoprimo_outputs(block, c, config)
+        get_cosmoprimo_outputs(block, cosmo, config)
     except CosmologyError as error:
         if config['debug']:
-            sys.stderr.write("Error in cosmoprimo. You set debug=T so here is more debug info:\n")
+            sys.stderr.write('Error in cosmoprimo. You set debug=T so here is more debug info:\n')
             traceback.print_exc(file=sys.stderr)
         else:
-            sys.stderr.write("Error in cosmoprimo. Set debug=T for info: {}\n".format(error))
+            sys.stderr.write('Error in cosmoprimo. Set debug=T for info: {}\n'.format(error))
         return 1
     return 0
 
