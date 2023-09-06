@@ -158,7 +158,7 @@ class Thermodynamics(BaseSection):
         self._z_drag = self._engine.z_drag
 
 
-@utils.addproperty('n_s')
+@utils.addproperty('n_s', 'alpha_s', 'beta_s')
 class Primordial(BaseSection):
 
     def __init__(self, engine):
@@ -168,6 +168,7 @@ class Primordial(BaseSection):
         self._A_s = self._engine._A_s
         self._n_s = self._engine['n_s']
         self._alpha_s = self._engine['alpha_s']
+        self._beta_s = self._engine['beta_s']
         self._rsigma8 = self._engine._rescale_sigma8()
 
     @property
@@ -181,16 +182,6 @@ class Primordial(BaseSection):
         return np.log(1e10 * self.A_s)
 
     @property
-    def n_s(self):
-        r"""Power-law index i.e. tilt of the primordial power spectrum, unitless."""
-        return self._n_s
-
-    @property
-    def alpha_s(self):
-        r"""Running of the spectral index at :math:`k_\mathrm{pivot}`, unitless."""
-        return self._alpha_s
-
-    @property
     def k_pivot(self):
         r"""Primordial power spectrum pivot scale, where the primordial power is equal to :math:`A_{s}`, in :math:`h/\mathrm{Mpc}`."""
         return self._engine['k_pivot'] / self._h
@@ -202,7 +193,7 @@ class Primordial(BaseSection):
 
         .. math::
 
-            \mathcal{P_R}(k) = A_s \left (\frac{k}{k_\mathrm{pivot}} \right )^{n_s - 1 + 1/2 \alpha_s \ln(k/k_\mathrm{pivot})}
+            \mathcal{P_R}(k) = A_s \left (\frac{k}{k_\mathrm{pivot}} \right )^{n_s - 1 + 1/2 \alpha_s \ln(k/k_\mathrm{pivot}) + 1/6 \beta_s \ln(k/k_\mathrm{pivot})^2}
 
         See also: eq. 2 of `this reference <https://arxiv.org/abs/1303.5076>`_.
 
@@ -220,7 +211,8 @@ class Primordial(BaseSection):
             The primordial power spectrum.
         """
         index = ['scalar'].index(mode)
-        return self._h**3 * self.A_s * (k / self.k_pivot) ** (self.n_s - 1. + 1. / 2. * self.alpha_s * np.log(k / self.k_pivot))
+        lnkkp = np.log(k / self.k_pivot)
+        return self._h**3 * self.A_s * (k / self.k_pivot) ** (self.n_s - 1. + 1. / 2. * self.alpha_s * lnkkp + 1. / 6. * self.beta_s * lnkkp**2)
 
     def pk_interpolator(self, mode='scalar'):
         """

@@ -13,6 +13,12 @@ from . import utils, constants
 _Sections = ['Background', 'Thermodynamics', 'Primordial', 'Perturbations', 'Transfer', 'Harmonic', 'Fourier']
 
 
+class class_or_instancemethod(classmethod):
+    def __get__(self, instance, type_):
+        descr_get = super().__get__ if instance is None else self.__func__.__get__
+        return descr_get(instance, type_)
+
+
 def _deepeq(obj1, obj2):
     # Deep equality test
     if type(obj2) is type(obj1):
@@ -120,6 +126,10 @@ def _compute_rs_cosmomc(omega_b, omega_m, hubble_function):
 
 class BaseCosmology(BaseClass):
 
+    _default_cosmological_parameters = dict()
+    _default_calculation_parameters = dict()
+    _conflict_parameters = []
+
     def __init__(self, extra_params=None, **params):
         """
         Initialize engine.
@@ -132,9 +142,88 @@ class BaseCosmology(BaseClass):
         params : dict
             Engine parameters.
         """
-        self._params = params
+        check_params(params, conflicts=self.__class__._conflict_parameters)
         self._derived = {}
-        self.extra_params = extra_params or {}
+        self._input_params = merge_params(self.get_default_params(include_conflicts=False), params, conflicts=self.__class__._conflict_parameters)
+        self._params = self._compile_params(self._input_params)
+        self._extra_params = dict(extra_params or {})
+
+    @classmethod
+    def get_default_params(cls, of=None, include_conflicts=True):
+        """
+        Return default input parameters.
+
+        Parameters
+        ----------
+        of : string, default=None
+            One of ['cosmology', 'calculation'].
+            If ``None``, returns all parameters.
+
+        include_conflicts : bool, default=True
+            Whether to include conflicting parameters (then all accepted parameters).
+
+        Returns
+        -------
+        params : dict
+            Dictionary of default parameters.
+        """
+        if of is None:
+            toret = cls.get_default_params(of='cosmology', include_conflicts=include_conflicts)
+            toret.update(cls.get_default_params(of='calculation', include_conflicts=include_conflicts))
+            return toret
+
+        def _include_conflicts(params):
+            """Add in conflicting parameters to input ``params`` dictionay (in-place operation)."""
+            for name in list(params.keys()):
+                for conf in find_conflicts(name, conflicts=cls._conflict_parameters):
+                    params[conf] = params[name]
+
+        if of == 'cosmology':
+            toret = cls._default_cosmological_parameters.copy()
+            if include_conflicts: _include_conflicts(toret)
+            return toret
+        if of == 'calculation':
+            toret = cls._default_calculation_parameters.copy()
+            if include_conflicts: _include_conflicts(toret)
+            return toret
+        raise CosmologyInputError('No default parameters for {}'.format(of))
+
+    def get_params(self, of='base'):
+        """
+        Return parameters.
+
+        Parameters
+        ----------
+        of : string, default='base'
+            One of ['cosmology', 'calculation', 'base', 'derived', 'extra', 'all'].
+            If ``all``, returns base, derived and extra parameters.
+
+        Returns
+        -------
+        params : dict
+            Dictionary of parameters.
+        """
+        if of == 'derived':
+            return dict(self._derived)
+        if of == 'extra':
+            return dict(self._extra_params)
+        toret = dict(self._params)
+        if of == 'base':
+            return toret
+        if of in ['cosmology', 'calculation']:
+            params = self.get_default_params(of=of)
+            toret = {name: toret.get(name, value) for name, value in params.items()}
+            return toret
+        if of == 'all':
+            toret.update(self.get_params(of='derived'))
+            toret.update(self.get_params(of='extra'))
+            return toret
+        raise CosmologyInputError('No parameters for {}'.format(of))
+
+    @classmethod
+    def _compile_params(cls, params):
+        """Return input parameters in a standard basis."""
+        return dict(params)
 
     def __getitem__(self, name):
         """Return an input (or easily derived) parameter."""
@@ -149,41 +238,43 @@ class BaseCosmology(BaseClass):
         else:
             name, default = args
             has_default = True
-        if name in self._params:
-            return self._params[name]
-        if name in self._derived:
-            return self._derived[name]
+        params = self.get_params(of='base')
+        derived = self.get_params(of='derived')
+        if name in params:
+            return params[name]
+        if name in derived:
+            return derived[name]
         if name.startswith('omega'):
-            return self.get('O' + name[1:]) * self._params['h']**2
+            return self.get('O' + name[1:]) * params['h']**2
         if name == 'H0':
-            return self._params['h'] * 100
+            return params['h'] * 100
         if name in ['ln10^{10}A_s', 'ln10^10A_s']:
-            return np.log(10**10 * self._params['A_s'])
+            return np.log(10**10 * params['A_s'])
         # if name == 'rho_crit':
         #     return constants.rho_crit_Msunph_per_Mpcph3
         if name == 'Omega_g':
-            rho = self._params['T_cmb']**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
+            rho = params['T_cmb']**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
             return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3)
         if name == 'T_ur':
-            return self._params['T_cmb'] * (4. / 11.)**(1. / 3.)
+            return params['T_cmb'] * (4. / 11.)**(1. / 3.)
         if name == 'T_ncdm':
-            return np.array(self._params['T_ncdm_over_cmb']) * self._params['T_cmb']
+            return np.array(params['T_ncdm_over_cmb']) * params['T_cmb']
         if name == 'Omega_ur':
-            rho = self._params['N_ur'] * 7. / 8. * self.get('T_ur')**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
+            rho = params['N_ur'] * 7. / 8. * self.get('T_ur')**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
             return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3)
         if name == 'Omega_r':
-            rho = (self._params['T_cmb']**4 + self._params['N_ur'] * 7. / 8. * self.get('T_ur')**4) * 4. / constants.c**3 * constants.Stefan_Boltzmann
+            rho = (params['T_cmb']**4 + params['N_ur'] * 7. / 8. * self.get('T_ur')**4) * 4. / constants.c**3 * constants.Stefan_Boltzmann
             return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3) + self.get('Omega_pncdm_tot')
         if name == 'm_ncdm_tot':
-            return sum(self._params['m_ncdm'])
+            return sum(params['m_ncdm'])
         if name == 'Omega_ncdm':
-            self._derived['Omega_ncdm'] = self._get_rho_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
-            return self._derived['Omega_ncdm']
+            derived['Omega_ncdm'] = self._get_rho_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
+            return derived['Omega_ncdm']
         if name == 'Omega_ncdm_tot':
             return np.sum(self.get('Omega_ncdm'))
         if name == 'Omega_pncdm':
-            self._derived['Omega_pncdm'] = 3. * self._get_p_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
-            return self._derived['Omega_pncdm']
+            derived['Omega_pncdm'] = 3. * self._get_p_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
+            return derived['Omega_pncdm']
         if name == 'Omega_pncdm_tot':
             return np.sum(self.get('Omega_pncdm'))
         if name == 'Omega_m':
@@ -197,16 +288,16 @@ class BaseCosmology(BaseClass):
             if self._has_fld: return self.get('Omega_de')
             return 0.
         if name == 'K':
-            return - 100.**2 / (constants.c / 1e3)**2 * self._params['Omega_k']  # in (h / Mpc)^2
+            return - 100.**2 / (constants.c / 1e3)**2 * params['Omega_k']  # in (h / Mpc)^2
         if name == 'N_ncdm':
-            return len(self._params['m_ncdm'])
+            return len(params['m_ncdm'])
         if name == 'N_eff':
-            return sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in self._params['T_ncdm_over_cmb']) + self._params['N_ur']
+            return sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in params['T_ncdm_over_cmb']) + params['N_ur']
         if name == 'theta_cosmomc':
             ba = self.get_background()
             rs, zstar = _compute_rs_cosmomc(self['omega_b'], self['omega_m'], ba.hubble_function)
-            self._derived['theta_cosmomc'] = rs * ba.h / ba.comoving_angular_distance(zstar)
-            return self._derived['theta_cosmomc']
+            derived['theta_cosmomc'] = rs * ba.h / ba.comoving_angular_distance(zstar)
+            return derived['theta_cosmomc']
         if has_default:
             return default
         raise CosmologyError('Parameter {} not found.'.format(name))
@@ -257,7 +348,7 @@ class BaseCosmology(BaseClass):
 
     def __eq__(self, other):
         r"""Is ``other`` same as ``self``?"""
-        return type(other) == type(self) and _deepeq(other._params, self._params) and _deepeq(other.extra_params, self.extra_params)
+        return type(other) == type(self) and _deepeq(other._params, self._params) and _deepeq(other._extra_params, self._extra_params)
 
 
 class RegisteredEngine(type(BaseCosmology)):
@@ -276,7 +367,6 @@ class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
 
     """Base engine for cosmological calculation."""
     name = 'base'
-    specific_params = {}
 
     def __init__(self, extra_params=None, **params):
         """
@@ -340,7 +430,7 @@ def get_engine(engine):
 
     Parameters
     ----------
-    engine : BaseEngine, string
+    engine : type, string
         Engine or one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks'].
 
     Returns
@@ -372,6 +462,9 @@ def get_engine(engine):
             engine = BaseEngine._registry[engine]
         except KeyError:
             raise CosmologyInputError('Unknown engine {}.'.format(engine))
+
+    if isinstance(engine, BaseEngine):
+        engine = engine.__class__
 
     return engine
 
@@ -448,22 +541,26 @@ for section in _Sections:
     globals()[section] = _make_section_getter(section)
 
 
-def _include_conflicts(params):
-    """Add in conflicting parameters to input ``params`` dictionay (in-place operation)."""
-    for name in list(params.keys()):
-        for conf in find_conflicts(name):
-            params[conf] = params[name]
-
-
-@utils.addproperty('engine', 'params')
+@utils.addproperty('engine')
 class Cosmology(BaseCosmology):
 
     """Cosmology, defined as a set of parameters (and possibly a current engine attached to it)."""
 
-    _default_cosmological_parameters = dict(h=0.7, Omega_cdm=0.25, Omega_b=0.05, Omega_k=0., sigma8=0.8, k_pivot=0.05, n_s=0.96, alpha_s=0., r=0., T_cmb=constants.TCMB,
-                                            m_ncdm=None, neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF, YHe='BBN',
-                                            tau_reio=0.06, reionization_width=0.5, A_L=1.0, w0_fld=-1., wa_fld=0., cs2_fld=1., use_ppf=True)
-    _default_calculation_parameters = dict(non_linear='', modes='s', lensing=False, z_pk=None, kmax_pk=10., ellmax_cl=2500)
+    _default_cosmological_parameters = dict(h=0.7, Omega_cdm=0.25, Omega_b=0.05, Omega_k=0., sigma8=0.8, k_pivot=0.05, n_s=0.96, alpha_s=0., beta_s=0.,
+                                            r=0., n_t='scc', alpha_t='scc', T_cmb=constants.TCMB,
+                                            m_ncdm=None, neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
+                                            tau_reio=0.06, reionization_width=0.5, A_L=1.0, w0_fld=-1., wa_fld=0., cs2_fld=1.)
+    _default_calculation_parameters = dict(non_linear='', modes='s', lensing=False, z_pk=None, kmax_pk=10., ellmax_cl=2500, YHe='BBN', use_ppf=True)
+    _conflict_parameters = [('h', 'H0'),
+                            ('T_cmb', 'Omega_g', 'omega_g', 'Omega0_g'),
+                            ('Omega_b', 'omega_b', 'Omega0_b'),
+                            # ('Omega_fld', 'Omega0_fld'),
+                            # ('Omega_Lambda', 'Omega0_Lambda'),
+                            ('N_ur', 'Omega_ur', 'omega_ur', 'Omega0_ur', 'N_eff'),
+                            ('Omega_cdm', 'omega_cdm', 'Omega0_cdm', 'Omega_c', 'omega_c', 'Omega_m', 'omega_m', 'Omega0_m'),
+                            ('m_ncdm', 'Omega_ncdm', 'omega_ncdm', 'Omega0_ncdm'),
+                            ('A_s', 'ln10^{10}A_s', 'ln10^10A_s', 'sigma8'),
+                            ('tau_reio', 'z_reio')]
 
     def __init__(self, engine=None, extra_params=None, **params):
         r"""
@@ -495,13 +592,341 @@ class Cosmology(BaseCosmology):
         params : dict
             Cosmological and calculation parameters which take priority over the default ones.
         """
-        check_params(params)
+        check_params(params, conflicts=self._conflict_parameters)
         self._derived = {}
-        self._input_params = merge_params(self.get_default_parameters(include_conflicts=False), params)
-        self._params = compile_params(self._input_params)
-        self._engine = engine
+        self._engine = None
+        self._input_params = merge_params(self.get_default_params(include_conflicts=False), params, conflicts=self._conflict_parameters)
+        self._params = self._compile_params(self._input_params)
+        self._extra_params = {}
+        if engine is not None:
+            self.set_engine(engine, **(extra_params or {}))
+
+    @class_or_instancemethod
+    def get_default_params(cls, of=None, include_conflicts=True):
+        """
+        Return default input parameters.
+
+        Parameters
+        ----------
+        of : string, default=None
+            One of ['cosmology', 'calculation'].
+            If ``None``, returns all parameters.
+
+        include_conflicts : bool, default=True
+            Whether to include conflicting parameters (then all accepted parameters).
+
+        Returns
+        -------
+        params : dict
+            Dictionary of default parameters.
+        """
+        toret = super().get_default_params(of=of, include_conflicts=include_conflicts)
+        engine = getattr(cls, '_engine', None)
+        if engine is not None:  # cls is self
+            toret.update(engine.get_default_params(of=of, include_conflicts=include_conflicts))
+        return toret
+
+    @class_or_instancemethod
+    def get_default_parameters(cls):
+        import warnings
+        warnings.warn('get_default_parameters is deprecated, use get_default_params')
+        return cls.get_default_params()
+
+    def get_params(self, of='base'):
+        """
+        Return parameters.
+
+        Parameters
+        ----------
+        of : string, default='input'
+            One of ['cosmology', 'calculation', 'base', 'derived', 'extra', 'all'].
+            If ``all``, returns base, derived and extra parameters.
+
+        Returns
+        -------
+        params : dict
+            Dictionary of parameters.
+        """
+        toret = super().get_params(of=of)
         if self._engine is not None:
-            self.set_engine(self._engine, **(extra_params or {}))
+            toret.update(self._engine.get_params(of=of))
+        return toret
+
+    @classmethod
+    def _compile_params(cls, args):
+        """
+        Compile parameters ``args``:
+
+        - normalise parameter names
+        - perform immediate parameter derivations (e.g. omega => Omega)
+        - set neutrino masses if relevant
+        - if Omega_m provided, compute Omega_cdm from Omega_b and non-relativistic ncdm
+
+        Parameters
+        ----------
+        args : dict
+            Input parameter dictionary, without parameter conflicts.
+
+        Returns
+        -------
+        params : dict
+            Normalised parameter dictionary.
+
+        References
+        ----------
+        https://github.com/bccp/nbodykit/blob/master/nbodykit/cosmology/cosmology.py
+        """
+        params = {}
+        params.update(args)
+
+        if 'H0' in params:
+            params['h'] = params.pop('H0') / 100.
+
+        h = params['h']
+        for name, value in args.items():
+            if name.startswith('omega'):
+                omega = params.pop(name)
+                Omega = np.array(omega) / h**2  # array to cope with tuple, lists for e.g. omega_ncdm
+                params[name.replace('omega', 'Omega')] = Omega
+
+        def set_alias(params_name, args_name):
+            if args_name not in args: return
+            # pop because we copied everything
+            params[params_name] = params.pop(args_name)
+
+        set_alias('Omega_m', 'Omega0_m')
+        set_alias('Omega_cdm', 'Omega0_cdm')
+        set_alias('Omega_cdm', 'Omega_c')
+        set_alias('Omega_ncdm', 'Omega0_ncdm')
+        set_alias('Omega_b', 'Omega0_b')
+        set_alias('Omega_k', 'Omega0_k')
+        set_alias('Omega_ur', 'Omega0_ur')
+        # set_alias('Omega_Lambda', 'Omega_lambda')
+        # set_alias('Omega_Lambda', 'Omega0_lambda')
+        # set_alias('Omega_Lambda', 'Omega0_Lambda')
+        set_alias('Omega_fld', 'Omega0_fld')
+        set_alias('Omega_ncdm', 'Omega0_ncdm')
+        set_alias('T_cmb', 'T0_cmb')
+        set_alias('Omega_g', 'Omega0_g')
+
+        for name in ['ln10^{10}A_s', 'ln10^10A_s']:
+            if name in params:
+                params['A_s'] = np.exp(params.pop(name)) * 10**(-10)
+
+        if 'Omega_g' in params:
+            params['T_cmb'] = (params.pop('Omega_g') * h**2 * constants.rho_crit_kgph_per_mph3 / (4. / constants.c**3 * constants.Stefan_Boltzmann))**(0.25)
+
+        def _make_list(li, name):
+            if isinstance(li, (tuple, list, np.ndarray)):
+                return list(li)
+            raise TypeError('{} must be a list'.format(name))
+
+        T_ncdm_over_cmb = params.get('T_ncdm_over_cmb', None)
+        if T_ncdm_over_cmb in (None, []):
+            T_ncdm_over_cmb = constants.TNCDM_OVER_CMB
+
+        if 'm_ncdm' in params:
+            m_ncdm = params.pop('m_ncdm')
+            Omega_ncdm = None
+        else:
+            if 'Omega_ncdm' in params:
+                Omega_ncdm = params.pop('Omega_ncdm')
+                single_ncdm = False
+                if Omega_ncdm is None:
+                    Omega_ncdm = []
+                else:
+                    single_ncdm = np.ndim(Omega_ncdm) == 0
+                if single_ncdm:  # a single massive neutrino
+                    Omega_ncdm = [Omega_ncdm]
+                Omega_ncdm = _make_list(Omega_ncdm, 'Omega_ncdm')
+                if np.ndim(T_ncdm_over_cmb) == 0:
+                    T_ncdm_over_cmb = [T_ncdm_over_cmb] * len(Omega_ncdm)
+                T_ncdm_over_cmb = _make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
+                if len(T_ncdm_over_cmb) != len(Omega_ncdm):
+                    raise TypeError('T_ncdm_over_cmb and Omega_ncdm must be of same length')
+                m_ncdm = []
+                h = params['h']
+
+                def solve_newton(omega_ncdm, m, T_eff):
+                    # m is a starting guess
+                    omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
+
+                    while (np.abs(omega_ncdm - omega_check) > 1e-15):
+                        domegadm = _compute_ncdm_momenta(T_eff, m, z=0, out='drhodm') / constants.rho_crit_Msunph_per_Mpcph3
+                        # domegadm = 1./93.14 # this approximation works as well
+                        m = m + (omega_ncdm - omega_check) / domegadm
+                        omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
+
+                    return m
+
+                for Omega, T in zip(Omega_ncdm, T_ncdm_over_cmb):
+                    if Omega == 0.:
+                        m_ncdm.append(0.)
+                    else:
+                        T_ncdm = params['T_cmb'] * T
+                        m = solve_newton(Omega * h**2, Omega * h**2 * 93.14, T_ncdm)
+                        # print(m, Omega * h**2 * 93.14)
+                        m_ncdm.append(m)
+
+                if single_ncdm: m_ncdm = m_ncdm[0]
+
+            else:
+                m_ncdm = []
+
+        single_ncdm = False
+        if m_ncdm is None:
+            m_ncdm = []
+        else:
+            single_ncdm = np.ndim(m_ncdm) == 0
+        if single_ncdm:  # a single massive neutrino
+            m_ncdm = [m_ncdm]
+
+        m_ncdm = _make_list(m_ncdm, 'm_ncdm')
+
+        if np.ndim(T_ncdm_over_cmb) == 0:
+            T_ncdm_over_cmb = [T_ncdm_over_cmb] * len(m_ncdm)
+        T_ncdm_over_cmb = _make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
+        if len(T_ncdm_over_cmb) != len(m_ncdm):
+            raise TypeError('T_ncdm_over_cmb and m_ncdm must be of same length')
+
+        if 'neutrino_hierarchy' in params:
+            neutrino_hierarchy = params.pop('neutrino_hierarchy')
+            # Taken from https://github.com/LSSTDESC/CCL/blob/66397c7b53e785ae6ee38a688a741bb88d50706b/pyccl/core.py#L461
+            # Sum changes in the lower bounds...
+            if neutrino_hierarchy is not None:
+                if not single_ncdm:
+                    raise CosmologyInputError('neutrino_hierarchy {} cannot be passed with a list '
+                                            'for m_ncdm, only with a sum.'.format(neutrino_hierarchy))
+                sum_ncdm = m_ncdm[0]
+                if sum_ncdm < 0:
+                    raise CosmologyInputError('Sum of neutrino masses must be positive.')
+                # Lesgourges & Pastor 2012, arXiv:1212.6154
+                deltam21sq = 7.62e-5
+
+                def solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq):
+                    # m_ncdm is a starting guess
+                    sum_check = sum(m_ncdm)
+                    # This is the Newton's method, solving s = m1 + m2 + m3,
+                    # with dm2/dm1 = dsqrt(deltam21^2 + m1^2) / dm1 = m1/m2, similarly for m3
+                    while (np.abs(sum_ncdm - sum_check) > 1e-15):
+                        dsdm1 = 1. + m_ncdm[0] / m_ncdm[1] + m_ncdm[0] / m_ncdm[2]
+                        m_ncdm[0] = m_ncdm[0] + (sum_ncdm - sum_check) / dsdm1
+                        m_ncdm[1] = np.sqrt(m_ncdm[0]**2 + deltam21sq)
+                        m_ncdm[2] = np.sqrt(m_ncdm[0]**2 + deltam31sq)
+                        sum_check = sum(m_ncdm)
+                    return m_ncdm
+
+                if (neutrino_hierarchy == 'normal'):
+                    deltam31sq = 2.55e-3
+                    if sum_ncdm**2 < deltam21sq + deltam31sq:
+                        raise ValueError('If neutrino_hierarchy is normal, we are using the normal hierarchy and so m_nu must be greater than (~)0.0592')
+                    # Split the sum into 3 masses under normal hierarchy, m3 > m2 > m1
+                    m_ncdm = [0., deltam21sq, deltam31sq]
+                    solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
+
+                elif (neutrino_hierarchy == 'inverted'):
+                    deltam31sq = -2.43e-3
+                    if sum_ncdm**2 < -deltam31sq + deltam21sq - deltam31sq:
+                        raise ValueError('If neutrino_hierarchy is inverted, we are using the inverted hierarchy and so m_nu must be greater than (~)0.0978')
+                    # Split the sum into 3 masses under inverted hierarchy, m2 > m1 > m3, here ordered as m1, m2, m3
+                    m_ncdm = [np.sqrt(-deltam31sq), np.sqrt(-deltam31sq + deltam21sq), 1e-5]
+                    solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
+
+                elif (neutrino_hierarchy == 'degenerate'):
+                    m_ncdm = [sum_ncdm / 3.] * 3
+
+                else:
+                    raise CosmologyInputError('Unkown neutrino mass type {}'.format(neutrino_hierarchy))
+
+                T_ncdm_over_cmb = [T_ncdm_over_cmb[0]] * 3
+
+        N_ur = params.get('N_ur', None)
+
+        if 'Omega_ur' in params:
+            T_ur = params['T_cmb'] * (4. / 11.)**(1. / 3.)
+            rho = 7. / 8. * 4. / constants.c**3 * constants.Stefan_Boltzmann * T_ur**4  # density, kg/m^3
+            N_ur = params.pop('Omega_ur') / (rho / (h**2 * constants.rho_crit_kgph_per_mph3))
+
+        # Check which of the neutrino species are non-relativistic today
+        m_massive = 0.00017  # Lesgourges et al. 2012
+        m_ncdm = np.array(m_ncdm)
+        T_ncdm_over_cmb = np.array(T_ncdm_over_cmb)
+        mask_m = m_ncdm > m_massive
+        # arxiv: 1812.05995 eq. 84
+        N_eff = params.pop('N_eff', constants.NEFF)
+        # We remove massive neutrinos
+        if N_ur is None:
+            N_ur = N_eff - sum(T_ncdm_over_cmb[mask_m]**4 * (4. / 11.)**(-4. / 3.))
+            # Which is just the high-redshift limit of what is below; leaving it there for clarity
+            # N_eff = (rho_r / rho_g - 1) / (7. / 8. * (4. / 11.)**(4. / 3.))  # as defined in class_public https://github.com/lesgourg/class_public/blob/aa92943e4ab86b56970953589b4897adf2bd0f99/source/background.c#L2051
+            # with rho_r = rho_g + rho_ur + 3. * pncdm and rho_ur = 7. / 8. * (4. / 11.)**(4. / 3.) * N_ur * rho_g
+            # so N_ur = N_eff - 3 * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
+            # z = 1e10
+            # pncdm = sum(_compute_ncdm_momenta(params['T_cmb'] * T, m, z=z, out='p') for T, m in zip(T_ncdm_over_cmb, m_ncdm))
+            # rho_g = params['T_cmb']**4 * (1. + z)**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann * constants.megaparsec**3 / (1e10 * constants.msun)
+            # N_ur = N_eff - 3. * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
+        if N_ur < 0.:
+            raise ValueError('N_ur and m_ncdm must result in a number of relativistic neutrino species greater than or equal to zero.')
+        # Fill an array with the non-relativistic neutrino masses
+        m_ncdm = m_ncdm[mask_m].tolist()
+        T_ncdm_over_cmb = T_ncdm_over_cmb[mask_m].tolist()
+
+        params['N_ur'] = N_ur
+        # number of massive neutrino species
+        params['m_ncdm'] = m_ncdm
+        params['T_ncdm_over_cmb'] = T_ncdm_over_cmb
+
+        if params.get('z_pk', None) is None:
+            # same as pyccl, https://github.com/LSSTDESC/CCL/blob/d2a5630a229378f64468d050de948b91f4480d41/src/ccl_core.c
+            from . import interpolator
+            params['z_pk'] = interpolator.get_default_z_callable()
+        if params.get('modes', None) is None:
+            params['modes'] = ['s']
+        for name in ['modes', 'z_pk']:
+            if np.ndim(params[name]) == 0:
+                params[name] = [params[name]]
+        params['z_pk'] = np.sort(params['z_pk'])
+        if 0. not in params['z_pk']:
+            params['z_pk'] = np.insert(params['z_pk'], 0, 0.)  # in order to normalise CAMB power spectrum with sigma8
+
+        if 'Omega_m' in params:
+            nonrelativistic_ncdm = (BaseEngine._get_rho_ncdm(params, z=0).sum() - 3 * BaseEngine._get_p_ncdm(params, z=0).sum()) / constants.rho_crit_Msunph_per_Mpcph3
+            params['Omega_cdm'] = params.pop('Omega_m') - params['Omega_b'] - nonrelativistic_ncdm
+
+        defaults = {'w0_fld': (float, -1.), 'wa_fld': (float, 0.), 'cs2_fld': (float, 1.), 'use_ppf': (bool, True)}
+        for name, (type, default) in defaults.items():
+            params[name] = type(params.get(name, default))
+
+        for basename in ['Omega_cdm', 'Omega_b', 'T_cmb', 'h', 'logA', 'sigma8', 'm_ncdm', 'T_ncdm_over_cmb']:
+            if basename in params:
+                value = np.asarray(params[basename])
+                if np.any(value < 0.):
+                    raise CosmologyInputError('Parameter {} should be positive, found {}'.format(basename, value))
+
+        def is_str(name, default_string, allowed_strings):
+            value = params[name]
+            if value is None:
+                value = default_string
+            if isinstance(value, str):
+                value = value.upper()
+                if value not in allowed_strings:
+                    raise CosmologyInputError('Parameter {} should be either a float or one of {}'.format(name, allowed_strings))
+                params[name] = value
+                return True
+            params[name] = float(value)
+            return False
+
+        is_str('YHe', 'BBN', allowed_strings=('BBN',))
+        is_str('n_t', 'SCC', allowed_strings=('SCC',))
+        is_str('alpha_t', 'SCC', allowed_strings=('SCC',))
+        r, n_s = params['r'], params['n_s']
+        # e.g. https://github.com/cmbant/CAMB/blob/master/camb/initialpower.py
+        if params['n_t'] == 'SCC':
+            params['n_t'] = - r / 8.0 * (2.0 - n_s - r / 8.0)
+        if params['alpha_t'] == 'SCC':
+            params['alpha_t'] = r / 8.0 * (r / 8.0 + n_s - 1)
+
+        return params
 
     def set_engine(self, engine, set_engine=True, **extra_params):
         """
@@ -520,39 +945,6 @@ class Cosmology(BaseCosmology):
             Extra engine parameters, typically precision parameters.
         """
         self._engine = _get_cosmology_engine(self, engine, set_engine=set_engine, **extra_params)
-
-    @classmethod
-    def get_default_parameters(cls, of=None, include_conflicts=True):
-        """
-        Return default input parameters.
-
-        Parameters
-        ----------
-        of : string, default=None
-            One of ['cosmology', 'calculation'].
-            If ``None``, returns all parameters.
-
-        include_conflicts : bool, default=True
-            Whether to include conflicting parameters (then all accepted parameters).
-
-        Returns
-        -------
-        params : dict
-            Dictionary of default parameters.
-        """
-        if of == 'cosmology':
-            toret = cls._default_cosmological_parameters.copy()
-            if include_conflicts: _include_conflicts(toret)
-            return toret
-        if of == 'calculation':
-            toret = cls._default_calculation_parameters.copy()
-            if include_conflicts: _include_conflicts(toret)
-            return toret
-        if of is None:
-            toret = cls.get_default_parameters(of='cosmology', include_conflicts=include_conflicts)
-            toret.update(cls.get_default_parameters(of='calculation', include_conflicts=include_conflicts))
-            return toret
-        raise CosmologyInputError('No default parameters for {}'.format(of))
 
     def clone(self, base=None, engine=None, extra_params=None, **params):
         r"""
@@ -585,7 +977,7 @@ class Cosmology(BaseCosmology):
             Copy of current instance, with updated engine and parameters.
         """
         new = self.copy()
-        check_params(params)
+        check_params(params, conflicts=new.__class__._conflict_parameters)
         new._derived = {}
         if base == 'input':
             base_params = self._input_params.copy()
@@ -593,15 +985,71 @@ class Cosmology(BaseCosmology):
             base_params = self._params.copy()
         else:
             raise CosmologyInputError('Unknown parameter base {}'.format(base))
-        new._input_params = merge_params(base_params, params)
-        new._params = compile_params(new._input_params)
+        new._input_params = merge_params(base_params, params, conflicts=new.__class__._conflict_parameters)
+        new._params = new._compile_params(new._input_params)
         if engine is None and self._engine is not None:
             engine = self._engine.name
         if engine is not None:
             if extra_params is None:
-                extra_params = getattr(self._engine, 'extra_params', {})
+                extra_params = getattr(self._engine, '_extra_params', {})
             new.set_engine(engine, **extra_params)
         return new
+
+    def solve(self, param, func, target=0., limits=None, xtol=1e-6, rtol=1e-6):
+        """
+        Return cosmology ``cosmo`` that verifies ``func(cosmo) == target``, by varying parameter ``param``.
+
+        Parameters
+        ----------
+        param : string
+            Input parameter name, e.g. 'h'.
+
+        func : callable, string
+            Function that takes a :class:`Cosmology` instance (clone of self) and returns a value, e.g. ``lambda cosmo: cosmo.get_thermodynamics().theta_star``.
+            If 'theta_MC_100', match ``100 * cosmo['theta_cosmomc']`` to ``target``(and engine should be defined).
+
+        target : float, default=0.
+            Target value.
+
+        xtol : float, default=1e-6
+            Absolute tolerance on the value of ``param``. See :func:`scipy.optimize.bisect`.
+
+        rtol : float, default=1e-6
+            Relative tolerance on the value of ``param``. See :func:`scipy.optimize.bisect`.
+
+        Returns
+        -------
+        new : Cosmology
+        """
+        default_limits = {'h': [0.1, 2.], 'H0': [10., 200.]}
+        default_tol = {'h': (1e-6, 1e-6), 'H0': (1e-4, 1e-6)}
+
+        if func == 'theta_MC_100':
+            func = lambda cosmo: 100. * cosmo['theta_cosmomc']
+        if func is None:
+            raise CosmologyInputError('Provide func')
+        if limits is None:
+            limits = default_limits.get(param, None)
+            if limits is None:
+                raise CosmologyInputError('Provide limits')
+        if xtol is None:
+            xtol = default_tol.get(param, [1e-6] * 2)[0]
+        if rtol is None:
+            rtol = default_tol.get(param, [1e-6] * 2)[1]
+
+        value = self[param]
+
+        def f(value):
+            new = self.clone(base='input', **{param: value})
+            return func(new) - target
+
+        from scipy import optimize
+        try:
+            value = optimize.bisect(f, *limits, xtol=xtol, rtol=rtol, disp=True)
+        except ValueError as exc:
+            raise CosmologyInputError('Could not find proper {} value in the interval that matches target = {:.4f} with [f({:.3f}), f({:.3f})] = [{:.4f}, {:.4f}]'.format(param, target, *limits, *list(map(f, limits)))) from exc
+
+        return self.clone(base='input', **{param: value})
 
     def __setstate__(self, state):
         """Set the class state dictionary."""
@@ -616,7 +1064,7 @@ class Cosmology(BaseCosmology):
         for name in ['params', 'input_params', 'derived']:
             state[name] = getattr(self, '_{}'.format(name))
         if getattr(self, '_engine', None) is not None:
-            state['engine'] = {'name': self._engine.name, 'extra_params': self._engine.extra_params}
+            state['engine'] = {'name': self._engine.name, 'extra_params': self._engine._extra_params}
         return state
 
     @classmethod
@@ -719,265 +1167,7 @@ for section in _Sections:
     setattr(Cosmology, 'get_{}'.format(section.lower()), _make_section_getter(section.lower()))
 
 
-def compile_params(args):
-    """
-    Compile parameters ``args``:
-
-    - normalise parameter names
-    - perform immediate parameter derivations (e.g. omega => Omega)
-    - set neutrino masses if relevant
-    - if Omega_m provided, compute Omega_cdm from Omega_b and non-relativistic ncdm
-
-    Parameters
-    ----------
-    args : dict
-        Input parameter dictionary, without parameter conflicts.
-
-    Returns
-    -------
-    params : dict
-        Normalised parameter dictionary.
-
-    References
-    ----------
-    https://github.com/bccp/nbodykit/blob/master/nbodykit/cosmology/cosmology.py
-    """
-    params = {}
-    params.update(args)
-
-    if 'H0' in params:
-        params['h'] = params.pop('H0') / 100.
-
-    h = params['h']
-    for name, value in args.items():
-        if name.startswith('omega'):
-            omega = params.pop(name)
-            Omega = np.array(omega) / h**2  # array to cope with tuple, lists for e.g. omega_ncdm
-            params[name.replace('omega', 'Omega')] = Omega
-
-    def set_alias(params_name, args_name):
-        if args_name not in args: return
-        # pop because we copied everything
-        params[params_name] = params.pop(args_name)
-
-    set_alias('Omega_m', 'Omega0_m')
-    set_alias('Omega_cdm', 'Omega0_cdm')
-    set_alias('Omega_cdm', 'Omega_c')
-    set_alias('Omega_ncdm', 'Omega0_ncdm')
-    set_alias('Omega_b', 'Omega0_b')
-    set_alias('Omega_k', 'Omega0_k')
-    set_alias('Omega_ur', 'Omega0_ur')
-    # set_alias('Omega_Lambda', 'Omega_lambda')
-    # set_alias('Omega_Lambda', 'Omega0_lambda')
-    # set_alias('Omega_Lambda', 'Omega0_Lambda')
-    set_alias('Omega_fld', 'Omega0_fld')
-    set_alias('Omega_ncdm', 'Omega0_ncdm')
-    set_alias('T_cmb', 'T0_cmb')
-    set_alias('Omega_g', 'Omega0_g')
-
-    for name in ['ln10^{10}A_s', 'ln10^10A_s']:
-        if name in params:
-            params['A_s'] = np.exp(params.pop(name)) * 10**(-10)
-
-    if 'Omega_g' in params:
-        params['T_cmb'] = (params.pop('Omega_g') * h**2 * constants.rho_crit_kgph_per_mph3 / (4. / constants.c**3 * constants.Stefan_Boltzmann))**(0.25)
-
-    def _make_list(li, name):
-        if isinstance(li, (tuple, list, np.ndarray)):
-            return list(li)
-        raise TypeError('{} must be a list'.format(name))
-
-    T_ncdm_over_cmb = params.get('T_ncdm_over_cmb', None)
-    if T_ncdm_over_cmb in (None, []):
-        T_ncdm_over_cmb = constants.TNCDM_OVER_CMB
-
-    if 'm_ncdm' in params:
-        m_ncdm = params.pop('m_ncdm')
-        Omega_ncdm = None
-    else:
-        if 'Omega_ncdm' in params:
-            Omega_ncdm = params.pop('Omega_ncdm')
-            single_ncdm = False
-            if Omega_ncdm is None:
-                Omega_ncdm = []
-            else:
-                single_ncdm = np.ndim(Omega_ncdm) == 0
-            if single_ncdm:  # a single massive neutrino
-                Omega_ncdm = [Omega_ncdm]
-            Omega_ncdm = _make_list(Omega_ncdm, 'Omega_ncdm')
-            if np.ndim(T_ncdm_over_cmb) == 0:
-                T_ncdm_over_cmb = [T_ncdm_over_cmb] * len(Omega_ncdm)
-            T_ncdm_over_cmb = _make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
-            if len(T_ncdm_over_cmb) != len(Omega_ncdm):
-                raise TypeError('T_ncdm_over_cmb and Omega_ncdm must be of same length')
-            m_ncdm = []
-            h = params['h']
-
-            def solve_newton(omega_ncdm, m, T_eff):
-                # m is a starting guess
-                omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
-
-                while (np.abs(omega_ncdm - omega_check) > 1e-15):
-                    domegadm = _compute_ncdm_momenta(T_eff, m, z=0, out='drhodm') / constants.rho_crit_Msunph_per_Mpcph3
-                    # domegadm = 1./93.14 # this approximation works as well
-                    m = m + (omega_ncdm - omega_check) / domegadm
-                    omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
-
-                return m
-
-            for Omega, T in zip(Omega_ncdm, T_ncdm_over_cmb):
-                if Omega == 0.:
-                    m_ncdm.append(0.)
-                else:
-                    T_ncdm = params['T_cmb'] * T
-                    m = solve_newton(Omega * h**2, Omega * h**2 * 93.14, T_ncdm)
-                    # print(m, Omega * h**2 * 93.14)
-                    m_ncdm.append(m)
-
-            if single_ncdm: m_ncdm = m_ncdm[0]
-
-        else:
-            m_ncdm = []
-
-    single_ncdm = False
-    if m_ncdm is None:
-        m_ncdm = []
-    else:
-        single_ncdm = np.ndim(m_ncdm) == 0
-    if single_ncdm:  # a single massive neutrino
-        m_ncdm = [m_ncdm]
-
-    m_ncdm = _make_list(m_ncdm, 'm_ncdm')
-
-    if np.ndim(T_ncdm_over_cmb) == 0:
-        T_ncdm_over_cmb = [T_ncdm_over_cmb] * len(m_ncdm)
-    T_ncdm_over_cmb = _make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
-    if len(T_ncdm_over_cmb) != len(m_ncdm):
-        raise TypeError('T_ncdm_over_cmb and m_ncdm must be of same length')
-
-    if 'neutrino_hierarchy' in params:
-        neutrino_hierarchy = params.pop('neutrino_hierarchy')
-        # Taken from https://github.com/LSSTDESC/CCL/blob/66397c7b53e785ae6ee38a688a741bb88d50706b/pyccl/core.py#L461
-        # Sum changes in the lower bounds...
-        if neutrino_hierarchy is not None:
-            if not single_ncdm:
-                raise CosmologyInputError('neutrino_hierarchy {} cannot be passed with a list '
-                                          'for m_ncdm, only with a sum.'.format(neutrino_hierarchy))
-            sum_ncdm = m_ncdm[0]
-            if sum_ncdm < 0:
-                raise CosmologyInputError('Sum of neutrino masses must be positive.')
-            # Lesgourges & Pastor 2012, arXiv:1212.6154
-            deltam21sq = 7.62e-5
-
-            def solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq):
-                # m_ncdm is a starting guess
-                sum_check = sum(m_ncdm)
-                # This is the Newton's method, solving s = m1 + m2 + m3,
-                # with dm2/dm1 = dsqrt(deltam21^2 + m1^2) / dm1 = m1/m2, similarly for m3
-                while (np.abs(sum_ncdm - sum_check) > 1e-15):
-                    dsdm1 = 1. + m_ncdm[0] / m_ncdm[1] + m_ncdm[0] / m_ncdm[2]
-                    m_ncdm[0] = m_ncdm[0] + (sum_ncdm - sum_check) / dsdm1
-                    m_ncdm[1] = np.sqrt(m_ncdm[0]**2 + deltam21sq)
-                    m_ncdm[2] = np.sqrt(m_ncdm[0]**2 + deltam31sq)
-                    sum_check = sum(m_ncdm)
-                return m_ncdm
-
-            if (neutrino_hierarchy == 'normal'):
-                deltam31sq = 2.55e-3
-                if sum_ncdm**2 < deltam21sq + deltam31sq:
-                    raise ValueError('If neutrino_hierarchy is normal, we are using the normal hierarchy and so m_nu must be greater than (~)0.0592')
-                # Split the sum into 3 masses under normal hierarchy, m3 > m2 > m1
-                m_ncdm = [0., deltam21sq, deltam31sq]
-                solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
-
-            elif (neutrino_hierarchy == 'inverted'):
-                deltam31sq = -2.43e-3
-                if sum_ncdm**2 < -deltam31sq + deltam21sq - deltam31sq:
-                    raise ValueError('If neutrino_hierarchy is inverted, we are using the inverted hierarchy and so m_nu must be greater than (~)0.0978')
-                # Split the sum into 3 masses under inverted hierarchy, m2 > m1 > m3, here ordered as m1, m2, m3
-                m_ncdm = [np.sqrt(-deltam31sq), np.sqrt(-deltam31sq + deltam21sq), 1e-5]
-                solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
-
-            elif (neutrino_hierarchy == 'degenerate'):
-                m_ncdm = [sum_ncdm / 3.] * 3
-
-            else:
-                raise CosmologyInputError('Unkown neutrino mass type {}'.format(neutrino_hierarchy))
-
-            T_ncdm_over_cmb = [T_ncdm_over_cmb[0]] * 3
-
-    N_ur = params.get('N_ur', None)
-
-    if 'Omega_ur' in params:
-        T_ur = params['T_cmb'] * (4. / 11.)**(1. / 3.)
-        rho = 7. / 8. * 4. / constants.c**3 * constants.Stefan_Boltzmann * T_ur**4  # density, kg/m^3
-        N_ur = params.pop('Omega_ur') / (rho / (h**2 * constants.rho_crit_kgph_per_mph3))
-
-    # Check which of the neutrino species are non-relativistic today
-    m_massive = 0.00017  # Lesgourges et al. 2012
-    m_ncdm = np.array(m_ncdm)
-    T_ncdm_over_cmb = np.array(T_ncdm_over_cmb)
-    mask_m = m_ncdm > m_massive
-    # arxiv: 1812.05995 eq. 84
-    N_eff = params.pop('N_eff', constants.NEFF)
-    # We remove massive neutrinos
-    if N_ur is None:
-        N_ur = N_eff - sum(T_ncdm_over_cmb[mask_m]**4 * (4. / 11.)**(-4. / 3.))
-        # Which is just the high-redshift limit of what is below; leaving it there for clarity
-        # N_eff = (rho_r / rho_g - 1) / (7. / 8. * (4. / 11.)**(4. / 3.))  # as defined in class_public https://github.com/lesgourg/class_public/blob/aa92943e4ab86b56970953589b4897adf2bd0f99/source/background.c#L2051
-        # with rho_r = rho_g + rho_ur + 3. * pncdm and rho_ur = 7. / 8. * (4. / 11.)**(4. / 3.) * N_ur * rho_g
-        # so N_ur = N_eff - 3 * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
-        # z = 1e10
-        # pncdm = sum(_compute_ncdm_momenta(params['T_cmb'] * T, m, z=z, out='p') for T, m in zip(T_ncdm_over_cmb, m_ncdm))
-        # rho_g = params['T_cmb']**4 * (1. + z)**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann * constants.megaparsec**3 / (1e10 * constants.msun)
-        # N_ur = N_eff - 3. * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
-    if N_ur < 0.:
-        raise ValueError('N_ur and m_ncdm must result in a number of relativistic neutrino species greater than or equal to zero.')
-    # Fill an array with the non-relativistic neutrino masses
-    m_ncdm = m_ncdm[mask_m].tolist()
-    T_ncdm_over_cmb = T_ncdm_over_cmb[mask_m].tolist()
-
-    params['N_ur'] = N_ur
-    # number of massive neutrino species
-    params['m_ncdm'] = m_ncdm
-    params['T_ncdm_over_cmb'] = T_ncdm_over_cmb
-
-    if params.get('z_pk', None) is None:
-        # same as pyccl, https://github.com/LSSTDESC/CCL/blob/d2a5630a229378f64468d050de948b91f4480d41/src/ccl_core.c
-        from . import interpolator
-        params['z_pk'] = interpolator.get_default_z_callable()
-    if params.get('modes', None) is None:
-        params['modes'] = ['s']
-    for name in ['modes', 'z_pk']:
-        if np.ndim(params[name]) == 0:
-            params[name] = [params[name]]
-    params['z_pk'] = np.sort(params['z_pk'])
-    if 0. not in params['z_pk']:
-        params['z_pk'] = np.insert(params['z_pk'], 0, 0.)  # in order to normalise CAMB power spectrum with sigma8
-
-    if 'Omega_m' in params:
-        nonrelativistic_ncdm = (BaseEngine._get_rho_ncdm(params, z=0).sum() - 3 * BaseEngine._get_p_ncdm(params, z=0).sum()) / constants.rho_crit_Msunph_per_Mpcph3
-        params['Omega_cdm'] = params.pop('Omega_m') - params['Omega_b'] - nonrelativistic_ncdm
-
-    defaults = {'w0_fld': (float, -1.), 'wa_fld': (float, 0.), 'cs2_fld': (float, 1.), 'use_ppf': (bool, True)}
-    for name, (type, default) in defaults.items():
-        params[name] = type(params.get(name, default))
-
-    for basename in ['Omega_cdm', 'Omega_b', 'T_cmb', 'h', 'logA', 'sigma8', 'm_ncdm', 'T_ncdm_over_cmb']:
-        if basename in params:
-            value = np.asarray(params[basename])
-            if np.any(value < 0.):
-                raise CosmologyInputError('Parameter {} should be positive, found {}'.format(basename, value))
-
-    if params['YHe'] is None:
-        params['YHe'] = 'BBN'
-    if params['YHe'] != 'BBN':
-        params['YHe'] = float(params['YHe'])
-
-    return params
-
-
-def merge_params(args, moreargs):
+def merge_params(args, moreargs, **kwargs):
     """
     Merge ``moreargs`` parameters into ``args``.
     ``moreargs`` parameters take priority over those defined in ``args``.
@@ -1001,19 +1191,19 @@ def merge_params(args, moreargs):
     """
     for name in moreargs.keys():
         # pop those conflicting with me from the old pars
-        for eq in find_conflicts(name):
+        for eq in find_conflicts(name, **kwargs):
             if eq in args: args.pop(eq)
 
     args.update(moreargs)
     return args
 
 
-def check_params(args):
+def check_params(args, **kwargs):
     """Check for conflicting parameters in ``args`` parameter dictionary."""
     conf = {}
     for name in args:
         conf[name] = []
-        for eq in find_conflicts(name):
+        for eq in find_conflicts(name, **kwargs):
             if eq == name: continue
             if eq in args: conf[name].append(eq)
 
@@ -1022,7 +1212,7 @@ def check_params(args):
             raise CosmologyInputError('Conflicting parameters are given: {}'.format([name] + conf[name]))
 
 
-def find_conflicts(name):
+def find_conflicts(name, conflicts=tuple()):
     """
     Return conflicts corresponding to input parameter name.
 
@@ -1037,17 +1227,6 @@ def find_conflicts(name):
         Conflicting parameter names.
     """
     # dict that defines input parameters that conflict with each other
-    conflicts = [('h', 'H0'),
-                 ('T_cmb', 'Omega_g', 'omega_g', 'Omega0_g'),
-                 ('Omega_b', 'omega_b', 'Omega0_b'),
-                 # ('Omega_fld', 'Omega0_fld'),
-                 # ('Omega_Lambda', 'Omega0_Lambda'),
-                 ('N_ur', 'Omega_ur', 'omega_ur', 'Omega0_ur', 'N_eff'),
-                 ('Omega_cdm', 'omega_cdm', 'Omega0_cdm', 'Omega_c', 'omega_c', 'Omega_m', 'omega_m', 'Omega0_m'),
-                 ('m_ncdm', 'Omega_ncdm', 'omega_ncdm', 'Omega0_ncdm'),
-                 ('A_s', 'ln10^{10}A_s', 'ln10^10A_s', 'sigma8'),
-                 ('tau_reio', 'z_reio')]
-
     for conf in conflicts:
         if name in conf:
             return conf

@@ -7,15 +7,15 @@ from .cosmology import BaseEngine, CosmologyInputError, CosmologyComputationErro
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 
 
-class BaseClassEngine(object):
+class ClassEngine(BaseEngine):
 
     """Engine for the Boltzmann code CLASS."""
     name = 'class'
 
     def __init__(self, *args, **kwargs):
-        BaseEngine.__init__(self, *args, **kwargs)
+        super(ClassEngine, self).__init__(*args, **kwargs)
         params = self._params.copy()
-        extra_params = self.extra_params.copy()
+        extra_params = self._extra_params.copy()
         lensing = params.pop('lensing')
         params['k_pivot'] = params['k_pivot']
         params['lensing'] = 'yes' if lensing else 'no'
@@ -48,28 +48,40 @@ class BaseClassEngine(object):
             params['Omega_Lambda'] = 0.  # will force non-zero Omega_fld
         else:
             for name in ['w0_fld', 'wa_fld', 'cs2_fld', 'use_ppf', 'fluid_equation_of_state']: del params[name]
+        if 't' not in params['modes']:
+            del params['n_t'], params['alpha_t']
+        if params['beta_s']:
+            raise CosmologyInputError('class does not take beta_s')
+        else:
+            del params['beta_s']
         params.update(extra_params)
-        super(BaseClassEngine, self).__init__(params=params)
-        # print(self.get_params_str())
+        self._set_classy(params=params)
 
-    def compute(self, tasks):
-        try:
-            return super(BaseClassEngine, self).compute(tasks)
-        except base.ClassInputError as exc:
-            raise CosmologyInputError from exc
-        except base.ClassComputationError as exc:
-            raise CosmologyComputationError from exc
+    def _set_classy(self, params):
+
+        class _ClassEngine(base.ClassEngine):
+
+            def compute(self, tasks):
+                try:
+                    return super(_ClassEngine, self).compute(tasks)
+                except base.ClassInputError as exc:
+                    raise CosmologyInputError from exc
+                except base.ClassComputationError as exc:
+                    raise CosmologyComputationError from exc
+
+        self.classy = _ClassEngine(params=params)
 
 
 class BaseClassBackground(object):
 
-    pass
+    def __init__(self, engine):
+        super(BaseClassBackground, self).__init__(engine.classy)
 
 
 class BaseClassThermodynamics(object):
 
     def __init__(self, engine):
-        super(BaseClassThermodynamics, self).__init__(engine)
+        super(BaseClassThermodynamics, self).__init__(engine.classy)
         self.ba = engine.get_background()
 
     @property
@@ -82,7 +94,7 @@ class BaseClassThermodynamics(object):
 class BaseClassPrimordial(object):
 
     def __init__(self, engine):
-        super(BaseClassPrimordial, self).__init__(engine)
+        super(BaseClassPrimordial, self).__init__(engine.classy)
         self._rsigma8 = engine._rescale_sigma8()
 
     @property
@@ -165,18 +177,20 @@ class BaseClassPrimordial(object):
 
 class BaseClassPerturbations(object):
 
-    pass
+    def __init__(self, engine):
+        super(BaseClassPerturbations, self).__init__(engine.classy)
 
 
 class BaseClassTransfer(object):
 
-    pass
+    def __init__(self, engine):
+        super(BaseClassTransfer, self).__init__(engine.classy)
 
 
 class BaseClassHarmonic(object):
 
     def __init__(self, engine):
-        super(BaseClassHarmonic, self).__init__(engine)
+        super(BaseClassHarmonic, self).__init__(engine.classy)
         self._rsigma8 = engine._rescale_sigma8()
 
     def unlensed_table(self, ellmax=-1, of=None):
@@ -235,7 +249,7 @@ class BaseClassHarmonic(object):
 class BaseClassFourier(object):
 
     def __init__(self, engine):
-        super(BaseClassFourier, self).__init__(engine)
+        super(BaseClassFourier, self).__init__(engine.classy)
         self._rsigma8 = engine._rescale_sigma8()
 
     @property
@@ -332,11 +346,6 @@ class BaseClassFourier(object):
         """
         ka, za, pka = self.table(non_linear=non_linear, of=of)
         return PowerSpectrumInterpolator2D(ka, za, pka, **kwargs)
-
-
-class ClassEngine(BaseClassEngine, base.ClassEngine, BaseEngine):
-
-    pass
 
 
 class Background(BaseClassBackground, base.Background):

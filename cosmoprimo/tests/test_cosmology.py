@@ -50,7 +50,7 @@ def test_engine():
     assert type(cosmo.get_background()) is type(cosmo.get_background(engine='camb'))
 
 
-list_params = [{}, {'sigma8': 1.}, {'A_s': 2e-9, 'alpha_s': 0.3}, {'lensing': True},
+list_params = [{}, {'sigma8': 1.}, {'A_s': 2e-9, 'alpha_s': -0.2}, {'lensing': True},
                {'m_ncdm': 0.1, 'neutrino_hierarchy': 'normal'}, {'Omega_k': 0.1},
                {'w0_fld': -0.9, 'wa_fld': 0.1, 'cs2_fld': 0.9}, {'w0_fld': -1.1, 'wa_fld': 0.2}]
 
@@ -159,7 +159,7 @@ def test_primordial(params, seed=42):
 
     for engine in ['camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
         pm = Primordial(cosmo, engine=engine)
-        for name in ['n_s', 'alpha_s', 'k_pivot']:
+        for name in ['n_s', 'alpha_s', 'beta_s', 'k_pivot']:
             assert np.allclose(getattr(pm_class, name), cosmo['k_pivot'] / cosmo['h'] if name == 'k_pivot' else cosmo[name])
             assert np.allclose(getattr(pm, name), getattr(pm_class, name), atol=0, rtol=1e-5)
 
@@ -238,7 +238,7 @@ def test_fourier(params, seed=42):
         fo = Fourier(cosmo, engine=engine)
         z = rng.uniform(0., 10., 20)
         r = rng.uniform(1., 10., 10)
-        if 'sigma8' in cosmo.params:
+        if 'sigma8' in cosmo.get_params():
             assert np.allclose(fo.sigma8_z(0, of='delta_m'), cosmo['sigma8'], rtol=1e-3)
         for of in ['delta_m', 'delta_cb', ('delta_cb', 'theta_cb'), 'theta_cb']:
             assert np.allclose(fo.sigma_rz(r, z, of=of), fo_class.sigma_rz(r, z, of=of), rtol=1e-3)
@@ -618,6 +618,8 @@ def test_bisect():
     #from cosmoprimo.fiducial import DESI
     #cosmo = clone(DESI(engine='class'), dict(theta_MC_100=1.04092))
     print(cosmo.get_thermodynamics().theta_cosmomc)
+    cosmo2 = Cosmology(engine='class').solve('h', 'theta_MC_100', 1.04092)
+    assert np.allclose(cosmo2['h'], cosmo['h'])
 
 
     def clone(fiducial, params):
@@ -644,9 +646,12 @@ def test_bisect():
 
         return cosmo
 
+
     from cosmoprimo.fiducial import DESI
     cosmo = clone(DESI(engine='class'), dict(theta_star=0.0104))
     print(cosmo.get_thermodynamics().theta_star)
+    cosmo2 = DESI(engine='class').solve('h', lambda cosmo: 100. * cosmo.get_thermodynamics().theta_star, target=100. * 0.0104, limits=[0.6, 0.9], xtol=1e-6, rtol=1e-6)
+    assert np.allclose(cosmo2['h'], cosmo['h'])
 
 
 def test_isitgr():
@@ -664,6 +669,12 @@ def test_isitgr():
     cosmo = Cosmology(engine='isitgr', parameterization='mueta', E11=-0.5, E22=-0.5)
     assert not np.allclose(cosmo_camb.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=1e-4)
     cosmo.comoving_radial_distance(z)
+
+    from cosmoprimo.fiducial import DESI
+    cosmo = DESI(engine='isitgr')
+    cosmo['Q0']
+    assert 'Q0' in cosmo.get_default_params()
+    assert 'Q0' in cosmo.get_default_parameters()
 
 
 def test_error():
@@ -697,4 +708,4 @@ if __name__ == '__main__':
     # test_external_camb()
     test_external_pyccl()
     test_isitgr()
-    # test_bisect()
+    test_bisect()

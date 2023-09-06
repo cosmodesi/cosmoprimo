@@ -39,25 +39,43 @@ def get_cosmoprimo_inputs(block, config):
 
     # Get parameters from block and give them the
     # names and form that cosmoprimo expects
-    nnu = block.get_double(names.cosmological_parameters, 'nnu', default=3.046)
-    nmassive = block.get_int(names.cosmological_parameters, 'num_massive_neutrinos', default=0)
+    nmassive = block.get_int(names.cosmological_parameters, 'num_massive_neutrinos', default=None)
     m_ncdm = block.get_double(names.cosmological_parameters, 'mnu', default=0.06)
-    if not nmassive:
-        m_ncdm = []
+    neutrino_hierarchy = None
+    if nmassive is None or nmassive == 3:
+        neutrino_hierarchy = block.get_string(names.cosmological_parameters, 'neutrino_hierarchy', default=None)
     else:
-        m_ncdm = [m_ncdm / nmassive] * nmassive
+        m_ncdm = [m_ncdm] * nmassive
 
+    from cosmoprimo.cosmology import get_engine
+    engine = get_engine(config.get('engine', 'class'))
     params = {'lensing': config['harmonic'] and config['lensing'],
               'A_s': block[names.cosmological_parameters, 'A_s'],
               'n_s': block[names.cosmological_parameters, 'n_s'],
               'H0': 100 * block[names.cosmological_parameters, 'h0'],
               'omega_b': block[names.cosmological_parameters, 'ombh2'],
               'omega_cdm': block[names.cosmological_parameters, 'omch2'],
+              'Omega_k': block[names.cosmological_parameters, 'omega_k'],
               'tau_reio': block[names.cosmological_parameters, 'tau'],
               'T_cmb': block.get_double(names.cosmological_parameters, 'TCMB', default=2.726),
-              'N_eff': nnu,
+              'N_eff': block.get_double(names.cosmological_parameters, 'nnu', default=3.046),
               'm_ncdm': m_ncdm,
-              'engine': config['engine']}
+              'neutrino_hierarchy': neutrino_hierarchy,
+              'use_pff': config.get('use_ppf', True),
+              'engine': engine}
+    optional_params = {'alpha_s': (names.cosmological_parameters, 'nrun'),
+                       'w0_fld': (names.cosmological_parameters, 'w'),
+                       'wa_fld': (names.cosmological_parameters, 'wa'),
+                       'cs2_fld': (names.cosmological_parameters, 'cs2_de'),
+                       'A_L': (names.cosmological_parameters, 'A_lens'),
+                       'reionization_width': ('reionization', 'delta_redshift'),
+                       'YHe': (names.cosmological_parameters, 'YHe')}
+    for cosmoprimo_name, cosmosis_name in optional_params.items():
+        if block.has_value(*cosmosis_name):
+            params[cosmoprimo_name] = block[cosmosis_name]
+    for name in engine.get_default_params(include_conflicts=True):
+        if block.has_value(names.cosmological_parameters, name):
+            params[name] = block[names.cosmological_parameters, name]
 
     if config['harmonic']:
         params.update({

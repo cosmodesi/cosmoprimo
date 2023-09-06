@@ -10,8 +10,8 @@ class TabulatedEngine(BaseEngine):
 
     def __init__(self, *args, **kwargs):
         super(TabulatedEngine, self).__init__(*args, **kwargs)
-        self._names = self.extra_params.get('names', ['efunc', 'comoving_radial_distance'])
-        arrays = np.loadtxt(self.extra_params['filename'], comments='#', usecols=range(len(self._names) + 1), unpack=True)
+        self._names = self._extra_params.get('names', ['efunc', 'comoving_radial_distance'])
+        arrays = np.loadtxt(self._extra_params['filename'], comments='#', usecols=range(len(self._names) + 1), unpack=True)
         self.z = arrays[0]
         for name, array in zip(self._names, arrays[1:]):
             setattr(self, name, array)

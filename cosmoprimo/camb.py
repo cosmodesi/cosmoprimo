@@ -60,7 +60,7 @@ class CambEngine(BaseEngine):
 
         try:
 
-            kwargs = {name: self.get(name, value) for name, value in self.specific_params.items()}
+            kwargs = {name: self.get(name, value) for name, value in self.get_default_params().items()}
             YHe = None if self['YHe'] == 'BBN' else self['YHe']
             self._camb_params.set_cosmology(H0=self['H0'], ombh2=self['omega_b'], omch2=self['omega_cdm'], omk=self['Omega_k'],
                                             TCMB=self['T_cmb'], Alens=self['A_L'], YHe=YHe, **kwargs)  # + neutrinos
@@ -70,8 +70,8 @@ class CambEngine(BaseEngine):
                 self._camb_params.Reion.set_tau(tau_reio, delta_redshift=reionization_width)
             elif z_reio is not None:
                 self._camb_params.Reion.set_zrei(z_reio, delta_redshift=reionization_width)
-            self._camb_params.InitPower.set_params(As=self._get_A_s_fid(), ns=self['n_s'], nrun=self['alpha_s'], pivot_scalar=self['k_pivot'],
-                                                   pivot_tensor=self['k_pivot'], parameterization='tensor_param_rpivot', r=self['r'])
+            self._camb_params.InitPower.set_params(As=self._get_A_s_fid(), ns=self['n_s'], nrun=self['alpha_s'], nrunrun=self['beta_s'], pivot_scalar=self['k_pivot'],
+                                                   pivot_tensor=self['k_pivot'], parameterization='tensor_param_rpivot', r=self['r'], nt=self['n_t'], ntrun=self['alpha_t'])
 
             self._camb_params.share_delta_neff = False
             self._camb_params.omnuh2 = self['omega_ncdm'].sum()
@@ -132,9 +132,9 @@ class CambEngine(BaseEngine):
             self._camb_params.WantScalars = 's' in self['modes']
             self._camb_params.WantVectors = 'v' in self['modes']
             self._camb_params.WantTensors = 't' in self['modes']
-            for key, value in self.extra_params.items():
+            for key, value in self._extra_params.items():
                 if key == 'accuracy':
-                    self._camb_params.set_accuracy(self.extra_params['accuracy'])
+                    self._camb_params.set_accuracy(self._extra_params['accuracy'])
                 else:
                     setattr(self._camb_params, key, value)
 
@@ -442,13 +442,33 @@ class Primordial(BaseSection):
 
     @property
     def n_s(self):
-        r"""Power-law index i.e. tilt of the primordial power spectrum, unitless."""
+        r"""Power-law scalar index i.e. tilt of the primordial scalar power spectrum, unitless."""
         return self.pm.ns
 
     @property
     def alpha_s(self):
-        r"""Running of the spectral index at :math:`k_\mathrm{pivot}`, unitless."""
+        r"""Running of the scalar spectral index at :math:`k_\mathrm{pivot}`, unitless."""
         return self.pm.nrun
+
+    @property
+    def beta_s(self):
+        r"""Running of the running of the scalar spectral index at :math:`k_\mathrm{pivot}`, unitless."""
+        return self.pm.nrunrun
+
+    @property
+    def r(self):
+        r"""Tensor-to-scalar power spectrum ratio at :math:`k_\mathrm{pivot}`, unitless."""
+        return self.pm.r
+
+    @property
+    def n_t(self):
+        r"""Power-law tensor index i.e. tilt of the tensor primordial power spectrum, unitless."""
+        return self.pm.nt
+
+    @property
+    def alpha_t(self):
+        r"""Running of the tensor spectral index at :math:`k_\mathrm{pivot}`, unitless."""
+        return self.pm.ntrun
 
     @property
     def k_pivot(self):
@@ -462,7 +482,7 @@ class Primordial(BaseSection):
 
         .. math::
 
-            \mathcal{P_R}(k) = A_s \left (\frac{k}{k_\mathrm{pivot}} \right )^{n_s - 1 + 1/2 \alpha_s \ln(k/k_\mathrm{pivot})}
+            \mathcal{P_R}(k) = A_s \left (\frac{k}{k_\mathrm{pivot}} \right )^{n_s - 1 + 1/2 \alpha_s \ln(k/k_\mathrm{pivot}) + 1/6 \beta_s \ln(k/k_\mathrm{pivot})^2}
 
         See also: eq. 2 of `this reference <https://arxiv.org/abs/1303.5076>`_.
 

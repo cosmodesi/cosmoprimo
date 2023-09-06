@@ -84,6 +84,7 @@ def test_abacus():
 def test_desi(plot=False):
 
     cosmo = fiducial.DESI(precision='base', z_pk=np.linspace(0., 2., 11))
+    assert cosmo.engine._extra_params
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         fn = os.path.join(tmp_dir, 'cosmo.npy')

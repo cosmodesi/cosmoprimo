@@ -34,9 +34,23 @@ and extend the engine and sections of :mod:`classy.py` in :mod:`yourengine.py` a
     from . import classy
 
 
-    class YourEngine(classy.BaseClassEngine, yourengine.ClassEngine, BaseEngine):
+    class YourEngine(classy.ClassEngine):
 
         name = 'yourengine'
+
+        def _set_classy(self, params):
+
+            class _ClassEngine(base.ClassEngine):
+
+                def compute(self, tasks):
+                    try:
+                        return super(_ClassEngine, self).compute(tasks)
+                    except base.ClassInputError as exc:
+                        raise CosmologyInputError from exc
+                    except base.ClassComputationError as exc:
+                        raise CosmologyComputationError from exc
+
+        self.classy = _ClassEngine(params=params)
 
 
     class Background(classy.BaseClassBackground, yourengine.Background):
