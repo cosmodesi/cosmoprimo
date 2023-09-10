@@ -248,7 +248,7 @@ class BaseCosmology(BaseClass):
             return self.get('O' + name[1:]) * params['h']**2
         if name == 'H0':
             return params['h'] * 100
-        if name in ['ln10^{10}A_s', 'ln10^10A_s']:
+        if name in ['logA', 'ln10^{10}A_s', 'ln10^10A_s']:
             return np.log(10**10 * params['A_s'])
         # if name == 'rho_crit':
         #     return constants.rho_crit_Msunph_per_Mpcph3
@@ -401,8 +401,8 @@ class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
         self._rsigma8 = 1.
         if 'sigma8' in self._params:
             self._sections.clear()  # to remove fourier with potential _rsigma8 != 1
-            fo = self.get_fourier()
-            self._rsigma8 = self['sigma8'] / fo.sigma8_m
+            #fo = self.get_fourier()
+            self._rsigma8 = self._params['sigma8'] / self.get_fourier().sigma8_m
             self._sections.clear()  # to reinitialize fourier with correct _rsigma8
         return self._rsigma8
 
@@ -559,7 +559,7 @@ class Cosmology(BaseCosmology):
                             ('N_ur', 'Omega_ur', 'omega_ur', 'Omega0_ur', 'N_eff'),
                             ('Omega_cdm', 'omega_cdm', 'Omega0_cdm', 'Omega_c', 'omega_c', 'Omega_m', 'omega_m', 'Omega0_m'),
                             ('m_ncdm', 'Omega_ncdm', 'omega_ncdm', 'Omega0_ncdm'),
-                            ('A_s', 'ln10^{10}A_s', 'ln10^10A_s', 'sigma8'),
+                            ('A_s', 'logA', 'ln10^{10}A_s', 'ln10^10A_s', 'sigma8'),
                             ('tau_reio', 'z_reio')]
 
     def __init__(self, engine=None, extra_params=None, **params):
@@ -708,10 +708,11 @@ class Cosmology(BaseCosmology):
         set_alias('Omega_ncdm', 'Omega0_ncdm')
         set_alias('T_cmb', 'T0_cmb')
         set_alias('Omega_g', 'Omega0_g')
+        set_alias('logA', 'ln10^10A_s')
+        set_alias('logA', 'ln10^{10}A_s')
 
-        for name in ['ln10^{10}A_s', 'ln10^10A_s']:
-            if name in params:
-                params['A_s'] = np.exp(params.pop(name)) * 10**(-10)
+        if 'logA' in params:
+            params['A_s'] = np.exp(params.pop('logA')) * 10**(-10)
 
         if 'Omega_g' in params:
             params['T_cmb'] = (params.pop('Omega_g') * h**2 * constants.rho_crit_kgph_per_mph3 / (4. / constants.c**3 * constants.Stefan_Boltzmann))**(0.25)
@@ -897,7 +898,7 @@ class Cosmology(BaseCosmology):
         for name, (type, default) in defaults.items():
             params[name] = type(params.get(name, default))
 
-        for basename in ['Omega_cdm', 'Omega_b', 'T_cmb', 'h', 'logA', 'sigma8', 'm_ncdm', 'T_ncdm_over_cmb']:
+        for basename in ['Omega_cdm', 'Omega_b', 'T_cmb', 'h', 'A_s', 'sigma8', 'm_ncdm', 'T_ncdm_over_cmb']:
             if basename in params:
                 value = np.asarray(params[basename])
                 if np.any(value < 0.):
@@ -995,7 +996,7 @@ class Cosmology(BaseCosmology):
             new.set_engine(engine, **extra_params)
         return new
 
-    def solve(self, param, func, target=0., limits=None, xtol=1e-6, rtol=1e-6):
+    def solve(self, param, func, target=0., limits=None, xtol=1e-6, rtol=1e-6, maxiter=100):
         """
         Return cosmology ``cosmo`` that verifies ``func(cosmo) == target``, by varying parameter ``param``.
 
@@ -1016,6 +1017,9 @@ class Cosmology(BaseCosmology):
 
         rtol : float, default=1e-6
             Relative tolerance on the value of ``param``. See :func:`scipy.optimize.bisect`.
+
+        maxiter : int, default=100
+            If convergence is not achieved in ``maxiter`` iterations, an error is raised. Must be >= 0.
 
         Returns
         -------
@@ -1045,7 +1049,7 @@ class Cosmology(BaseCosmology):
 
         from scipy import optimize
         try:
-            value = optimize.bisect(f, *limits, xtol=xtol, rtol=rtol, disp=True)
+            value = optimize.bisect(f, *limits, xtol=xtol, rtol=rtol, maxiter=maxiter, disp=True)
         except ValueError as exc:
             raise CosmologyInputError('Could not find proper {} value in the interval that matches target = {:.4f} with [f({:.3f}), f({:.3f})] = [{:.4f}, {:.4f}]'.format(param, target, *limits, *list(map(f, limits)))) from exc
 

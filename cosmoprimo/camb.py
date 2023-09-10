@@ -106,13 +106,13 @@ class CambEngine(BaseEngine):
             self._camb_params.DoLensing = self['lensing']
             self._camb_params.Want_CMB_lensing = self['lensing']
             self._camb_params.set_for_lmax(lmax=self['ellmax_cl'])
-            self._camb_params.set_matter_power(redshifts=self['z_pk'], kmax=self['kmax_pk'] * self['h'], nonlinear=self['non_linear'], silent=True)
+            non_linear = self['non_linear']
+            self._camb_params.set_matter_power(redshifts=self['z_pk'], kmax=self['kmax_pk'] * self['h'], silent=True)
 
-            if self['non_linear']:
+            if non_linear:
                 self._camb_params.NonLinear = self.camb.model.NonLinear_both
                 self._camb_params.NonLinearModel = self.camb.nonlinear.Halofit()
 
-                non_linear = self['non_linear']
                 if non_linear in ['mead', 'hmcode']:
                     halofit_version = 'mead'
                 elif non_linear in ['halofit']:
@@ -126,7 +126,7 @@ class CambEngine(BaseEngine):
                     if tmp is not None: options[name] = tmp
                 self._camb_params.NonLinearModel.set_params(halofit_version=halofit_version, **options)
 
-            if not self['non_linear']:
+            if not non_linear:
                 assert self._camb_params.NonLinear == self.camb.model.NonLinear_none
 
             self._camb_params.WantScalars = 's' in self['modes']
@@ -186,7 +186,7 @@ class CambEngine(BaseEngine):
                 self.ready.fo = True
 
             if 'fourier' in tasks and not self.ready.fo:
-                self.tr.calc_power_spectra()
+                self.tr.calc_power_spectra(self._camb_params)
                 self.fo = self.hr = self.le = self.tr
                 self.ready.fo = True
 
@@ -194,10 +194,28 @@ class CambEngine(BaseEngine):
 
             raise CosmologyInputError from exc
 
-
     def _set_camb(self):
         import camb
         self.camb = camb
+
+    def _rescale_sigma8(self):
+        """Rescale perturbative quantities to match input sigma8."""
+        if hasattr(self, '_rsigma8'):
+            return self._rsigma8
+        self._rsigma8 = 1.
+        if 'sigma8' in self._params:
+            self._sections.clear()  # to remove fourier with potential _rsigma8 != 1
+            self._rsigma8 = self._params['sigma8'] / self.get_fourier().sigma8_m
+            # As we cannot rescale sigma8 for the non-linear power spectrum
+            # we recompute the power spectra
+            if self._camb_params.NonLinear != self.camb.model.NonLinear_none:
+                self._camb_params.InitPower.As *= self._rsigma8**2
+                self.tr.calc_power_spectra(self._camb_params)
+                self._sections.clear()
+                self._rsigma8 = 1.
+                self._rsigma8 = self._params['sigma8'] / self.get_fourier().sigma8_m
+            self._sections.clear()  # to reinitialize fourier with correct _rsigma8
+        return self._rsigma8
 
 
 class Background(BaseBackground):
@@ -573,8 +591,8 @@ class Fourier(BaseSection):
         self._engine = engine
         self._engine.compute('fourier')
         self.fo = self._engine.fo
-        self._rsigma8 = self._engine._rescale_sigma8()
         self._h = self._engine._camb_params.h
+        self._rsigma8 = self._engine._rescale_sigma8()
 
     def _checkz(self, z):
         """Check that perturbations are calculated at several redshifts, else raise an error if ``z`` not close to requested redshift."""

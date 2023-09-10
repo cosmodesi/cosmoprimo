@@ -61,7 +61,7 @@ def get_cosmoprimo_inputs(block, config):
               'N_eff': block.get_double(names.cosmological_parameters, 'nnu', default=3.046),
               'm_ncdm': m_ncdm,
               'neutrino_hierarchy': neutrino_hierarchy,
-              'use_pff': config.get('use_ppf', True),
+              'use_ppf': config.get('use_ppf', True),
               'engine': engine}
     optional_params = {'alpha_s': (names.cosmological_parameters, 'nrun'),
                        'w0_fld': (names.cosmological_parameters, 'w'),

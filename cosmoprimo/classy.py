@@ -19,8 +19,6 @@ class ClassEngine(BaseEngine):
         lensing = params.pop('lensing')
         params['k_pivot'] = params['k_pivot']
         params['lensing'] = 'yes' if lensing else 'no'
-        params['A_s'] = BaseEngine._get_A_s_fid(self)
-        if 'sigma8' in params: del params['sigma8']
         params['modes'] = ','.join(params['modes'])
         if 't' not in params['modes']: del params['r']
         params['z_max_pk'] = max(params.pop('z_pk'))
@@ -31,11 +29,17 @@ class ClassEngine(BaseEngine):
             non_linear = params['non_linear']
             if non_linear in ['mead', 'hmcode']:
                 params['non_linear'] = 'hmcode'
+                params['hmcode_min_k_max'] = params['P_k_max_h/Mpc']
             elif non_linear in ['halofit']:
                 params['non_linear'] = 'halofit'
+                params['hmcode_min_k_max'] = params['P_k_max_h/Mpc']
             else:
                 raise CosmologyInputError('Unknown non-linear code {}'.format(non_linear))
+            # As we cannot rescale sigma8 for the non-linear power spectrum
+            # we rely on class's sigma8 matching
         else:
+            params['A_s'] = BaseEngine._get_A_s_fid(self)
+            if 'sigma8' in params: del params['sigma8']
             del params['non_linear']
         params['N_ncdm'] = self['N_ncdm']
         params['T_ncdm'] = params.pop('T_ncdm_over_cmb')
@@ -167,7 +171,7 @@ class BaseClassPrimordial(object):
         Returns
         -------
         data : array
-            Structured array containing thermodynamics data.
+            Structured array containing primordial data.
         """
         table = super(BaseClassPrimordial, self).table()
         for name in table.dtype.names:
@@ -320,7 +324,7 @@ class BaseClassFourier(object):
             Redshifts.
 
         pk : array
-            Power spectrum array of shape (len(k),len(z)).
+            Power spectrum array of shape (len(k), len(z)).
         """
         k, z, pk = super(BaseClassFourier, self).table(non_linear=non_linear, of=of)
         pk *= self._rsigma8**2
