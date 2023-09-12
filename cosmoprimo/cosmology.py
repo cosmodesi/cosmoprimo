@@ -1006,8 +1006,9 @@ class Cosmology(BaseCosmology):
             Input parameter name, e.g. 'h'.
 
         func : callable, string
-            Function that takes a :class:`Cosmology` instance (clone of self) and returns a value, e.g. ``lambda cosmo: cosmo.get_thermodynamics().theta_star``.
-            If 'theta_MC_100', match ``100 * cosmo['theta_cosmomc']`` to ``target``(and engine should be defined).
+            Function that takes a :class:`Cosmology` instance (clone of ``self``) and returns a value,
+            e.g. ``lambda cosmo: cosmo.get_thermodynamics().theta_star``.
+            If 'theta_MC_100', match ``100 * cosmo['theta_cosmomc']`` to ``target`` (and engine should be defined).
 
         target : float, default=0.
             Target value.
