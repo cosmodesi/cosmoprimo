@@ -67,9 +67,10 @@ class CambEngine(BaseEngine):
             # Let's do this by hand for backward-compatibility (for isitgr)
             tau_reio, z_reio, reionization_width = self.get('tau_reio', None), self.get('z_reio', None), self['reionization_width']
             if tau_reio is not None:
-                self._camb_params.Reion.set_tau(tau_reio, delta_redshift=reionization_width)
+                self._camb_params.Reion.set_tau(tau_reio)
             elif z_reio is not None:
-                self._camb_params.Reion.set_zrei(z_reio, delta_redshift=reionization_width)
+                self._camb_params.Reion.set_zrei(z_reio)
+            self._camb_params.Reion.delta_redshift = reionization_width
             self._camb_params.InitPower.set_params(As=self._get_A_s_fid(), ns=self['n_s'], nrun=self['alpha_s'], nrunrun=self['beta_s'], pivot_scalar=self['k_pivot'],
                                                    pivot_tensor=self['k_pivot'], parameterization='tensor_param_rpivot', r=self['r'], nt=self['n_t'], ntrun=self['alpha_t'])
 
