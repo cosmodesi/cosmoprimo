@@ -248,7 +248,7 @@ class BaseCosmology(BaseClass):
             return self.get('O' + name[1:]) * params['h']**2
         if name == 'H0':
             return params['h'] * 100
-        if name in ['logA', 'ln10^{10}A_s', 'ln10^10A_s']:
+        if name in ['logA', 'ln10^{10}A_s', 'ln10^10A_s', 'ln_A_s_1e10']:
             return np.log(10**10 * params['A_s'])
         # if name == 'rho_crit':
         #     return constants.rho_crit_Msunph_per_Mpcph3
@@ -291,6 +291,8 @@ class BaseCosmology(BaseClass):
             return - 100.**2 / (constants.c / 1e3)**2 * params['Omega_k']  # in (h / Mpc)^2
         if name == 'N_ncdm':
             return len(params['m_ncdm'])
+        #if name == 'N_ur':
+        #    return params['N_eff'] - sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in params['T_ncdm_over_cmb'])
         if name == 'N_eff':
             return sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in params['T_ncdm_over_cmb']) + params['N_ur']
         if name == 'theta_cosmomc':
@@ -559,7 +561,7 @@ class Cosmology(BaseCosmology):
                             ('N_ur', 'Omega_ur', 'omega_ur', 'Omega0_ur', 'N_eff'),
                             ('Omega_cdm', 'omega_cdm', 'Omega0_cdm', 'Omega_c', 'omega_c', 'Omega_m', 'omega_m', 'Omega0_m'),
                             ('m_ncdm', 'Omega_ncdm', 'omega_ncdm', 'Omega0_ncdm'),
-                            ('A_s', 'logA', 'ln10^{10}A_s', 'ln10^10A_s', 'sigma8'),
+                            ('A_s', 'logA', 'ln10^{10}A_s', 'ln10^10A_s', 'ln_A_s_1e10', 'sigma8'),
                             ('tau_reio', 'z_reio')]
 
     def __init__(self, engine=None, extra_params=None, **params):
@@ -710,6 +712,7 @@ class Cosmology(BaseCosmology):
         set_alias('Omega_g', 'Omega0_g')
         set_alias('logA', 'ln10^10A_s')
         set_alias('logA', 'ln10^{10}A_s')
+        set_alias('logA', 'ln_A_s_1e10')
 
         if 'logA' in params:
             params['A_s'] = np.exp(params.pop('logA')) * 10**(-10)
@@ -841,7 +844,7 @@ class Cosmology(BaseCosmology):
 
                 T_ncdm_over_cmb = [T_ncdm_over_cmb[0]] * 3
 
-        N_ur = params.get('N_ur', None)
+        N_ur = params.pop('N_ur', None)
 
         if 'Omega_ur' in params:
             T_ur = params['T_cmb'] * (4. / 11.)**(1. / 3.)
@@ -853,11 +856,14 @@ class Cosmology(BaseCosmology):
         m_ncdm = np.array(m_ncdm)
         T_ncdm_over_cmb = np.array(T_ncdm_over_cmb)
         mask_m = m_ncdm > m_massive
+        # Fill an array with the non-relativistic neutrino masses
+        m_ncdm = m_ncdm[mask_m].tolist()
+        T_ncdm_over_cmb = T_ncdm_over_cmb[mask_m].tolist()
         # arxiv: 1812.05995 eq. 84
         N_eff = params.pop('N_eff', constants.NEFF)
         # We remove massive neutrinos
         if N_ur is None:
-            N_ur = N_eff - sum(T_ncdm_over_cmb[mask_m]**4 * (4. / 11.)**(-4. / 3.))
+            N_ur = N_eff - sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in T_ncdm_over_cmb)
             # Which is just the high-redshift limit of what is below; leaving it there for clarity
             # N_eff = (rho_r / rho_g - 1) / (7. / 8. * (4. / 11.)**(4. / 3.))  # as defined in class_public https://github.com/lesgourg/class_public/blob/aa92943e4ab86b56970953589b4897adf2bd0f99/source/background.c#L2051
             # with rho_r = rho_g + rho_ur + 3. * pncdm and rho_ur = 7. / 8. * (4. / 11.)**(4. / 3.) * N_ur * rho_g
@@ -868,11 +874,9 @@ class Cosmology(BaseCosmology):
             # N_ur = N_eff - 3. * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
         if N_ur < 0.:
             raise ValueError('N_ur and m_ncdm must result in a number of relativistic neutrino species greater than or equal to zero.')
-        # Fill an array with the non-relativistic neutrino masses
-        m_ncdm = m_ncdm[mask_m].tolist()
-        T_ncdm_over_cmb = T_ncdm_over_cmb[mask_m].tolist()
 
-        params['N_ur'] = N_ur
+        params['N_ur'] = float(N_ur)
+        #params['N_eff'] = N_ur + sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in T_ncdm_over_cmb)
         # number of massive neutrino species
         params['m_ncdm'] = m_ncdm
         params['T_ncdm_over_cmb'] = T_ncdm_over_cmb
@@ -956,7 +960,7 @@ class Cosmology(BaseCosmology):
         base : string, default=None
             If 'input', update input parameters.
             Else, update parameters in the internal :math:`h, \Omega, m_{cdm}` basis.
-            If, e.g. input parameters are :math:`h, \omega_{b}, \omega_{cdm}`, ``clone(h=0.7)``
+            If, e.g. input parameters are :math:`h, \omega_{b}, \omega_{cdm}`, ``clone(h=0.7)`` (i.e. ``base`` is ``None``)
             returns the same cosmology, but with :math:`h = 0.7`; since :math:`\Omega_{b}, \Omega_{cdm}` are kept fixed,
             :math:`\omega_{b}, \omega_{cdm}` are modified.
             Instead, with ``clone(h=0.7, base='input')`` :math:`\omega_{b}, \omega_{cdm}` are left unchanged,
@@ -1060,6 +1064,10 @@ class Cosmology(BaseCosmology):
         """Set the class state dictionary."""
         for name in ['params', 'input_params', 'derived']:
             setattr(self, '_{}'.format(name), state.get(name, {}))
+        # Backward-compatibility
+        #if 'N_eff' not in self._params:
+        #    self._params['N_eff'] = self._params['N_ur'] + sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in self._params['T_ncdm_over_cmb'])
+        #    del self._params['N_ur']
         if state.get('engine', None) is not None:
             self.set_engine(state['engine']['name'], **state['engine']['extra_params'])
 
@@ -1301,11 +1309,11 @@ class BaseBackground(BaseSection):
 
     @utils.flatarray()
     def rho_ur(self, z):
-        r"""Comoving density of ultra-relativistic radiation (massless neutrinos) :math:`\rho_{ur}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+        r"""Comoving density of massless neutrinos :math:`\rho_{ur}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self.Omega0_ur * (1 + z) * constants.rho_crit_Msunph_per_Mpcph3
 
     def rho_r(self, z):
-        r"""Comoving density of radiation :math:`\rho_{r}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+        r"""Comoving density of radiation :math:`\rho_{r}`, including photons and relativistic part of massive and massless neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self.rho_g(z) + self.rho_ur(z) + 3. * self.p_ncdm_tot(z)
 
     @utils.flatarray()
@@ -1407,15 +1415,12 @@ class BaseBackground(BaseSection):
 
     @utils.flatarray()
     def Omega_ur(self, z):
-        r"""Density parameter of ultra relativistic neutrinos, unitless."""
+        r"""Density parameter of massless neutrinos, unitless."""
         return self.rho_ur(z) / self.rho_crit(z)
 
     @utils.flatarray()
     def Omega_r(self, z):
-        r"""
-        Density parameter of relativistic (radiation-like) component, including
-        relativistic part of massive neutrino and massless neutrino, unitless.
-        """
+        r"""Density parameter of radiation, including photons and relativistic part of massive and massless neutrinos, unitless."""
         return self.rho_r(z) / self.rho_crit(z)
 
     @utils.flatarray()

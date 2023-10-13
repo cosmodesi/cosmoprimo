@@ -260,7 +260,7 @@ class Background(BaseBackground):
 
     @utils.flatarray(dtype=np.float64)
     def Omega_ur(self, z):
-        r"""Density parameter of ultra relativistic neutrinos, unitless."""
+        r"""Density parameter of massless neutrinos, unitless."""
         return self.ba.get_Omega('neutrino', z=z)
 
     @utils.flatarray(dtype=np.float64)
@@ -295,7 +295,7 @@ class Background(BaseBackground):
 
     @utils.flatarray(dtype=np.float64)
     def rho_ur(self, z):
-        r"""Comoving density of ultra-relativistic radiation (massless neutrinos) :math:`\rho_{ur}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+        r"""Comoving density of massless neutrinos :math:`\rho_{ur}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self.ba.get_background_densities(1. / (1 + z), vars=['neutrino'])['neutrino'] * self._RH0_ * (1 + z)
 
     @utils.flatarray(dtype=np.float64)
