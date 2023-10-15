@@ -249,7 +249,7 @@ class BaseCosmology(BaseClass):
         if name == 'H0':
             return params['h'] * 100
         if name in ['logA', 'ln10^{10}A_s', 'ln10^10A_s', 'ln_A_s_1e10']:
-            return np.log(10**10 * params['A_s'])
+            return np.log(1e10 * params['A_s'])
         # if name == 'rho_crit':
         #     return constants.rho_crit_Msunph_per_Mpcph3
         if name == 'Omega_g':
@@ -300,6 +300,8 @@ class BaseCosmology(BaseClass):
             rs, zstar = _compute_rs_cosmomc(self['omega_b'], self['omega_m'], ba.hubble_function)
             derived['theta_cosmomc'] = rs * ba.h / ba.comoving_angular_distance(zstar)
             return derived['theta_cosmomc']
+        if name == 'theta_MC_100':
+            return self.get('theta_cosmomc') * 100.
         if has_default:
             return default
         raise CosmologyError('Parameter {} not found.'.format(name))
