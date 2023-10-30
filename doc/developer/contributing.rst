@@ -50,7 +50,7 @@ and extend the engine and sections of :mod:`classy.py` in :mod:`yourengine.py` a
                     except base.ClassComputationError as exc:
                         raise CosmologyComputationError from exc
 
-        self.classy = _ClassEngine(params=params)
+            self.classy = _ClassEngine(params=params)
 
 
     class Background(classy.BaseClassBackground, yourengine.Background):
