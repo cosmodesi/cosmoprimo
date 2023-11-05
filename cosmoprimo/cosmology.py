@@ -392,7 +392,7 @@ class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
         self._sections = {}
 
     def _get_A_s_fid(self):
-        r"""First guess for power spectrum amplitude :math:`A_{s}` (given input :math:`sigma_{8}`)."""
+        r"""First guess for power spectrum amplitude :math:`A_{s}` (given input :math:`\sigma_{8}`)."""
         # https://github.com/lesgourg/class_public/blob/4724295b527448b00faa28bce973e306e0e82ef5/source/input.c#L1161
         if 'A_s' in self._params:
             return self._params['A_s']

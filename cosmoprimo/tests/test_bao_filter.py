@@ -27,6 +27,24 @@ def plot_wiggles():
     plt.show()
 
 
+def test_numerical_stability(engine='class'):
+    from matplotlib import pyplot as plt
+    from cosmoprimo.fiducial import DESI
+    cosmo_fid = DESI(engine=engine)
+    k = np.geomspace(1e-4, 10., 1000)
+    z = 1.
+    for engine in ['wallish2018', 'brieden2022', 'peakaverage'][2:]:
+        flt = PowerSpectrumBAOFilter(Fourier(cosmo_fid).pk_interpolator().to_1d(z=z), cosmo=cosmo_fid, cosmo_fid=cosmo_fid, engine=engine)
+        params = {'Omega_cdm': 0.26745069526330356, 'Omega_b': 0.049218733747821736, 'H0': 67.68384426905034, 'Omega_k': 0.009899694066652164,
+                  'w0_fld': -1.018732269977867, 'wa_fld': -0.07024108708475416, 'logA': 3.0585032346899843, 'n_s': 0.9681232258624421,
+                  'tau_reio': 0.0544, 'm_ncdm': 0.05061043158813039}
+        cosmo = cosmo_fid.clone(**params)
+        flt(Fourier(cosmo).pk_interpolator().to_1d(z=z), cosmo=cosmo)
+        plt.plot(k, flt.pk_interpolator(k) / flt.smooth_pk_interpolator()(k))
+        plt.xscale('log')
+        plt.show()
+
+
 def plot_numerical_stability(engine='class'):
     from matplotlib import pyplot as plt
     from cosmoprimo.fiducial import DESI
@@ -49,11 +67,12 @@ def plot_numerical_stability(engine='class'):
             cosmo = cosmo_fid.clone(**{param: value})
             flt(Fourier(cosmo).pk_interpolator().to_1d(z=z), cosmo=cosmo)
             Ap[engine].append(flt.smooth_pk_interpolator()(kp))
-            plt.plot(k, flt.pk_interpolator(k) / flt.smooth_pk_interpolator()(k))
+            plt.plot(k, flt.pk_interpolator(k) / flt.smooth_pk_interpolator()(k), color=color)
         plt.xscale('log')
         plt.show()
     for engine in Ap:
         plt.plot(values, Ap[engine], label=engine)
+    plt.legend()
     plt.show()
 
 
@@ -244,6 +263,8 @@ def plot_peakaverage(engine='class'):
 
 
 if __name__ == '__main__':
+
+    #test_numerical_stability()
 
     plot_pk()
     test_2d_pk()

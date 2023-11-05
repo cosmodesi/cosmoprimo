@@ -445,7 +445,7 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     name = 'peakaverage'
 
     def _prepare(self):
-        index = np.flatnonzero((self.k >= 1e-4) & (self.k <= 1.))
+        index = np.flatnonzero((self.k >= 1e-3) & (self.k <= 1.))
         k_fid = self.k[index]
         try:
             pk_fid = Fourier(self.cosmo_fid).pk_interpolator()(k_fid, z=0.)  # to cope with A_s-parameterized E&H
@@ -459,28 +459,34 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         lss(ratio, constraint=[ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]])
         pknow_correction = lss.model()
         ik0 = np.searchsorted(k_fid, 1e-2, side='right') + 1
-        self.k_peaks = []
+        self.k_peaks, self.pad_peaks = [], []
         from scipy import signal
         for si in [1., -1.]:
             ik = signal.find_peaks(si * ratio[ik0:] / pknow_correction[ik0:])[0] + ik0  # here we take just the first one, approximation
-            ik += index[0]
-            k = self.k[np.concatenate([np.arange(index[0]), ik, np.arange(max(index[-1], ik[-1] + 1), self.k.size)], axis=0)]
+            npadlow = index[0]
+            ik += npadlow
+            ikmax = max(index[-1], ik[-1] + 1)
+            self.pad_peaks.append((npadlow, len(ik), self.k.size - ikmax))
+            k = self.k[np.concatenate([np.arange(npadlow), ik, np.arange(ikmax, self.k.size)], axis=0)]
             self.k_peaks.append(k)
 
     @staticmethod
     def _interp(xh, xl, x, y, kind=2):
+        logx = np.log10(x)
         from scipy import interpolate
         toret = 0.
-        interp = interpolate.interp1d(x, y, kind=kind, axis=0, fill_value='extrapolate', assume_sorted=True)
+        interp = interpolate.interp1d(logx, y, kind=kind, axis=0, fill_value='extrapolate', assume_sorted=True)
         for xx in [xh, xl]:
-            yy = interp(xx)
-            toret += interpolate.interp1d(xx, yy, kind=kind, axis=0, fill_value='extrapolate', assume_sorted=True)(x)
+            logxx = np.log10(xx)
+            yy = interp(logxx)
+            toret += interpolate.interp1d(logxx, yy, kind=kind, axis=0, fill_value='extrapolate', assume_sorted=True)(logx)
         return toret / 2.
 
     def _compute(self):
         rescale = self.rs_drag_ratio()
+        rescale = [np.concatenate([np.linspace(1., rescale, npad[0]), np.full(npad[1], rescale), np.linspace(rescale, 1., npad[2])]) for npad in self.pad_peaks]
         pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k)[:, None]
-        self.pknow = self._interp(self.k_peaks[0] / rescale, self.k_peaks[1] / rescale, self.k, self.pk / pknow) * pknow
+        self.pknow = self._interp(self.k_peaks[0] / rescale[0], self.k_peaks[1] / rescale[1], self.k, self.pk / pknow) * pknow
 
 
 class RegisteredCorrelationFunctionBAOFilter(type(BaseClass)):
