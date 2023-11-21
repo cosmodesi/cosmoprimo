@@ -16,7 +16,6 @@ jax_array_types = ()
 try:
     # raise ImportError
     import jax, jaxlib
-    from jax.config import config; config.update('jax_enable_x64', True)
     import jax.numpy as jnp
     jax_array_types = []
     for line in ['jaxlib.xla_extension.DeviceArrayBase', 'type(jnp.array(0))', 'jax.core.Tracer']:
