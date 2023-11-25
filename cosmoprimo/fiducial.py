@@ -140,6 +140,12 @@ def AbacusSummit(name=0, engine='class', precision=None, extra_params=None, **pa
     Original AbacusSummit initial power spectrum was computed with CLASS, with:
     https://github.com/abacusorg/AbacusSummit/blob/master/Cosmologies/abacus_cosm000/CLASS.ini
 
+    Warning
+    -------
+    Be careful of the parameterization when calling :meth:`Cosmology.clone`:
+    for AbacusSummit input parameters are ['omega_b', 'omega_cdm', 'h', 'A_s', 'n_s', 'alpha_s', 'N_ur', 'omega_ncdm', 'omega_k', 'tau_reio', 'w0_fld', 'wa_fld'].
+    We recast the ``N_ur`` specification into ``N_eff`` with ``clone(N_eff=cosmo['N_eff'])`` such that changes with 'm_ncdm' are continuous.
+
     Parameters
     ----------
     name : string, int, default=0
@@ -181,7 +187,9 @@ def AbacusSummit(name=0, engine='class', precision=None, extra_params=None, **pa
             for name in ['recfast_Nz0', 'tol_perturb_integration', 'perturb_sampling_stepsize']: prec.pop(name)  # these do not exist anymore
             default_extra_params.update(prec)
     extra_params = {**default_extra_params, **(extra_params or {})}
-    return Cosmology(engine=engine, extra_params=extra_params, **default_params).clone(**params)
+    cosmo = Cosmology(engine=engine, extra_params=extra_params, **default_params)
+    cosmo = cosmo.clone(base='input', N_eff=cosmo['N_eff'])
+    return cosmo.clone(**params)
 
 
 def AbacusSummitBase(engine='class', precision=None, extra_params=None, **params):

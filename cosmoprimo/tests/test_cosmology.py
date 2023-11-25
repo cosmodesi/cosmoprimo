@@ -558,9 +558,9 @@ def test_clone():
             assert test
         else:
             assert not test
-        cosmo_clone = cosmo.clone(sigma8=cosmo.sigma8_m * factor)
+        cosmo_clone = cosmo.clone(base='internal', sigma8=cosmo.sigma8_m * factor)
         assert np.allclose(cosmo_clone.get_fourier().sigma_rz(8, 0, of='delta_m'), cosmo.sigma8_m * factor, rtol=1e-4)  # interpolation error
-        cosmo_clone = cosmo.clone(h=cosmo.h * factor)
+        cosmo_clone = cosmo.clone(base='internal', h=cosmo.h * factor)
         assert np.allclose(cosmo_clone.Omega0_m, cosmo.Omega0_m)
         cosmo_clone = cosmo.clone(base='input', h=cosmo.h * factor)
         assert np.allclose(cosmo_clone.Omega0_cdm, cosmo.Omega0_cdm / factor**2)

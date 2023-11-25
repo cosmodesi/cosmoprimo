@@ -21,14 +21,15 @@ def test_boss():
 def test_abacus():
     from cosmoprimo.fiducial import AbacusSummit_params, AbacusSummit
     dcosmos = AbacusSummit_params(params=['root', 'omega_b', 'omega_cdm', 'h', 'A_s', 'n_s', 'alpha_s', 'N_ur', 'omega_ncdm', 'w0_fld', 'wa_fld'])
-    ncosmos = len(dcosmos)
     assert AbacusSummit_params(19)['omega_ncdm'] == (0.0006442, 0.0006442)
     assert list(AbacusSummit_params(19, params=['h']).keys()) == ['h']
     assert list(AbacusSummit_params(19, params=['omega_k', 'h']).keys()) == ['omega_k', 'h']
     for dcosmo in dcosmos:
         cosmo = AbacusSummit(dcosmo['root'])
         dcosmo.pop('root')
-        assert cosmo == AbacusSummit().clone(T_ncdm_over_cmb=None, **dcosmo)
+        cosmo2 = AbacusSummit().clone(T_ncdm_over_cmb=None, **dcosmo)
+        assert np.allclose(cosmo2._params['N_ur'], cosmo._params['N_ur'])
+        assert cosmo == cosmo2.clone(N_eff=cosmo2['N_eff'])
     with pytest.raises(ValueError):
         cosmo = AbacusSummit('0')
 

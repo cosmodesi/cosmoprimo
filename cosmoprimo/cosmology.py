@@ -953,19 +953,19 @@ class Cosmology(BaseCosmology):
         """
         self._engine = _get_cosmology_engine(self, engine, set_engine=set_engine, **extra_params)
 
-    def clone(self, base=None, engine=None, extra_params=None, **params):
+    def clone(self, base='input', engine=None, extra_params=None, **params):
         r"""
         Clone current cosmology instance, optionally updating engine and parameters.
 
         Parameters
         ----------
-        base : string, default=None
-            If 'input', update input parameters.
-            Else, update parameters in the internal :math:`h, \Omega, m_{cdm}` basis.
-            If, e.g. input parameters are :math:`h, \omega_{b}, \omega_{cdm}`, ``clone(h=0.7)`` (i.e. ``base`` is ``None``)
+        base : string, default='input'
+            If 'internal' or ``None``, update parameters in the internal :math:`h, \Omega, m_{cdm}` basis.
+            If, e.g. input parameters are :math:`h, \omega_{b}, \omega_{cdm}`, ``clone(base='internal', h=0.7)``
             returns the same cosmology, but with :math:`h = 0.7`; since :math:`\Omega_{b}, \Omega_{cdm}` are kept fixed,
             :math:`\omega_{b}, \omega_{cdm}` are modified.
-            Instead, with ``clone(h=0.7, base='input')`` :math:`\omega_{b}, \omega_{cdm}` are left unchanged,
+            If 'input', update input parameters.
+            With ``clone(base='input', h=0.7)`` :math:`\omega_{b}, \omega_{cdm}` are left unchanged,
             but :math:`\Omega_{b}, \Omega_{cdm}` are modified.
 
         engine : string, default=None
@@ -988,7 +988,7 @@ class Cosmology(BaseCosmology):
         new._derived = {}
         if base == 'input':
             base_params = self._input_params.copy()
-        elif base is None:
+        elif base in ['internal', None]:
             base_params = self._params.copy()
         else:
             raise CosmologyInputError('Unknown parameter base {}'.format(base))
