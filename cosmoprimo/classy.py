@@ -59,6 +59,9 @@ class ClassEngine(BaseEngine):
         else:
             del params['beta_s']
         params.update(extra_params)
+        #params.update(k_step_sub=0.015, k_step_super=0.0001, k_step_super_reduction=0.1)
+        params.setdefault('k_per_decade_for_bao', 100)  # default is 70 (precisions.h)
+        params.setdefault('k_per_decade_for_pk', 20)  # default is 10
         self._set_classy(params=params)
 
     def _set_classy(self, params):
