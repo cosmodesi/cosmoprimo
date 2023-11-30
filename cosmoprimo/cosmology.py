@@ -560,6 +560,7 @@ class Cosmology(BaseCosmology):
                             ('Omega_b', 'omega_b', 'Omega0_b'),
                             # ('Omega_fld', 'Omega0_fld'),
                             # ('Omega_Lambda', 'Omega0_Lambda'),
+                            ('Omega_k', 'omega_k', 'Omega0_k'),
                             ('N_ur', 'Omega_ur', 'omega_ur', 'Omega0_ur', 'N_eff'),
                             ('Omega_cdm', 'omega_cdm', 'Omega0_cdm', 'Omega_c', 'omega_c', 'Omega_m', 'omega_m', 'Omega0_m'),
                             ('m_ncdm', 'Omega_ncdm', 'omega_ncdm', 'Omega0_ncdm'),
@@ -691,11 +692,14 @@ class Cosmology(BaseCosmology):
             if name.startswith('omega'):
                 omega = params.pop(name)
                 Omega = np.array(omega) / h**2  # array to cope with tuple, lists for e.g. omega_ncdm
-                params[name.replace('omega', 'Omega')] = Omega
+                params_name = name.replace('omega', 'Omega')
+                if params_name in params: raise CosmologyInputError('found both {} and {}, must be added to _conflict_parameters'.format(name, params_name))
+                params[params_name] = Omega
 
         def set_alias(params_name, args_name):
             if args_name not in args: return
             # pop because we copied everything
+            if params_name in params: raise CosmologyInputError('found both {} and {}, must be added to _conflict_parameters'.format(args_name, params_name))
             params[params_name] = params.pop(args_name)
 
         set_alias('Omega_m', 'Omega0_m')
