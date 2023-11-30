@@ -1127,7 +1127,7 @@ class Cosmology(BaseCosmology):
         """
         if self._engine is None:
             raise AttributeError('Attribute {} not found; try setting an engine ("set_engine")?'.format(name))
-        # Resolving a name from the sections : c.Omega0_m => c.get_background().Omega0_m
+        # Resolving a name from the sections : cosmo.Omega0_m => cosmo.get_background().Omega0_m
         Sections = self._engine._Sections
         for section_name, Section in Sections.items():
             if hasattr(Section, name) and not any(hasattr(OtherSection, name) for OtherSection in Sections.values() if OtherSection is not Section):  # keep only single elements

@@ -424,14 +424,7 @@ class Transfer(BaseSection):
         self.tr = self._engine.tr
 
     def table(self):
-        r"""
-        Return source functions.
-
-        Returns
-        -------
-        tk : dict
-            Dictionary of perturbed quantities (in array of shape (k size, z size)).
-        """
+        r"""Return source functions (in array of shape (k.size, z.size))."""
         data = self.tr.get_matter_transfer_data()
         dtype = [(name, np.float64) for name in self._engine.camb.model.transfer_names]
         # shape (k, z)

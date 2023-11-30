@@ -15,7 +15,14 @@ from . import constants
 
 
 def get_default_k_callable():
-    return np.logspace(-6., 2., 500)
+    # Taken from https://github.com/alessiospuriomancini/cosmopower/blob/main/cosmopower/training/spectra_generation_scripts/2_create_spectra.py
+    k = np.concatenate([np.logspace(-5, -4, num=20, endpoint=False),
+                        np.logspace(-4, -3, num=40, endpoint=False),
+                        np.logspace(-3, -2, num=60, endpoint=False),
+                        np.logspace(-2, -1, num=80, endpoint=False),
+                        np.logspace(-1, 0, num=100, endpoint=False),
+                        np.logspace(0, 2, num=240, endpoint=False)])
+    return k
 
 
 def get_default_s_callable():
