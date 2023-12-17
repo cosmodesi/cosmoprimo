@@ -3,18 +3,33 @@
 import numpy as np
 from cosmoprimo.interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D, get_default_k_callable, get_default_z_callable
 
-from .cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyInputError, CosmologyComputationError
-from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
-from . import utils, constants
+from cosmoprimo.cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyInputError, CosmologyComputationError
+from cosmoprimo.interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
+from cosmoprimo import utils
+from . import Emulator
 
 
 class EmulatedEngine(BaseEngine):
 
     """Engine using emulator."""
     name = 'emulated'
+    path = None
 
     def __init__(self, *args, **kwargs):
         super(EmulatedEngine, self).__init__(*args, **kwargs)
+        emulator = getattr(self.__class__, '_emulator', None)
+        if emulator is None:
+            emulator = self.__class__._emulator = Emulator.load(self.path)
+        self._state = emulator.predict(**{param: self[param] for param in self._emulator.params})
+
+
+def get_section_state(state, section='background'):
+    section = section + '.'
+    toret = {}
+    for name, value in state.items():
+        if name.startswith(section):
+            toret[name[len(section):]] = value
+    return toret
 
 
 class Background(BaseBackground):
@@ -23,7 +38,7 @@ class Background(BaseBackground):
 
     def __init__(self, engine):
         super(Background, self).__init__(engine=engine)
-        self.ba = self._engine
+        self.__setstate__(get_section_state(engine._state, section='background'))
 
     @utils.flatarray(dtype=np.float64)
     def time(self, z):
@@ -38,15 +53,6 @@ class Background(BaseBackground):
         See eq. 15 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_C(z)`.
         """
         return self._state['comoving_radial_distance'](z)
-
-    @utils.flatarray(dtype=np.float64)
-    def luminosity_distance(self, z):
-        r"""
-        Luminosity distance, in :math:`\mathrm{Mpc}/h`.
-
-        See eq. 21 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{L}(z)`.
-        """
-        return self._state['luminosity_distance'](z)
 
     @utils.flatarray(dtype=np.float64)
     def angular_diameter_distance(self, z):
@@ -66,7 +72,6 @@ class Background(BaseBackground):
         and :math:`\sinh` if :math:`K > 0`.
         camb's ``angular_diameter_distance2(z1, z2)`` is not used as it returns 0 when z2 < z1.
         """
-        # return self.ba.angular_diameter_distance2(z1, z2) * self._h  # returns 0 when z2 < z1
         if np.any(z2 < z1):
             import warnings
             warnings.warn(f"Second redshift(s) z2 ({z2}) is less than first redshift(s) z1 ({z1}).")
@@ -87,10 +92,19 @@ class Background(BaseBackground):
         """
         return self.angular_diameter_distance(z) * (1. + z)
 
+    @utils.flatarray(dtype=np.float64)
+    def luminosity_distance(self, z):
+        r"""
+        Luminosity distance, in :math:`\mathrm{Mpc}/h`.
+
+        See eq. 21 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{L}(z)`.
+        """
+        return self.angular_diameter_distance(z) * (1. + z)**2
+
     def __getstate__(self):
         state = {}
         state['z'] = z = get_default_z_callable()
-        for name in ['time', 'comoving_radial_distance', 'luminosity_distance', 'angular_diameter_distance']:
+        for name in ['time', 'comoving_radial_distance', 'angular_diameter_distance']:
             state[name] = getattr(self, name)(z)
 
     def __setstate__(self, state):
@@ -105,6 +119,7 @@ class Background(BaseBackground):
 class Transfer(BaseSection):
 
     def __init__(self, engine):
+        self.__setstate__(engine._state, section='transfer')
         self._engine = engine
 
     def table(self):
@@ -120,6 +135,7 @@ class Primordial(BaseSection):
 
     def __init__(self, engine):
         """Initialize :class:`Primordial`."""
+        self._state = get_section_state(engine._state, section='primordial')
         self._engine = engine
         self._h = self._engine['h']
         self._A_s = self._engine._A_s
@@ -190,6 +206,7 @@ class Primordial(BaseSection):
 class Harmonic(BaseSection):
 
     def __init__(self, engine):
+        self.__setstate__(engine._state, section='harmonic')
         self._engine = engine
         self._rsigma8 = self._engine._rescale_sigma8()
         self.ellmax_cl = self._engine['ellmax_cl']
@@ -234,6 +251,7 @@ class Harmonic(BaseSection):
 class Fourier(BaseSection):
 
     def __init__(self, engine):
+        self.__setstate__(engine._state, section='fourier')
         self._engine = engine
         self._h = self._engine['h']
         self._rsigma8 = self._engine._rescale_sigma8()

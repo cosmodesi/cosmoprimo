@@ -1,0 +1,284 @@
+import os
+import re
+import sys
+import time
+import logging
+import traceback
+
+import numpy as np
+
+from . import jax
+
+
+"""A few utilities."""
+
+
+logger = logging.getLogger('Utils')
+
+
+def is_sequence(item):
+    """Whether input item is a tuple or list."""
+    return isinstance(item, (list, tuple))
+
+
+def exception_handler(exc_type, exc_value, exc_traceback):
+    """Print exception with a logger."""
+    # Do not print traceback if the exception has been handled and logged
+    _logger_name = 'Exception'
+    log = logging.getLogger(_logger_name)
+    line = '=' * 100
+    # log.critical(line[len(_logger_name) + 5:] + '\n' + ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)) + line)
+    log.critical('\n' + line + '\n' + ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)) + line)
+    if exc_type is KeyboardInterrupt:
+        log.critical('Interrupted by the user.')
+    else:
+        log.critical('An error occured.')
+
+
+def mkdir(dirname):
+    """Try to create ``dirname`` and catch :class:`OSError`."""
+    try:
+        os.makedirs(dirname)  # MPI...
+    except OSError:
+        return
+
+
+def setup_logging(level=logging.INFO, stream=sys.stdout, filename=None, filemode='w', **kwargs):
+    """
+    Set up logging.
+
+    Parameters
+    ----------
+    level : string, int, default=logging.INFO
+        Logging level.
+
+    stream : _io.TextIOWrapper, default=sys.stdout
+        Where to stream.
+
+    filename : string, default=None
+        If not ``None`` stream to file name.
+
+    filemode : string, default='w'
+        Mode to open file, only used if filename is not ``None``.
+
+    kwargs : dict
+        Other arguments for :func:`logging.basicConfig`.
+    """
+    # Cannot provide stream and filename kwargs at the same time to logging.basicConfig, so handle different cases
+    # Thanks to https://stackoverflow.com/questions/30861524/logging-basicconfig-not-creating-log-file-when-i-run-in-pycharm
+    if isinstance(level, str):
+        level = {'info': logging.INFO, 'debug': logging.DEBUG, 'warning': logging.WARNING}[level.lower()]
+    for handler in logging.root.handlers:
+        logging.root.removeHandler(handler)
+
+    t0 = time.time()
+
+    class MyFormatter(logging.Formatter):
+
+        def format(self, record):
+            self._style._fmt = '[%09.2f] ' % (time.time() - t0) + ' %(asctime)s %(name)-28s %(levelname)-8s %(message)s'
+            return super(MyFormatter, self).format(record)
+
+    fmt = MyFormatter(datefmt='%m-%d %H:%M ')
+    if filename is not None:
+        mkdir(os.path.dirname(filename))
+        handler = logging.FileHandler(filename, mode=filemode)
+    else:
+        handler = logging.StreamHandler(stream=stream)
+    handler.setFormatter(fmt)
+    logging.basicConfig(level=level, handlers=[handler], **kwargs)
+    sys.excepthook = exception_handler
+
+
+class BaseMetaClass(type):
+
+    """Metaclass to add logging attributes to :class:`BaseClass` derived classes."""
+
+    def __new__(meta, name, bases, class_dict):
+        cls = super().__new__(meta, name, bases, class_dict)
+        cls.set_logger()
+        return cls
+
+    def set_logger(cls):
+        """
+        Add attributes for logging:
+
+        - logger
+        - methods log_debug, log_info, log_warning, log_error, log_critical
+        """
+        cls.logger = logging.getLogger(cls.__name__)
+
+        def make_logger(level):
+
+            @classmethod
+            def logger(cls, *args, **kwargs):
+                return getattr(cls.logger, level)(*args, **kwargs)
+
+            return logger
+
+        for level in ['debug', 'info', 'warning', 'error', 'critical']:
+            setattr(cls, 'log_{}'.format(level), make_logger(level))
+
+
+class BaseClass(object, metaclass=BaseMetaClass):
+    """
+    Base class that implements :meth:`copy`.
+    To be used throughout this package.
+    """
+    def __copy__(self, *args, **kwargs):
+        new = self.__class__.__new__(self.__class__)
+        new.__dict__.update(self.__dict__)
+        return new
+
+    def copy(self, *args, **kwargs):
+        return self.__copy__(*args, **kwargs)
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+    @classmethod
+    def from_state(cls, state):
+        new = cls.__new__(cls)
+        new.__setstate__(state)
+        return new
+
+    def save(self, filename):
+        """Save to ``filename``."""
+        self.log_info('Saving {}.'.format(filename))
+        mkdir(os.path.dirname(filename))
+        np.save(filename, self.__getstate__(), allow_pickle=True)
+
+    @classmethod
+    def load(cls, filename):
+        cls.log_info('Loading {}.'.format(filename))
+        state = np.load(filename, allow_pickle=True)[()]
+        new = cls.from_state(state)
+        return new
+
+
+def find_names(allnames, name):
+    """
+    Search parameter name ``name`` in list of names ``allnames``,
+    matching template forms ``[::]``;
+    return corresponding parameter names.
+    Contrary to :func:`find_names_latex`, it does not handle latex strings,
+    but can take a list of parameter names as ``name``
+    (thus returning the concatenated list of matching names in ``allnames``).
+
+    >>> find_names(['a_1', 'a_2', 'b_1', 'c_2'], ['a_[:]', 'b_[:]'])
+    ['a_1', 'a_2', 'b_1']
+
+    Parameters
+    ----------
+    allnames : list
+        List of parameter names (strings).
+
+    name : list, str
+        List of parameter name(s) to match in ``allnames``.
+
+    Returns
+    -------
+    toret : list
+        List of parameter names (strings).
+    """
+    if not is_sequence(allnames):
+        allnames = [allnames]
+
+    if is_sequence(name):
+        toret = []
+        for nn in name: toret += find_names(allnames, nn)
+        return toret
+
+    if isinstance(name, re.Pattern):
+        pattern = name
+    else:
+        #name = fnmatch.translate(name)  # does weird things to -
+        pattern = name.replace('*', '.*?') + '$'  # ? for non-greedy, $ to match end of string
+    toret = []
+    for paramname in allnames:
+        match = re.match(pattern, paramname)
+        if match:
+            toret.append(paramname)
+    return toret
+
+
+def expand_dict(di, names):
+    """
+    Expand input dictionary, taking care of wildcards, e.g.:
+
+    >>> expand_dict({'*': 2}, ['a', 'b'])
+    {'a': 2, 'b': 2}
+    >>> expand_dict({'a*': 2, 'b': 1}, ['a1', 'a2', 'b'])
+    {'a1': 2, 'a2': 2, 'b': 1}
+    """
+    toret = dict.fromkeys(names)
+    if is_sequence(di):
+        di = dict(zip(names, di))
+    if not hasattr(di, 'items'):
+        di = {'*': di}
+    for template, value in di.items():
+        for tmpname in find_names(names, template):
+            toret[tmpname] = value
+    return toret
+
+
+def deep_eq(obj1, obj2, equal_nan=True):
+    """(Recursively) test equality between ``obj1`` and ``obj2``."""
+    if type(obj2) is type(obj1):
+        if isinstance(obj1, dict):
+            if obj2.keys() == obj1.keys():
+                return all(deep_eq(obj1[name], obj2[name]) for name in obj1)
+        elif isinstance(obj1, (tuple, list)):
+            if len(obj2) == len(obj1):
+                return all(deep_eq(o1, o2) for o1, o2 in zip(obj1, obj2))
+        elif isinstance(obj1, (np.ndarray,) + jax.array_types):
+            return np.array_equal(obj2, obj1, equal_nan=equal_nan)
+        else:
+            return obj2 == obj1
+    return False
+
+
+def subspace(X, precision=None, npcs=None, chi2min=None, fweights=None, aweights=None):
+    r"""
+    Project input values ``X`` to a subspace.
+    See https://arxiv.org/pdf/2009.03311.pdf
+
+    Parameters
+    ----------
+    X : array
+        Array of shape (number of samples, ndim).
+
+    precision : array, default=None
+        Optionally, precision matrix, to normalize ``X``.
+
+    npcs : int, default=None
+        Optionally, number (<= ndim) of principal components to keep.
+        If ``None``, number of components to be kept is fixed by ``chi2min``.
+
+    chi2min : int, default=None
+        In case ``npcs`` is provided, threshold for the maximum difference in :math:`\chi^{2}`
+        w.r.t. keeping all components. If ``None``, all components are kept.
+
+    fweights : array, default=None
+        Optionally, integer frequency weights, of shape (number of samples,).
+
+    aweights : array, default=None
+        Optionally, observation weights.
+    """
+    X = np.asarray(X)
+    X = X.reshape(X.shape[0], -1)
+    if precision is None:
+        L = np.array(1.)
+    else:
+        L = np.linalg.cholesky(precision)
+    X = X.dot(L)
+    cov = np.cov(X, rowvar=False, ddof=0, fweights=fweights, aweights=aweights)
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+    if npcs is None:
+        if chi2min is None:
+            npcs = len(eigenvalues)
+        else:
+            npcs = len(eigenvalues) - np.sum(np.cumsum(eigenvalues) < chi2min)
+    if npcs > len(eigenvectors):
+        raise ValueError('Number of requested components is {0:d}, but dimension is {1:d} < {0:d}.'.format(npcs, len(eigenvalues)))
+    return L.dot(eigenvectors)[..., -npcs:]
