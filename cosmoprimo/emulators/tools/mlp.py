@@ -1,28 +1,12 @@
 import numpy as np
 
-from .jax import jit
 from .jax import numpy as jnp
-from .base import BaseEmulatorEngine
-from . import mpi, utils
+from .base import BaseEmulatorEngine, Operation, NormOperation
+from . import mpi
 
 
 def _make_tuple(obj, length=None):
-    """
-    Return tuple from ``obj``.
-
-    Parameters
-    ----------
-    obj : object, tuple, list, array
-        If tuple, list or array, cast to list.
-        Else return tuple of ``obj`` with length ``length``.
-
-    length : int, default=1
-        Length of tuple to return, if ``obj`` not already tuple, list or array.
-
-    Returns
-    -------
-    toret : tuple
-    """
+    # Return tuple from ``obj``.
     if np.ndim(obj) == 0:
         obj = (obj,)
         if length is not None:
@@ -34,29 +18,32 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
     """
     Multi-layer perceptron emulator. Based on Joe DeRose and Stephen Chen's EmulateLSS code:
     https://github.com/sfschen/EmulateLSS
+    Or cosmopower:
+    https://github.com/alessiospuriomancini/cosmopower
+
+    TODO
+    ----
+    Flax or not flax?
 
     Parameters
     ----------
-    nhidden : tuple, default=(100, 100, 100)
+    nhidden : tuple, default=(32, 32, 32)
         Size of hidden layers.
 
-    ytransform : str, default=''
-        Transform to be applied to quantity to be emulated.
-        Can be "arcsinh".
-
-    npcs : int, default=None
-        Number of principal components (eigenvalues) in PCA.
-        By default, all components are kept.
+    loss : str, callable, default='mse'
+        Loss function for training.
     """
     name = 'mlp'
 
-    def __init__(self, nhidden=(100, 100, 100), ytransform='', npcs=None, engine='rqrs', niterations=int(1e5)):
+    def __init__(self, *args, nhidden=(32, 32, 32), loss='mse', **kwargs):
+        super().__init__(*args, **kwargs)
         self.nhidden = tuple(nhidden)
-        self.npcs = npcs
-        self.ytransform = str(ytransform)
-        self.sampler_options = dict(engine=engine, niterations=niterations)
+        self.loss = loss
+        for operations in [self.xoperations, self.yoperations]:
+            if len(operations) == 0 or operations[-1].name not in ['scale', 'norm', 'pca']:
+                operations.append(NormOperation())
 
-    def get_default_samples(self, calculator, **kwargs):
+    def get_default_samples(self, calculator, params, engine='rqrs', niterations=int(1e4)):
         """
         Returns samples.
 
@@ -69,16 +56,15 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
         engine : str, default='rqrs'
             QMC engine, to choose from ['sobol', 'halton', 'lhs', 'rqrs'].
 
-        niterations : int, default=300
+        niterations : int, default=1000
             Number of samples to draw.
         """
         from .samples import QMCSampler
-        options = {**self.sampler_options, **kwargs}
-        sampler = QMCSampler(calculator, self.params, engine=options['engine'], mpicomm=self.mpicomm)
-        sampler.run(niterations=options['niterations'])
+        sampler = QMCSampler(calculator, params, engine=engine, mpicomm=self.mpicomm)
+        sampler.run(niterations=niterations)
         return sampler.samples
 
-    def fit(self, X, Y, attrs, validation_frac=0.2, optimizer='adam', batch_sizes=(320, 640, 1280, 2560, 5120), epochs=1000, learning_rates=(1e-2, 1e-3, 1e-4, 1e-5, 1e-6), seed=None):
+    def _fit_no_operation(self, X, Y, attrs, validation_frac=0.2, optimizer='adam', loss=None, batch_frac=(0.1, 0.3, 1.), epochs=1000, learning_rate=(1e-2, 1e-3, 1e-5), verbose=0, seed=None):
         """
         Fit.
 
@@ -87,42 +73,47 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
         validation_frac : float, default=0.2
             Fraction of the training sample to use for validation.
 
+        loss : str, callable, default=None
+            Override loss function for training provided at initialization (:meth:`__init__`).
+
         optimizer : str, default='adam'
             Tensorflow optimizer to use.
 
-        batch_sizes : tuple, list, default=(320, 640, 1280, 2560, 5120)
-            Optimization batch sizes.
+        batch_frac : tuple, list, default=(0.1, 0.3, 1.)
+            Optimization batch sizes, in units of total sample size.
 
         epochs : int, tuple, list, default=1000
             Number of optimization epochs or a list of such number for each batch.
 
-        learning_rates : float, tuple, list, default=(1e-2, 1e-3, 1e-4, 1e-5, 1e-6)
+        learning_rate : float, tuple, list, default=(1e-2, 1e-3, 1e-5)
             Learning rate, a float or a list of such float for each batch.
+
+        verbose : int, default=0
+            Tensorflow verbosity.
 
         seed : int, default=None
             Random seed.
         """
+        if loss is None:
+            loss = self.loss
         optimizer = str(optimizer)
         validation_frac = float(validation_frac)
-        batch_sizes = _make_tuple(batch_sizes, length=1)
-        epochs = _make_tuple(epochs, length=len(batch_sizes))
-        learning_rates = _make_tuple(learning_rates, length=len(batch_sizes))
+        list_batch_frac = _make_tuple(batch_frac, length=1)
+        list_epochs = _make_tuple(epochs, length=len(list_batch_frac))
+        list_learning_rate = _make_tuple(learning_rate, length=len(list_batch_frac))
         rng = np.random.RandomState(seed=seed)
 
-        self.operations = None
+        self.model_operations = None
 
         import tensorflow as tf
         from tensorflow.keras.callbacks import EarlyStopping
 
         class TFModel(tf.keras.Model):
 
-            def __init__(self, architecture, eigenvectors=None, mean=None, sigma=None):
+            def __init__(self, architecture):
                 super(TFModel, self).__init__()
                 self.architecture = architecture
                 self.nlayers = len(self.architecture) - 1
-                self.mean = mean
-                self.sigma = sigma
-                self.eigenvectors = eigenvectors
 
                 self.W, self.b, self.alpha, self.beta = [], [], [], []
                 for i in range(self.nlayers):
@@ -140,22 +131,16 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
                     # non-linear activation function
                     if i < self.nlayers - 1:
                         x = tf.multiply(tf.add(self.beta[i], tf.multiply(tf.sigmoid(tf.multiply(self.alpha[i], x)), tf.subtract(1., self.beta[i]))), x)
-                # linear output layer
-                if self.eigenvectors is not None:
-                    x = tf.matmul(tf.add(tf.multiply(x, self.sigma), self.mean), self.eigenvectors)
                 return x
 
             def operations(self):
                 operations = []
                 for i in range(self.nlayers):
                     # linear network operation
-                    operations.append({'eval': 'x @ W + b', 'locals': {'W': self.W[i].numpy(), 'b': self.b[i].numpy()}})
+                    operations.append(Operation('v @ W + b', locals={'W': self.W[i].numpy(), 'b': self.b[i].numpy()}))
                     # non-linear activation function
                     if i < self.nlayers - 1:
-                        operations.append({'eval': '(beta + (1 - beta) / (1 + np.exp(-alpha * x))) * x', 'locals': {'alpha': self.alpha[i].numpy(), 'beta': self.beta[i].numpy()}})
-                # linear output layer
-                if self.eigenvectors is not None:
-                    operations.append({'eval': '(x * sigma + mean) @ eigenvectors', 'locals': {'eigenvectors': eigenvectors, 'mean': mean, 'sigma': sigma}})
+                        operations.append(Operation('(beta + (1 - beta) / (1 + jnp.exp(-alpha * v))) * v', locals={'alpha': self.alpha[i].numpy(), 'beta': self.beta[i].numpy()}))
                 return operations
 
             def __getstate__(self):
@@ -176,74 +161,55 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
 
         if self.mpicomm.rank == 0:
             samples = {'X': X, 'Y': Y}
-            self.operations = {}
-            for name, value in samples.items():
-                mean, sigma = np.mean(value, axis=0), np.std(value, ddof=1, axis=0)
-                self.operations[name] = [{'eval': 'x * sigma + mean' if name == 'Y' else '(x - mean) / sigma',
-                                          'locals': {'mean': mean, 'sigma': sigma}}]
-                samples[name] = (value - mean) / sigma
-            if 'arcsinh' in self.ytransform:
-                Y = np.arcsinh(samples['Y'])
-                mean, sigma = np.mean(Y, axis=0), np.std(Y, ddof=1, axis=0)
-                samples['Y'] = (Y - mean) / sigma
-                self.operations['Y'].insert(0, {'eval': 'np.sinh(x) * sigma + mean', 'locals': {'mean': mean, 'sigma': sigma}})
             mask = np.zeros(nsamples, dtype='?')
             mask[rng.choice(nsamples, size=nvalidation, replace=False)] = True
             for name, value in list(samples.items()):
                 samples['{}_validation'.format(name)] = value[mask]
                 samples['{}_training'.format(name)] = value[~mask]
-            eigenvectors, mean, sigma = None, None, None
-            architecture = [X.shape[-1]] + list(self.nhidden)
-            if self.npcs is not None:
-                ndim = samples['Y_training'].shape[-1]
-                if self.npcs > ndim:
-                    self.log_warning('Number of requested components is {0:d}, but dimension is already {1:d} < {0:d}.'.format(self.npcs, ndim))
-                    self.npcs = ndim
-                eigenvectors = utils.subspace(samples['Y_training'], npcs=self.npcs)
-                tmp = samples['Y_training'].dot(eigenvectors)
-                eigenvectors = eigenvectors.T
-                mean, sigma = np.mean(tmp, axis=0), np.std(tmp, ddof=1, axis=0)
-                architecture += [len(mean)]
-            else:
-                architecture += [samples['Y'].shape[1]]
-
-            tfmodel = TFModel(architecture, eigenvectors=eigenvectors, mean=mean, sigma=sigma)
+            architecture = [X.shape[-1]] + list(self.nhidden) + [Y.shape[-1]]
+            tfmodel = TFModel(architecture)
             state = getattr(self, 'tfmodel', None)
             if state is not None:
                 if not isinstance(state, dict):
                     state = state.__getstate__()
                 tfmodel.__setstate__(state)
             self.tfmodel = tfmodel
-            self.tfmodel.compile(optimizer=optimizer, loss='mse', metrics=['mse'])
-            es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=50)
+            self.tfmodel.compile(optimizer=optimizer, loss=loss, metrics=['mse'])
+            es = EarlyStopping(monitor='val_loss', mode='min', verbose=verbose, patience=50)
 
-            for batch_size, epoch, lr in zip(batch_sizes, epochs, learning_rates):
-                if lr is None:
-                    lr = self.tfmodel.optimizer.lr.numpy()
+            for batch_frac, epochs, learning_rate in zip(list_batch_frac, list_epochs, list_learning_rate):
+                batch_size = max(int(nsamples * batch_frac + 0.5), 1)
+                if learning_rate is None:
+                    learning_rate = self.tfmodel.optimizer.lr.numpy()
                 else:
-                    self.tfmodel.optimizer.lr.assign(lr)
-                self.log_info('Using (batch size, epochs, learning rate) = ({:d}, {:d}, {:.2e})'.format(batch_size, epoch, lr))
-                self.tfmodel.fit(samples['X_training'], samples['Y_training'], batch_size=batch_size, epochs=epoch,
-                                 validation_data=(samples['X_validation'], samples['Y_validation']), callbacks=[es], verbose=2)
-                self.operations['M'] = self.tfmodel.operations()
-            self.operations = self.operations['X'] + self.operations['M'] + self.operations['Y']
+                    self.tfmodel.optimizer.lr.assign(learning_rate)
+                self.log_info('Using (batch size, epochs, learning rate) = ({:d}, {:d}, {:.2e})'.format(batch_size, epochs, learning_rate))
+                self.tfmodel.fit(samples['X_training'], samples['Y_training'], batch_size=batch_size, epochs=epochs,
+                                 validation_data=(samples['X_validation'], samples['Y_validation']), callbacks=[es], verbose=verbose)
+            self.model_operations = self.tfmodel.operations()
 
         mpi.barrier_idle(self.mpicomm)  # we rely on keras parallelisation; here we make MPI processes idle
 
-        self.operations = self.mpicomm.bcast(self.operations, root=0)
+        self.model_operations = self.mpicomm.bcast(self.model_operations, root=0)
 
-    @jit(static_argnums=[0])
-    def predict(self, X):
+    def _predict_no_operation(self, X):
         x = X
-        for operation in self.operations:
-            x = eval(operation['eval'], {'np': jnp}, {'x': x, **operation['locals']})
+        for operation in self.model_operations:
+            x = operation(x)
         return x
 
     def __getstate__(self):
-        state = {}
-        for name in ['operations', 'tfmodel']:
+        state = super().__getstate__()
+        for name in ['nhidden', 'sampler_options']:
             if hasattr(self, name):
-                tmp = getattr(self, name)
-                if hasattr(tmp, '__getstate__'): tmp = tmp.__getstate__()
-                state[name] = tmp
+                state[name] = getattr(self, name)
+        try: state['tfmodel'] = self.tfmodel.__getstate__()
+        except AttributeError: pass
+        try: state['model_operations'] = [operation.__getstate__() for operation in self.model_operations]
+        except AttributeError: pass
         return state
+
+    def __setstate__(self, state):
+        super().__setstate__(state)
+        try: self.model_operations = [Operation.from_state(state) for state in self.model_operations]
+        except AttributeError: pass

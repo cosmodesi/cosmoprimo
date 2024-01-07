@@ -3,7 +3,7 @@ import os
 import numpy as np
 from matplotlib import pyplot as plt
 
-from cosmoprimo.emulators.tools import Emulator, EmulatedCalculator, TaylorEmulatorEngine, setup_logging
+from cosmoprimo.emulators.tools import Emulator, EmulatedCalculator, TaylorEmulatorEngine, DiffSampler, setup_logging
 
 
 def calculator(a=0, b=0):
@@ -27,11 +27,11 @@ def plot(calculator, emulator, params):
     ax.set_ylabel('$y$')
 
 
-def test_base(show=True):
+def test_taylor(show=True):
     emulator_dir = '_tests'
     fn = os.path.join(emulator_dir, 'emu.npy')
     params = {'a': (0., 1.), 'b': (0., 1.)}
-    emulator = Emulator(calculator, params, engine=TaylorEmulatorEngine(order={'*': 2}))
+    emulator = Emulator(calculator, params, engine=TaylorEmulatorEngine(order={'*': 4}))
     emulator.set_samples()
     emulator.fit()
     emulator.save(fn)
@@ -39,6 +39,13 @@ def test_base(show=True):
     emulator = EmulatedCalculator.load(fn)
     state = emulator(a=1)
     print(state)
+    sampler = DiffSampler(calculator, params, order={'*': 4})
+    samples = sampler.run()
+    emulator = Emulator(samples=samples, engine=TaylorEmulatorEngine())
+    emulator.fit()
+    emulator.save(fn)
+    emulator = emulator.to_calculator()
+
     if show:
         plot(calculator, emulator, params)
         plt.show()
@@ -47,4 +54,4 @@ def test_base(show=True):
 if __name__ == '__main__':
 
     setup_logging()
-    test_base()
+    test_taylor()

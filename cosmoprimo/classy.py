@@ -16,6 +16,7 @@ class ClassEngine(BaseEngine):
         super(ClassEngine, self).__init__(*args, **kwargs)
         params = self._params.copy()
         extra_params = self._extra_params.copy()
+        params = {**extra_params, **params}
         lensing = params.pop('lensing')
         params['k_pivot'] = params['k_pivot']
         params['lensing'] = 'yes' if lensing else 'no'
@@ -25,14 +26,15 @@ class ClassEngine(BaseEngine):
         params['P_k_max_h/Mpc'] = params.pop('kmax_pk')
         params['l_max_scalars'] = params.pop('ellmax_cl')
         if params['non_linear']:
-            params['z_max_pk'] = min(params['z_max_pk'], 2.)  # otherwise error
+            # Seems fixed
+            #params['z_max_pk'] = min(params['z_max_pk'], 2.)  # otherwise error
             non_linear = params['non_linear']
             if non_linear in ['mead', 'hmcode']:
                 params['non_linear'] = 'hmcode'
                 params['hmcode_min_k_max'] = params['P_k_max_h/Mpc']
             elif non_linear in ['halofit']:
                 params['non_linear'] = 'halofit'
-                params['hmcode_min_k_max'] = params['P_k_max_h/Mpc']
+                params['halofit_min_k_max'] = params['P_k_max_h/Mpc']
             else:
                 raise CosmologyInputError('Unknown non-linear code {}'.format(non_linear))
             # As we cannot rescale sigma8 for the non-linear power spectrum
@@ -58,7 +60,6 @@ class ClassEngine(BaseEngine):
             raise CosmologyInputError('class does not take beta_s')
         else:
             del params['beta_s']
-        params.update(extra_params)
         #params.update(k_step_sub=0.015, k_step_super=0.0001, k_step_super_reduction=0.1)
         params.setdefault('k_per_decade_for_bao', 100)  # default is 70 (precisions.h)
         params.setdefault('k_per_decade_for_pk', 20)  # default is 10
@@ -210,7 +211,7 @@ class BaseClassHarmonic(object):
             Maximum :math:`\ell` desired. If negative, is relative to the requested maximum :math:`\ell`.
 
         of : list, default=None
-            List of outputs, ['tt','ee','bb','te','pp','tp','ep']. If ``None``, return all computed outputs.
+            List of outputs, ['tt', 'ee', 'bb', 'te', 'pp', 'tp', 'ep']. If ``None``, return all computed outputs.
 
         Returns
         -------
@@ -239,7 +240,7 @@ class BaseClassHarmonic(object):
             Maximum :math:`\ell` desired. If negative, is relative to the requested maximum :math:`\ell`.
 
         of : list, default=None
-            List of outputs, ['tt','ee','bb','pp','te','tp']. If ``None``, return all computed outputs.
+            List of outputs, ['tt', 'ee', 'bb', 'pp', 'te', 'tp']. If ``None``, return all computed outputs.
 
         Returns
         -------
@@ -299,7 +300,7 @@ class BaseClassFourier(object):
         Returns
         -------
         pk : array
-            Power spectrum array of shape (len(k),len(z)).
+            Power spectrum array of shape (len(k), len(z)).
         """
         return super(BaseClassFourier, self).pk_kz(k, z, non_linear=non_linear, of=of) * self._rsigma8**2
 
@@ -316,7 +317,7 @@ class BaseClassFourier(object):
         of : string, tuple, default='delta_m'
             Perturbed quantities.
             Either 'delta_m' for matter perturbations or 'delta_cb' for cold dark matter + baryons perturbations will use precomputed spectra.
-            Else, e.g. ('delta_m','theta_cb') for the cross matter density - cold dark matter + baryons velocity power spectra, are computed on-the-fly.
+            Else, e.g. ('delta_m', 'theta_cb') for the cross matter density - cold dark matter + baryons velocity power spectra, are computed on-the-fly.
 
         Returns
         -------
@@ -346,13 +347,13 @@ class BaseClassFourier(object):
         of : string, tuple, default='delta_m'
             Perturbed quantities.
             Either 'delta_m' for matter perturbations or 'delta_cb' for cold dark matter + baryons perturbations will use precomputed spectra.
-            Else, e.g. ('delta_m','theta_cb') for the cross matter density - cold dark matter + baryons velocity power spectra, are computed on-the-fly.
+            Else, e.g. ('delta_m', 'theta_cb') for the cross matter density - cold dark matter + baryons velocity power spectra, are computed on-the-fly.
 
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
         """
         ka, za, pka = self.table(non_linear=non_linear, of=of)
-        return PowerSpectrumInterpolator2D(ka, za, pka, **kwargs)
+        return PowerSpectrumInterpolator2D(ka, za, np.abs(pka), **kwargs)  # abs for delta_m, phi_plus_psi
 
 
 class Background(BaseClassBackground, base.Background):

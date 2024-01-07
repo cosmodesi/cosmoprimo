@@ -201,7 +201,7 @@ class FFTlog(object):
         ----------
         fun : array_like
             Function to be transformed.
-            Last dimensions should match (:attr:`nparallel`,len(x)) where ``len(x)`` is the size of the input x-coordinates.
+            Last dimensions should match (:attr:`nparallel`, len(x)) where ``len(x)`` is the size of the input x-coordinates.
             (if :attr:`nparallel` is 1, the only requirement is the last dimension to be (len(x))).
 
         extrap : float, string, default=0

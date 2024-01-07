@@ -21,7 +21,8 @@ def get_default_k_callable():
                         np.logspace(-3, -2, num=60, endpoint=False),
                         np.logspace(-2, -1, num=80, endpoint=False),
                         np.logspace(-1, 0, num=100, endpoint=False),
-                        np.logspace(0, 2, num=240, endpoint=False)])
+                        np.logspace(0, 2, num=240, endpoint=True)])
+                        #np.logspace(0, 2, num=240, endpoint=True)])
     return k
 
 
@@ -30,7 +31,7 @@ def get_default_s_callable():
 
 
 def get_default_z_callable():
-    return np.linspace(0., 10., 60)
+    return np.linspace(0., 10.**0.5, 30)**2  # approximates default class z
 
 
 def _pad_log(k, pk, extrap_kmin=1e-6, extrap_kmax=1e2):
@@ -601,7 +602,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         Returns
         -------
         sigmar : array_like
-            Array of shape ``(r.size,)`` (null dimensions are squeezed).
+            Array of shape ``(r.size,)``.
         """
         if nk is None:
             return integrate_sigma_r2(r, self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, epsrel=epsrel)**0.5
@@ -901,17 +902,21 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         Returns
         -------
         sigmarz : array_like
-            Array of shape ``(r.size, z.size)`` (null dimensions are squeezed).
+            Array of shape ``(r.size, z.size)``.
         """
         dtype = _bcast_dtype(z)
+        r = np.asarray(r, dtype=dtype)
         z = np.asarray(z, dtype=dtype)
+        zflat = np.unique(z.ravel())
+        if not zflat.size:
+            return np.empty(shape=r.shape + z.shape, dtype=dtype)
         if nk is None:
             toret = np.array([self.to_1d(z=zz).sigma_r(r, epsrel=epsrel) for zz in z.flat]).T
             toret.shape = z.shape
             return toret.astype(dtype=dtype, copy=False)
         k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
-        s, var = TophatVariance(k)(self(k, z=self.z).T)
-        return np.sqrt(GenericSpline(s, self.z, var.T)(r, z, grid=True)).astype(dtype=dtype, copy=False)
+        s, var = TophatVariance(k)(self(k, z=zflat).T)
+        return np.sqrt(GenericSpline(s, zflat, var.T)(r, z, grid=True)).astype(dtype=dtype, copy=False)
 
     def sigma8_z(self, z=0, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""

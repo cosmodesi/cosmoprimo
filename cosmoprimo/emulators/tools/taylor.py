@@ -1,7 +1,6 @@
 import itertools
 
 import numpy as np
-from .jax import jit
 from .jax import numpy as jnp
 from .base import BaseEmulatorEngine
 from . import mpi
@@ -185,10 +184,11 @@ class TaylorEmulatorEngine(BaseEmulatorEngine):
     """
     name = 'taylor'
 
-    def __init__(self, order=3, accuracy=2):
+    def __init__(self, *args, order=3, accuracy=2, **kwargs):
+        super().__init__(*args, **kwargs)
         self.sampler_options = dict(order=order, accuracy=accuracy)
 
-    def get_default_samples(self, calculator, **kwargs):
+    def get_default_samples(self, calculator, params, **kwargs):
         """
         Returns samples with derivatives.
 
@@ -201,19 +201,16 @@ class TaylorEmulatorEngine(BaseEmulatorEngine):
         accuracy : int, dict, default=2
             A dictionary mapping parameter name (including wildcard) to derivative accuracy (number of points used to estimate it).
             If a single value is provided, applies to all varied parameters.
-            Not used if ``method = 'auto'``  for this parameter.
-
-        delta_scale : float, default=1.
-            Parameter grid ranges for the estimation of finite derivatives are inferred from parameters' :attr:`Parameter.delta`.
-            These values are then scaled by ``delta_scale`` (< 1. means smaller ranges).
         """
         from .samples import DiffSampler
         options = {**self.sampler_options, **kwargs}
-        sampler = DiffSampler(calculator, self.params, **options, mpicomm=self.mpicomm)
+        sampler = DiffSampler(calculator, params, **options, mpicomm=self.mpicomm)
         sampler.run()
         return sampler.samples
 
-    def fit(self, X, Y, attrs):
+    def _fit_no_operation(self, X, Y, attrs):
+        if self.mpicomm.bcast(attrs.get('cidx', None) if self.mpicomm.rank == 0 else None) is None:
+            raise ValueError('provide samples that are obtained with DiffSampler')
         if self.mpicomm.rank == 0:
             cidx = attrs['cidx']
             saccuracy = [attrs['accuracy'][param] for param in self.params]
@@ -242,8 +239,7 @@ class TaylorEmulatorEngine(BaseEmulatorEngine):
         self.powers = self.mpicomm.bcast(self.powers if self.mpicomm.rank == 0 else None, root=0)
         self.center = self.mpicomm.bcast(self.center if self.mpicomm.rank == 0 else None, root=0)
 
-    @jit(static_argnums=[0])
-    def predict(self, X):
+    def _predict_no_operation(self, X):
         diffs = jnp.array(X - self.center)
         #diffs = jnp.where(self.powers > 0, diffs, 0.)  # a trick to avoid NaNs in the derivation
         #powers = jnp.prod(jnp.power(diffs, self.powers), axis=-1)
@@ -251,7 +247,8 @@ class TaylorEmulatorEngine(BaseEmulatorEngine):
         return jnp.tensordot(self.derivatives, powers, axes=(0, 0))
 
     def __getstate__(self):
-        state = {}
-        for name in ['center', 'derivatives', 'powers']:
-            state[name] = getattr(self, name)
+        state = super().__getstate__()
+        for name in ['sampler_options', 'center', 'derivatives', 'powers']:
+            if hasattr(self, name):
+                state[name] = getattr(self, name)
         return state

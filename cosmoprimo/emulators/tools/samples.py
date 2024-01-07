@@ -16,7 +16,34 @@ class BaseMetaClass(type(UserDict), type(BaseClass)): pass
 
 class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
 
+    """
+    Class representing samples obtained from a calculator.
+    Essentially a dictionary of arrays, plus optional attributes :attr:`attrs`.
+
+    .. code-block::
+
+        size = 10
+        samples = Samples({'xa': np.linspace(0., 1., size), 'xb': np.linspace(0., 1., size), 'c': np.linspace(0., 1., size)})
+        samples.columns('x*')  ['a', 'b']
+        samples.select(['xa', 'c'])  # samples restricted to columns ['xa', 'c']
+        samples['c']  # access column 'c'
+        assert samples.size == size
+        assert samples[:3].size == 3  # global slicing
+
+    """
+
     def __init__(self, samples=None, attrs=None):
+        """
+        Initialize samples.
+
+        Parameters
+        ----------
+        samples : dict, default=None
+            Dictionary of arrays.
+
+        attrs : dict, default=None
+            Optionally, attributes to be stored in :attr:`attrs`.
+        """
         self.data = dict(samples or {})
         self.attrs = dict(attrs or {})
 
@@ -26,23 +53,68 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
     def __setstate__(self, state):
         super(Samples, self).__setstate__(state)
 
-    @classmethod
-    def from_state(cls, state):
-        new = cls.__new__(cls)
-        new.__setstate__(state)
-        return new
-
     def save(self, filename):
-        """Save to ``filename``."""
-        self.log_info('Saving {}.'.format(filename))
-        utils.mkdir(os.path.dirname(filename))
-        np.save(filename, self.__getstate__(), allow_pickle=True)
+        """
+        Save to ``filename``.
+        If filename ends with '.npy', save as a unique file.
+        Else, save in this directory, with a '.npy' file for attrs and each name: array.
+        """
+        filename = str(filename)
+        in_dir = not filename.endswith('.npy')
+        state = self.__getstate__()
+        if in_dir:
+            self.log_info('Saving to directory {}.'.format(filename))
+            attrs_fn = os.path.join(filename, 'attrs.npy')
+            data_dir = os.path.join(filename, 'data')
+            utils.mkdir(filename)
+            utils.mkdir(data_dir)
+            np.save(attrs_fn, state['attrs'], allow_pickle=True)
+            for name, value in state['data'].items():
+                np.save(os.path.join(data_dir, name + '.npy'), value)
+        else:
+            self.log_info('Saving {}.'.format(filename))
+            utils.mkdir(os.path.dirname(filename))
+            np.save(filename, state, allow_pickle=True)
 
     @classmethod
     def load(cls, filename):
-        cls.log_info('Loading {}.'.format(filename))
-        state = np.load(filename, allow_pickle=True)[()]
+        """Load samples."""
+        filename = str(filename)
+        in_dir = not filename.endswith('.npy')
+        if in_dir:
+            cls.log_info('Loading from directory {}.'.format(filename))
+            attrs_fn = os.path.join(filename, 'attrs.npy')
+            data_dir = os.path.join(filename, 'data')
+            state = {}
+            state['attrs'] = np.load(attrs_fn, allow_pickle=True)[()]
+            state['data'] = {}
+            for basename in os.listdir(data_dir):
+                fn = os.path.join(data_dir, basename)
+                if os.path.isfile(fn):
+                    state['data'][os.path.splitext(basename)[0]] = np.load(fn)
+        else:
+            cls.log_info('Loading {}.'.format(filename))
+            state = np.load(filename, allow_pickle=True)[()]
         new = cls.from_state(state)
+        return new
+
+    def __copy__(self):
+        """Shallow copy."""
+        new = super().__copy__()
+        new.attrs = dict(self.attrs)
+        return new
+
+    def deepcopy(self):
+        """Deep copy."""
+        import copy
+        return copy.deepcopy(self)
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            return super().__getitem__(key)
+        new = self.copy()
+        for name in self:
+            new[name] = self[name][key]
         return new
 
     @classmethod
@@ -54,14 +126,13 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
         if len(others) == 1 and utils.is_sequence(others[0]):
             others = others[0]
         if not others: return cls()
-        new = cls()
+        new = cls(attrs=dict(others[0].attrs))
         new_params = []
-        others = list(others[:1]) + [other for other in others[1:] if other]
         if intersection:
             for other in others:
                 new_params += [param for param in other if param not in new_params]
         else:
-            new_params = list(other.keys())
+            new_params = list(others[0].keys())
             for other in others:
                 other_params = list(other.keys())
                 if set(other_params) != set(new_params):
@@ -76,7 +147,7 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
 
     @classmethod
     def scatter(cls, samples, mpicomm=mpi.COMM_WORLD, mpiroot=0):
-        """Scatter."""
+        """Scatter accross this MPI communicator."""
         samples = samples or {}
         params, attrs = mpicomm.bcast((list(samples.keys()), samples.attrs) if mpicomm.rank == mpiroot else None, root=0)
         toret = cls(attrs=attrs)
@@ -86,7 +157,7 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
 
     @classmethod
     def gather(cls, samples, mpicomm=mpi.COMM_WORLD, mpiroot=0):
-        """Gather."""
+        """Gather from this MPI communicator."""
         params, attrs = mpicomm.bcast((list(samples.keys()), samples.attrs) if mpicomm.rank == mpiroot else None, root=0)
         toret = cls(attrs=attrs)
         for param in params:
@@ -95,12 +166,14 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
 
     @property
     def shape(self):
+        """Samples shape ``(size, )``."""
         for array in self.values():
-            return array.shape
+            return array.shape[:1]
         return tuple()
 
     @property
     def size(self):
+        """Samples size."""
         shape = self.shape
         if shape:
             s = 1
@@ -108,6 +181,53 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
                 s *= ss
             return s
         return 0
+
+    def columns(self, include=None, exclude=None):
+        """
+        Return selected columns.
+
+        Parameters
+        ----------
+        include : str, list, default=None
+            (List of) column names to select including wildcard, e.g. '*' to select all columns,
+            ['X.*', 'a'] to select all columns starting with 'X.' and column 'a' (if exists).
+
+        exclude : str, list, default=None
+            Same as ``include``, but to exclude columns.
+
+        Returns
+        -------
+        columns : list
+            List of selected columns.
+        """
+        columns = list(self.keys())
+        if include is not None:
+            columns = utils.find_names(columns, include)
+        if exclude is not None:
+            columns = [column for column in columns if column not in utils.find_names(columns, exclude)]
+        return columns
+
+    def select(self, include=None, exclude=None):
+        """
+        Select input columns.
+
+        Parameters
+        ----------
+        include : str, list, default=None
+            (List of) column names to select including wildcard, e.g. '*' to select all columns,
+            ['X.*', 'a'] to select all columns starting with 'X.' and column 'a' (if exists).
+
+        exclude : str, list, default=None
+            Same as ``include``, but to exclude columns.
+
+        Returns
+        -------
+        new : Samples
+            Samples with list of selected columns.
+        """
+        new = self.copy()
+        new.data = {name: self[name] for name in self.columns(include=include, exclude=exclude)}
+        return new
 
 
 class RQuasiRandomSequence(qmc.QMCEngine):
@@ -147,11 +267,26 @@ def get_qmc_engine(engine):
     return {'sobol': Sobol, 'halton': Halton, 'lhs': LatinHypercube, 'rqrs': RQuasiRandomSequence}.get(engine, engine)
 
 
+class CalculatorComputationError(Exception):
+
+    """Exception raised by calculator to be caught up with NaNs."""
+
+
 class BaseSampler(BaseClass):
 
-    """Base sampler class."""
+    """
+    Base sampler class.
+    Subclasses should implement :meth:`points`.
+    Produced samples have columns starting with 'X.', which are input parameters, and the others starting with 'Y.', for calculator outputs.
 
-    def __init__(self, calculator, params=None, mpicomm=mpi.COMM_WORLD, save_fn=None, **kwargs):
+    .. code-block:: python
+
+        sampler = QMCSampler(calculator, params={'a': (0.8, 1.2), 'b': (0.8, 1.2)}, save_fn=samples_fn)
+        sampler.run(niterations=10000)  # samples save to samples_fn
+        sampler.samples  # samples on MPI rank 0
+    """
+
+    def __init__(self, calculator, params=None, mpicomm=mpi.COMM_WORLD, save_fn=None, samples=None):
         """
         Initialize base sampler.
 
@@ -160,14 +295,14 @@ class BaseSampler(BaseClass):
         calculator : callable
             Input calculator.
 
-        mpicomm : mpi.COMM_WORLD, default=None
+        params : dict
+            Dictionary of {parameter name: parameter limits} for input ``calculator``.
+
+        mpicomm : MPI communicator, default= mpi.COMM_WORLD
             MPI communicator.
 
         save_fn : str, Path, default=None
             If not ``None``, save samples to this location.
-
-        **kwargs : dict
-            Optional engine-specific arguments.
         """
         self.mpicomm = mpicomm
         self.set_calculator(calculator, params)
@@ -175,13 +310,15 @@ class BaseSampler(BaseClass):
             raise ValueError('Provide at least one parameter')
         self.save_fn = save_fn
         self.samples = None
+        if self.mpicomm.rank == 0 and samples is not None:
+            self.samples = samples if isinstance(samples, Samples) else Samples.load(samples)
 
     def set_calculator(self, calculator, params):
         """Set calculator and parameters."""
         self.calculator = calculator
         self.params = dict(params)
 
-    def run(self, **kwargs):
+    def run(self, save_every=20, **kwargs):
         """
         Run sampling. Sampling can be interrupted anytime, and resumed by providing
         the path to the saved samples in ``samples`` argument of :meth:`__init__`.
@@ -190,29 +327,53 @@ class BaseSampler(BaseClass):
         ----------
         niterations : int, default=300
             Number of samples to draw.
+
+        save_every : int, default=20
+            Save every ``save_every`` iterations.
         """
-        samples = None
         if self.mpicomm.rank == 0:
             samples = self.points(**kwargs)
+            default_params = {}
             for name in list(samples.keys()):
                 samples['X.' + name] = samples.pop(name)
-        local_samples = Samples.scatter(samples, mpicomm=self.mpicomm, mpiroot=0)
-        for ivalue in range(local_samples.size):
-            state = self.calculator(**{param: local_samples['X.' + param][ivalue] for param in self.params})
-            for name, value in state.items():
-                name = 'Y.' + name
-                local_samples.setdefault(name, [])
-                local_samples[name].append(value)
-        samples = Samples.gather(local_samples, mpicomm=self.mpicomm, mpiroot=0)
+                default_params[name] = np.median(samples['X.' + name], axis=0)
         if self.mpicomm.rank == 0:
-            if self.samples is None:
-                self.samples = samples
+            save_every = save_every * self.mpicomm.size
+            self.log_info('Running for {:d} iterations (saving after {:d}) on {:d} rank(s).'.format(samples.size, save_every, self.mpicomm.size))
+            nsplits = (samples.size + save_every - 1) // save_every
+        nsplits = self.mpicomm.bcast(nsplits if self.mpicomm.rank == 0 else None, root=0)
+        default_params = self.mpicomm.bcast(default_params if self.mpicomm.rank == 0 else None, root=0)
+
+        try:
+            default_state = self.calculator(**default_params)
+        except Exception as exc:
+            raise ValueError('error when running calculator with params {}, could not obtain default state'.format(default_params)) from exc
+        default_state = {name: np.full_like(value, np.nan) for name, value in default_state.items()}
+
+        for isplit in range(nsplits):
+            isample_min, isample_max = isplit * samples.size // nsplits, (isplit + 1) * samples.size // nsplits
+            scatter_samples = Samples.scatter(samples[isample_min:isample_max], mpicomm=self.mpicomm, mpiroot=0)
+            for ivalue in range(scatter_samples.size):
+                try:
+                    state = self.calculator(**{param: scatter_samples['X.' + param][ivalue] for param in self.params})
+                except CalculatorComputationError:
+                    state = default_state
+                for name, value in state.items():
+                    name = 'Y.' + name
+                    scatter_samples.setdefault(name, [])
+                    scatter_samples[name].append(value)
+            gather_samples = Samples.gather(scatter_samples, mpicomm=self.mpicomm, mpiroot=0)
+            if self.mpicomm.rank == 0:
+                gather_samples.attrs['params'] = dict(self.params)
+                self.log_info('Done {:d} / {:d}.'.format(isample_max, samples.size))
+                if self.samples is None:
+                    self.samples = gather_samples
+                else:
+                    self.samples = Samples.concatenate(self.samples, gather_samples)
+                if self.save_fn is not None:
+                    self.samples.save(self.save_fn)
             else:
-                self.samples = Samples.concatenate(self.samples, samples)
-            if self.save_fn is not None:
-                self.samples.save(self.save_fn)
-        else:
-            self.samples = None
+                self.samples = None
         return self.samples
 
     def __enter__(self):
@@ -221,13 +382,56 @@ class BaseSampler(BaseClass):
     def __exit__(self, exc_type, exc_value, exc_traceback):
         pass
 
+    def points(self, **kwargs):
+        # Return Samples instance containing points to use evaluate calculator against.
+        raise NotImplementedError
+
+
+class InputSampler(BaseSampler):
+
+    """Input sampler, i.e. sampler that evaluate calculator on input samples (points)."""
+    name = 'input'
+
+    def __init__(self, calculator, samples, params=None, mpicomm=mpi.COMM_WORLD, save_fn=None):
+        """
+        Initialize input sampler.
+
+        Parameters
+        ----------
+        calculator : callable
+            Input calculator.
+
+        samples : str, Path, Samples
+            Input samples. Input parameters to evaluate calculator with should start with 'X.'.
+
+        params : dict
+            Dictionary of {parameter name: parameter limits} for input ``calculator``.
+
+        mpicomm : MPI communicator, default= mpi.COMM_WORLD
+            MPI communicator.
+
+        save_fn : str, Path, default=None
+            If not ``None``, save samples to this location.
+        """
+        self.mpicomm = mpicomm
+        params, self._points = None, None
+        if self.mpicomm.rank == 0:
+            if params is None:
+                params = dict.fromkeys([name[2:] for name in samples if name.startswith('X.')])
+            self._points = Samples({name: samples['X.' + name] for name in params})
+        params = self.mpicomm.bcast(params, root=0)
+        super(InputSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=None)
+
+    def points(self):
+        return self._points
+
 
 class GridSampler(BaseSampler):
 
-    """Grid sampler."""
+    """Grid sampler, i.e. evaluate calculator on a grid of parameters."""
     name = 'grid'
 
-    def __init__(self, calculator, params=None, mpicomm=mpi.COMM_WORLD, save_fn=None, size=1, grid=None):
+    def __init__(self, calculator, params=None, size=1, grid=None, mpicomm=mpi.COMM_WORLD, save_fn=None, samples=None):
         """
         Initialize grid sampler.
 
@@ -236,14 +440,8 @@ class GridSampler(BaseSampler):
         calculator : callable
             Input calculator.
 
-        samples : str, Path, Samples
-            Path to or samples to resume from.
-
-        mpicomm : mpi.COMM_WORLD, default=None
-            MPI communicator.
-
-        save_fn : str, Path, default=None
-            If not ``None``, save samples to this location.
+        params : dict
+            Dictionary of {parameter name: parameter limits} for input ``calculator``.
 
         size : int, dict, default=1
             A dictionary mapping parameter name to grid size for this parameter.
@@ -251,9 +449,18 @@ class GridSampler(BaseSampler):
 
         grid : array, dict, default=None
             A dictionary mapping parameter name (including wildcard) to values.
-            If provided, ``size`` and ``ref_scale`` are ignored.
+            If provided, ``size`` is ignored.
+
+        mpicomm : mpi.COMM_WORLD, default=None
+            MPI communicator.
+
+        save_fn : str, Path, default=None
+            If not ``None``, save samples to this location.
+
+        samples : str, Path, Samples
+            Path to or samples to resume from.
         """
-        super(GridSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn)
+        super(GridSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=samples)
         self.grids = utils.expand_dict(grid, list(self.params.keys()))
         self.size = utils.expand_dict(size, list(self.params.keys()))
         for param, limits in self.params.items():
@@ -278,30 +485,45 @@ class GridSampler(BaseSampler):
 
     def points(self, size=1):
         grid = np.meshgrid(*self.grids, indexing='ij')
-        return Samples({param: value.ravel() for param, value in zip(self.params, grid)})
+        samples = Samples({param: value.ravel() for param, value in zip(self.params, grid)})
+        nsamples = len(self.samples) if self.samples is not None else 0
+        return samples[nsamples:]
 
 
 class DiffSampler(BaseSampler):
 
-    """Sample points for finite differentiation."""
+    """Sample points for finite differentiation (emulator engine :class:`TaylorEmulatorEngine`)."""
 
-    def __init__(self, calculator, params=None, order=1, accuracy=2, mpicomm=mpi.COMM_WORLD, save_fn=None, **kwargs):
+    def __init__(self, calculator, params=None, order=1, accuracy=2, mpicomm=mpi.COMM_WORLD, save_fn=None, samples=None):
         """
         Initialize diff sampler.
 
+        Parameters
+        ----------
         calculator : callable
             Input calculator.
 
-        samples : str, Path, Samples
-            Path to or samples to resume from.
+        params : dict
+            Dictionary of {parameter name: parameter limits} for input ``calculator``.
+
+        order : int, dict, default=1
+            A dictionary mapping parameter name (including wildcard) to maximum derivative order.
+            If a single value is provided, applies to all varied parameters.
+
+        accuracy : int, dict, default=2
+            A dictionary mapping parameter name (including wildcard) to derivative accuracy (number of points used to estimate it).
+            If a single value is provided, applies to all varied parameters.
 
         mpicomm : mpi.COMM_WORLD, default=None
             MPI communicator.
 
         save_fn : str, Path, default=None
             If not ``None``, save samples to this location.
+
+        samples : str, Path, Samples
+            Path to or samples to resume from.
         """
-        super(DiffSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn)
+        super(DiffSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=samples)
         from .taylor import deriv_ncoeffs
 
         for name, item in zip(['order', 'accuracy'], [order, accuracy]):
@@ -362,7 +584,8 @@ class DiffSampler(BaseSampler):
         samples.attrs['cidx'] = cidx
         samples.attrs['order'] = self.order
         samples.attrs['accuracy'] = self.accuracy
-        return samples
+        nsamples = len(self.samples) if self.samples is not None else 0
+        return samples[nsamples:]
 
 
 class QMCSampler(BaseSampler):
@@ -370,7 +593,7 @@ class QMCSampler(BaseSampler):
     """Quasi Monte-Carlo sequences, using :mod:`scipy.qmc` (+ RQuasiRandomSequence)."""
     name = 'qmc'
 
-    def __init__(self, calculator, params=None, samples=None, mpicomm=mpi.COMM_WORLD, engine='rqrs', save_fn=None, **kwargs):
+    def __init__(self, calculator, params=None, engine='rqrs', mpicomm=mpi.COMM_WORLD, save_fn=None, samples=None, **kwargs):
         """
         Initialize QMC sampler.
 
@@ -379,29 +602,23 @@ class QMCSampler(BaseSampler):
         calculator : callable
             Input calculator.
 
-        samples : str, Path, Samples
-            Path to or samples to resume from.
-
-        mpicomm : mpi.COMM_WORLD, default=None
-            MPI communicator. If ``None``, defaults to ``calculator``'s :attr:`BaseCalculator.mpicomm`.
+        params : dict
+            Dictionary of {parameter name: parameter limits} for input ``calculator``.
 
         engine : str, default='rqrs'
             QMC engine, to choose from ['sobol', 'halton', 'lhs', 'rqrs'].
 
+        mpicomm : mpi.COMM_WORLD, default=None
+            MPI communicator. If ``None``, defaults to ``calculator``'s :attr:`BaseCalculator.mpicomm`.
+
         save_fn : str, Path, default=None
             If not ``None``, save samples to this location.
 
-        seed : int, default=None
-            Random seed.
-
         **kwargs : dict
-            Optional engine-specific arguments.
+            Optional engine-specific arguments, e.g. random seed ``seed``.
         """
-        super(QMCSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn)
+        super(QMCSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=samples)
         self.engine = get_qmc_engine(engine)(d=len(self.params), **kwargs)
-        self.samples = None
-        if self.mpicomm.rank == 0 and samples is not None:
-            self.samples = samples if isinstance(samples, Samples) else Samples.load(samples)
 
     def points(self, niterations=300):
         lower, upper = [], []

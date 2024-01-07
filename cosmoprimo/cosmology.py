@@ -50,6 +50,10 @@ class CosmologyComputationError(CosmologyError):
     """Exception raised when error in cosmology computation."""
 
 
+def is_sequence(item):
+    return isinstance(item, (tuple, list))
+
+
 def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
     r"""
     Return momenta of non-CDM components (massive neutrinos)
@@ -240,68 +244,71 @@ class BaseCosmology(BaseClass):
             has_default = True
         params = self.get_params(of='base')
         derived = self.get_params(of='derived')
-        if name in params:
-            return params[name]
-        if name in derived:
-            return derived[name]
-        if name.startswith('omega'):
-            return self.get('O' + name[1:]) * params['h']**2
-        if name == 'H0':
-            return params['h'] * 100
-        if name in ['logA', 'ln10^{10}A_s', 'ln10^10A_s', 'ln_A_s_1e10']:
-            return np.log(1e10 * params['A_s'])
-        # if name == 'rho_crit':
-        #     return constants.rho_crit_Msunph_per_Mpcph3
-        if name == 'Omega_g':
-            rho = params['T_cmb']**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
-            return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3)
-        if name == 'T_ur':
-            return params['T_cmb'] * (4. / 11.)**(1. / 3.)
-        if name == 'T_ncdm':
-            return np.array(params['T_ncdm_over_cmb']) * params['T_cmb']
-        if name == 'Omega_ur':
-            rho = params['N_ur'] * 7. / 8. * self.get('T_ur')**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
-            return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3)
-        if name == 'Omega_r':
-            rho = (params['T_cmb']**4 + params['N_ur'] * 7. / 8. * self.get('T_ur')**4) * 4. / constants.c**3 * constants.Stefan_Boltzmann
-            return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3) + self.get('Omega_pncdm_tot')
-        if name == 'm_ncdm_tot':
-            return sum(params['m_ncdm'])
-        if name == 'Omega_ncdm':
-            derived['Omega_ncdm'] = self._get_rho_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
-            return derived['Omega_ncdm']
-        if name == 'Omega_ncdm_tot':
-            return np.sum(self.get('Omega_ncdm'))
-        if name == 'Omega_pncdm':
-            derived['Omega_pncdm'] = 3. * self._get_p_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
-            return derived['Omega_pncdm']
-        if name == 'Omega_pncdm_tot':
-            return np.sum(self.get('Omega_pncdm'))
-        if name == 'Omega_m':
-            return self.get('Omega_b') + self.get('Omega_cdm') + self.get('Omega_ncdm_tot') - self.get('Omega_pncdm_tot')
-        if name == 'Omega_de':
-            return 1. - sum(self.get(name) for name in ['Omega_cdm', 'Omega_b', 'Omega_g', 'Omega_ur', 'Omega_ncdm_tot', 'Omega_k'])
-        if name == 'Omega_Lambda':
-            if self._has_fld: return 0.
-            return self.get('Omega_de')
-        if name == 'Omega_fld':
-            if self._has_fld: return self.get('Omega_de')
-            return 0.
-        if name == 'K':
-            return - 100.**2 / (constants.c / 1e3)**2 * params['Omega_k']  # in (h / Mpc)^2
-        if name == 'N_ncdm':
-            return len(params['m_ncdm'])
-        #if name == 'N_ur':
-        #    return params['N_eff'] - sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in params['T_ncdm_over_cmb'])
-        if name == 'N_eff':
-            return sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in params['T_ncdm_over_cmb']) + params['N_ur']
-        if name == 'theta_cosmomc':
-            ba = self.get_background()
-            rs, zstar = _compute_rs_cosmomc(self['omega_b'], self['omega_m'], ba.hubble_function)
-            derived['theta_cosmomc'] = rs * ba.h / ba.comoving_angular_distance(zstar)
-            return derived['theta_cosmomc']
-        if name == 'theta_MC_100':
-            return self.get('theta_cosmomc') * 100.
+        try:
+            if name in params:
+                return params[name]
+            if name in derived:
+                return derived[name]
+            if name.startswith('omega'):
+                return self.get('O' + name[1:]) * params['h']**2
+            if name == 'H0':
+                return params['h'] * 100
+            if name in ['logA', 'ln10^{10}A_s', 'ln10^10A_s', 'ln_A_s_1e10']:
+                return np.log(1e10 * params['A_s'])
+            # if name == 'rho_crit':
+            #     return constants.rho_crit_Msunph_per_Mpcph3
+            if name == 'Omega_g':
+                rho = params['T_cmb']**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
+                return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3)
+            if name == 'T_ur':
+                return params['T_cmb'] * (4. / 11.)**(1. / 3.)
+            if name == 'T_ncdm':
+                return np.array(params['T_ncdm_over_cmb']) * params['T_cmb']
+            if name == 'Omega_ur':
+                rho = params['N_ur'] * 7. / 8. * self.get('T_ur')**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
+                return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3)
+            if name == 'Omega_r':
+                rho = (params['T_cmb']**4 + params['N_ur'] * 7. / 8. * self.get('T_ur')**4) * 4. / constants.c**3 * constants.Stefan_Boltzmann
+                return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3) + self.get('Omega_pncdm_tot')
+            if name == 'm_ncdm_tot':
+                return sum(params['m_ncdm'])
+            if name == 'Omega_ncdm':
+                derived['Omega_ncdm'] = self._get_rho_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
+                return derived['Omega_ncdm']
+            if name == 'Omega_ncdm_tot':
+                return np.sum(self.get('Omega_ncdm'))
+            if name == 'Omega_pncdm':
+                derived['Omega_pncdm'] = 3. * self._get_p_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
+                return derived['Omega_pncdm']
+            if name == 'Omega_pncdm_tot':
+                return np.sum(self.get('Omega_pncdm'))
+            if name == 'Omega_m':
+                return self.get('Omega_b') + self.get('Omega_cdm') + self.get('Omega_ncdm_tot') - self.get('Omega_pncdm_tot')
+            if name == 'Omega_de':
+                return 1. - sum(self.get(name) for name in ['Omega_cdm', 'Omega_b', 'Omega_g', 'Omega_ur', 'Omega_ncdm_tot', 'Omega_k'])
+            if name == 'Omega_Lambda':
+                if self._has_fld: return 0.
+                return self.get('Omega_de')
+            if name == 'Omega_fld':
+                if self._has_fld: return self.get('Omega_de')
+                return 0.
+            if name == 'K':
+                return - 100.**2 / (constants.c / 1e3)**2 * params['Omega_k']  # in (h / Mpc)^2
+            if name == 'N_ncdm':
+                return len(params['m_ncdm'])
+            #if name == 'N_ur':
+            #    return params['N_eff'] - sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in params['T_ncdm_over_cmb'])
+            if name == 'N_eff':
+                return sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in params['T_ncdm_over_cmb']) + params['N_ur']
+            if name == 'theta_cosmomc':
+                ba = self.get_background()
+                rs, zstar = _compute_rs_cosmomc(self['omega_b'], self['omega_m'], ba.hubble_function)
+                derived['theta_cosmomc'] = rs * ba.h / ba.comoving_angular_distance(zstar)
+                return derived['theta_cosmomc']
+            if name == 'theta_MC_100':
+                return self.get('theta_cosmomc') * 100.
+        except KeyError:
+            pass
         if has_default:
             return default
         raise CosmologyError('Parameter {} not found.'.format(name))
@@ -310,7 +317,7 @@ class BaseCosmology(BaseClass):
     def _has_fld(self):
         return (self._params['w0_fld'], self._params['wa_fld'], self._params['cs2_fld']) != (-1, 0., 1.)
 
-    def _get_rho_ncdm(self, z=0, epsrel=1e-7):
+    def _get_rho_ncdm(self, z=0, species=None, epsrel=1e-7):
         r"""
         Return energy density of non-CDM components (massive neutrinos) for each species by integrating over the phase-space distribution (frozen since CMB),
         including non-relativistic (contributing to :math:`\Omega_{m}`) and relativistic (contributing to :math:`\Omega_{r}`) components.
@@ -329,9 +336,21 @@ class BaseCosmology(BaseClass):
         rho_ncdm : array
             Energy density, in units of :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
         """
-        return np.asarray([_compute_ncdm_momenta(self['T_cmb'] * T_ncdm_over_cmb, m, z=z, epsrel=epsrel, out='rho') / (1 + z)**3 for m, T_ncdm_over_cmb in zip(self['m_ncdm'], self['T_ncdm_over_cmb'])]) / self['h']**2
+        h2 = self['h']**2
+        T_cmb, T_ncdm_over_cmb, m_ncdm = self['T_cmb'], self['T_ncdm_over_cmb'], self['m_ncdm']
 
-    def _get_p_ncdm(self, z=0, epsrel=1e-7):
+        def compute(T_ncdm_over_cmb, m_ncdm):
+            return _compute_ncdm_momenta(T_cmb * T_ncdm_over_cmb, m_ncdm, z=z, epsrel=epsrel, out='rho') / (1 + z)**3 / h2
+
+        if species is None:
+            species = list(range(len(m_ncdm)))
+
+        if is_sequence(species):
+            return np.asarray([compute(T_ncdm_over_cmb[s], m_ncdm[s]) for s in species])
+
+        return compute(self['T_ncdm_over_cmb'][species], self['m_ncdm'][species])
+
+    def _get_p_ncdm(self, z=0, species=None, epsrel=1e-7):
         r"""
         Return pressure of non-CDM components (massive neutrinos) for each species by integrating over the phase-space distribution (frozen since CMB).
 
@@ -348,7 +367,19 @@ class BaseCosmology(BaseClass):
         p_ncdm : array
             Pressure, in units of :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
         """
-        return np.asarray([_compute_ncdm_momenta(self['T_cmb'] * T_ncdm_over_cmb, m, z=z, epsrel=epsrel, out='p') / (1 + z)**3 for m, T_ncdm_over_cmb in zip(self['m_ncdm'], self['T_ncdm_over_cmb'])]) / self['h']**2
+        h2 = self['h']**2
+        T_cmb, T_ncdm_over_cmb, m_ncdm = self['T_cmb'], self['T_ncdm_over_cmb'], self['m_ncdm']
+
+        def compute(T_ncdm_over_cmb, m_ncdm):
+            return _compute_ncdm_momenta(T_cmb * T_ncdm_over_cmb, m_ncdm, z=z, epsrel=epsrel, out='p') / (1 + z)**3 / h2
+
+        if species is None:
+            species = list(range(len(m_ncdm)))
+
+        if is_sequence(species):
+            return np.asarray([compute(T_ncdm_over_cmb[s], m_ncdm[s]) for s in species])
+
+        return compute(self['T_ncdm_over_cmb'][species], self['m_ncdm'][species])
 
     def __eq__(self, other):
         r"""Is ``other`` same as ``self``?"""
@@ -388,7 +419,9 @@ class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
         self._Sections = {}
         module = sys.modules[self.__class__.__module__]
         for name in _Sections:
-            self._Sections[name.lower()] = getattr(module, name, None)
+            section = getattr(module, name, None)
+            if section is not None:
+                self._Sections[name.lower()] = section
         self._sections = {}
 
     def _get_A_s_fid(self):
@@ -397,6 +430,13 @@ class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
         if 'A_s' in self._params:
             return self._params['A_s']
         return 2.43e-9 * (self['sigma8'] / 0.87659)**2
+
+    def _get_sigma8_fid(self):
+        r"""First guess for power spectrum amplitude :math:`\sigma_{8}` (given input :math:`A_s`)."""
+        # https://github.com/lesgourg/class_public/blob/4724295b527448b00faa28bce973e306e0e82ef5/source/input.c#L1161
+        if 'sigma8' in self._params:
+            return self._params['sigma8']
+        return (self['A_s'] / 2.43e-9)**0.5 * 0.87659
 
     def _rescale_sigma8(self):
         """Rescale perturbative quantities to match input sigma8."""
@@ -584,6 +624,7 @@ class Cosmology(BaseCosmology):
         Parameter ``Omega_ncdm``/``omega_ncdm`` (accessed as ``cosmo['Omega_ncdm']``/``cosmo['omega_ncdm']``)
         will always provide the total energy density of neutrinos (single value).
         The pivot scale ``k_pivot`` is in :math:`\mathrm{Mpc}^{-1}`.
+        If 'non_linear' is required, we recommend "mead" for class and camb matching.
 
         Parameters
         ----------
@@ -999,7 +1040,7 @@ class Cosmology(BaseCosmology):
         new._input_params = merge_params(base_params, params, conflicts=new.__class__._conflict_parameters)
         new._params = new._compile_params(new._input_params)
         if engine is None and self._engine is not None:
-            engine = self._engine.name
+            engine = self._engine.__class__
         if engine is not None:
             if extra_params is None:
                 extra_params = getattr(self._engine, '_extra_params', {})
@@ -1278,10 +1319,16 @@ class BaseBackground(BaseSection):
         If ``species`` is ``None`` returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
         Else if ``species`` is between 0 and N_ncdm, return density for this species.
         """
-        toret = np.empty((self.N_ncdm, z.size), dtype=z.dtype)
-        for iz, z in enumerate(z.flat):
-            toret[..., iz] = self._engine._get_rho_ncdm(z=z)
-        return toret
+        if species is None:
+            species = list(range(self.N_ncdm))
+
+        def compute(z, species):
+            return np.array([self._engine._get_rho_ncdm(z=zz, species=species) for zz in z])
+
+        if is_sequence(species):
+            return np.array([compute(z, species=s) for s in species]).reshape(len(species), len(z))
+
+        return compute(z, species)
 
     def rho_ncdm_tot(self, z):
         r"""Total comoving density of non-relativistic part of massive neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
@@ -1294,10 +1341,16 @@ class BaseBackground(BaseSection):
         If ``species`` is ``None`` returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
         Else if ``species`` is between 0 and N_ncdm, return pressure for this species.
         """
-        toret = np.empty((self.N_ncdm, z.size), dtype=z.dtype)
-        for iz, z in enumerate(z.flat):
-            toret[..., iz] = self._engine._get_p_ncdm(z=z)
-        return toret
+        if species is None:
+            species = list(range(self.N_ncdm))
+
+        def compute(z, species):
+            return np.array([self._engine._get_p_ncdm(z=zz, species=species) for zz in z])
+
+        if is_sequence(species):
+            return np.array([compute(z, species=s) for s in species]).reshape(len(species), len(z))
+
+        return compute(z, species)
 
     def p_ncdm_tot(self, z):
         r"""Total pressure of non-relativistic part of massive neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
@@ -1392,12 +1445,12 @@ class BaseBackground(BaseSection):
         return self.T0_cmb * (1 + z)
 
     @utils.flatarray()
-    def T_ncdm(self, z):
+    def T_ncdm(self, z, species=None):
         r"""
         Return the ncdm temperature (massive neutrinos), in :math:`K`.
         Returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
         """
-        return self.T0_ncdm[:, None] * (1 + z)
+        return self.T0_ncdm[species if species is not None else Ellipsis, None] * (1 + z)
 
     @utils.flatarray()
     def Omega_cdm(self, z):
@@ -1438,13 +1491,13 @@ class BaseBackground(BaseSection):
         return self.rho_m(z) / self.rho_crit(z)
 
     @utils.flatarray()
-    def Omega_ncdm(self, z):
+    def Omega_ncdm(self, z, species=None):
         r"""
         Density parameter of massive neutrinos, unitless.
         If ``species`` is ``None`` returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
         Else if ``species`` is between 0 and N_ncdm, return density for this species.
         """
-        return self.rho_ncdm(z) / self.rho_crit(z)
+        return self.rho_ncdm(z, species=species) / self.rho_crit(z)
 
     @utils.flatarray()
     def Omega_ncdm_tot(self, z):

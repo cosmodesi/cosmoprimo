@@ -60,6 +60,13 @@ class CambEngine(BaseEngine):
 
         try:
 
+            for key, value in self._extra_params.items():
+                if key not in self._params:
+                    if key == 'accuracy':
+                        self._camb_params.set_accuracy(self._extra_params['accuracy'])
+                    else:
+                        setattr(self._camb_params, key, value)
+
             kwargs = {name: self.get(name, value) for name, value in self.get_default_params().items()}
             YHe = None if self['YHe'] == 'BBN' else self['YHe']
             self._camb_params.set_cosmology(H0=self['H0'], ombh2=self['omega_b'], omch2=self['omega_cdm'], omk=self['Omega_k'],
@@ -133,11 +140,6 @@ class CambEngine(BaseEngine):
             self._camb_params.WantScalars = 's' in self['modes']
             self._camb_params.WantVectors = 'v' in self['modes']
             self._camb_params.WantTensors = 't' in self['modes']
-            for key, value in self._extra_params.items():
-                if key == 'accuracy':
-                    self._camb_params.set_accuracy(self._extra_params['accuracy'])
-                else:
-                    setattr(self._camb_params, key, value)
 
         except (self.camb.baseconfig.CAMBParamRangeError, self.camb.baseconfig.CAMBValueError, self.camb.baseconfig.CAMBError, self.camb.baseconfig.CAMBUnknownArgumentError) as exc:
 
@@ -336,15 +338,6 @@ class Background(BaseBackground):
         return self.ba.comoving_radial_distance(z) * self._h
 
     @utils.flatarray(dtype=np.float64)
-    def luminosity_distance(self, z):
-        r"""
-        Luminosity distance, in :math:`\mathrm{Mpc}/h`.
-
-        See eq. 21 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{L}(z)`.
-        """
-        return self.ba.luminosity_distance(z) * self._h
-
-    @utils.flatarray(dtype=np.float64)
     def angular_diameter_distance(self, z):
         r"""
         Proper angular diameter distance, in :math:`\mathrm{Mpc}/h`.
@@ -382,6 +375,15 @@ class Background(BaseBackground):
         See eq. 16 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{M}(z)`.
         """
         return self.angular_diameter_distance(z) * (1. + z)
+
+    @utils.flatarray(dtype=np.float64)
+    def luminosity_distance(self, z):
+        r"""
+        Luminosity distance, in :math:`\mathrm{Mpc}/h`.
+
+        See eq. 21 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{L}(z)`.
+        """
+        return self.ba.luminosity_distance(z) * self._h
 
 
 @utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star', 'YHe')
@@ -424,13 +426,21 @@ class Transfer(BaseSection):
         self.tr = self._engine.tr
 
     def table(self):
-        r"""Return source functions (in array of shape (k.size, z.size))."""
+        r"""
+        Return source functions (in array of shape (k.size, z.size)).
+
+        TODO: proper matching with CLASS, see https://github.com/lesgourg/class_public/blob/997d1ac0b64d11439948a0cc13f719ef427f87be/source/perturbations.c#L516
+        """
         data = self.tr.get_matter_transfer_data()
-        dtype = [(name, np.float64) for name in self._engine.camb.model.transfer_names]
+        transfer_names = self._engine.camb.model.transfer_names
+        dtype = [('k', np.float64), ('z', np.float64)] + [(name, np.float64) for name in transfer_names if name not in ['k/h']]  # first is k
+        conversion = {'k/h': 'k'}
         # shape (k, z)
-        toret = np.empty(data.transfer.shape[1:], dtype=dtype)
-        for name in self.camb.model.transfer_names:
-            toret[name] = data.transfer_data[self._engine.camb.model.transfer_names.index(name)]
+        self.tr.transfer_redshifts
+        toret = np.empty(data.transfer_data.shape[1:], dtype=dtype)
+        toret['z'][...] = self.tr.transfer_redshifts
+        for name in transfer_names:
+            toret[conversion.get(name, name)] = data.transfer_data[transfer_names.index(name)]
         return toret
 
 
@@ -579,6 +589,13 @@ class Harmonic(BaseSection):
         return toret
 
 
+def _make_tuple(of, size=2):
+    if isinstance(of, str): of = (of,)
+    of = list(of)
+    of = of + [of[0]] * (size - len(of))
+    return tuple(of)
+
+
 class Fourier(BaseSection):
 
     def __init__(self, engine):
@@ -641,9 +658,7 @@ class Fourier(BaseSection):
         pk : numpy.ndarray
             Power spectrum array of shape (len(k), len(z)).
         """
-        if isinstance(of, str): of = (of,)
-        of = list(of)
-        of = of + [of[0]] * (2 - len(of))
+        of = list(_make_tuple(of))  # list for mutability below
 
         kpow, factor = 0, self._rsigma8**2
         for iof, of_ in enumerate(of):
@@ -664,6 +679,8 @@ class Fourier(BaseSection):
 
         var1, var2 = [self._index_pk_of(of_) for of_ in of]
         # Do the hubble_units, k_hunits conversion manually as it is incorrect for Weyl ~ k^2 (phi + psi) / 2
+        if non_linear and self._engine._camb_params.NonLinear == self._engine.camb.model.NonLinear_none:
+            raise self._engine.camb.CAMBError('You asked for non-linear P(k, z), but it has not been calculated. Please set non_linear.')
         ka, za, pka = self.fo.get_linear_matter_power_spectrum(var1=var1, var2=var2, hubble_units=False, k_hunit=False, have_power_spectra=True, nonlinear=non_linear)
         pka = pka.T
         pka = pka * ka[:, None]**kpow * factor
@@ -687,7 +704,7 @@ class Fourier(BaseSection):
             Arguments for :class:`PowerSpectrumInterpolator2D`.
         """
         ka, za, pka = self.table(non_linear=non_linear, of=of)
-        return PowerSpectrumInterpolator2D(ka, za, pka, **kwargs)
+        return PowerSpectrumInterpolator2D(ka, za, np.abs(pka), **kwargs)  # abs for delta_m, phi_plus_psi
 
     def pk_kz(self, k, z, non_linear=False, of='delta_m'):
         r"""

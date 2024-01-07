@@ -3,7 +3,7 @@ import os
 import numpy as np
 from matplotlib import pyplot as plt
 
-from cosmoprimo.emulators.tools import Emulator, EmulatedCalculator, MLPEmulatorEngine, setup_logging
+from cosmoprimo.emulators.tools import Emulator, EmulatedCalculator, MLPEmulatorEngine, PCAOperation, setup_logging
 
 
 def calculator(a=0, b=0):
@@ -27,11 +27,11 @@ def plot(calculator, emulator, params):
     ax.set_ylabel('$y$')
 
 
-def test_base(show=True):
+def test_mlp(show=True):
     emulator_dir = '_tests'
     fn = os.path.join(emulator_dir, 'emu.npy')
     params = {'a': (0., 1.), 'b': (0., 1.)}
-    emulator = Emulator(calculator, params, engine=MLPEmulatorEngine(nhidden=(), npcs=3))
+    emulator = Emulator(calculator, params, engine=MLPEmulatorEngine(nhidden=(), yoperation=PCAOperation(npcs=3)))
     emulator.set_samples()
     emulator.fit()
     emulator.save(fn)
@@ -47,4 +47,4 @@ def test_base(show=True):
 if __name__ == '__main__':
 
     setup_logging()
-    test_base()
+    test_mlp()

@@ -186,7 +186,10 @@ def find_names(allnames, name):
 
     if is_sequence(name):
         toret = []
-        for nn in name: toret += find_names(allnames, nn)
+        for nn in name:
+            for n in find_names(allnames, nn):
+                if n not in toret:
+                    toret.append(n)
         return toret
 
     if isinstance(name, re.Pattern):
@@ -264,6 +267,11 @@ def subspace(X, precision=None, npcs=None, chi2min=None, fweights=None, aweights
 
     aweights : array, default=None
         Optionally, observation weights.
+
+    Returns
+    -------
+    eigenvectors : array of shape (ndim, npcs)
+        Eigenvectors.
     """
     X = np.asarray(X)
     X = X.reshape(X.shape[0], -1)
@@ -273,12 +281,88 @@ def subspace(X, precision=None, npcs=None, chi2min=None, fweights=None, aweights
         L = np.linalg.cholesky(precision)
     X = X.dot(L)
     cov = np.cov(X, rowvar=False, ddof=0, fweights=fweights, aweights=aweights)
-    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+    size = cov.shape[0]
+    if npcs is not None:
+        if npcs > size:
+            raise ValueError('Number of requested components is {0:d}, but dimension is {1:d} < {0:d}.'.format(npcs, size))
+        import scipy as sp
+        eigenvalues, eigenvectors = sp.linalg.eigh(cov, subset_by_index=[size - 1 - npcs, size - 1])
+    else:
+        eigenvalues, eigenvectors = np.linalg.eigh(cov)
     if npcs is None:
         if chi2min is None:
-            npcs = len(eigenvalues)
+            npcs = size
         else:
-            npcs = len(eigenvalues) - np.sum(np.cumsum(eigenvalues) < chi2min)
-    if npcs > len(eigenvectors):
-        raise ValueError('Number of requested components is {0:d}, but dimension is {1:d} < {0:d}.'.format(npcs, len(eigenvalues)))
-    return L.dot(eigenvectors)[..., -npcs:]
+            npcs = size - np.sum(np.cumsum(eigenvalues) < chi2min)
+        eigenvectors = eigenvectors[..., -npcs:]
+    return L.dot(eigenvectors)
+
+
+import ast
+
+
+def evaluate(value, type=None, locals=None, verbose=True):
+    """
+    Evaluate several lines of input, returning the result of the last line.
+
+    Reference
+    ---------
+    https://stackoverflow.com/questions/12698028/why-is-pythons-eval-rejecting-this-multiline-string-and-how-can-i-fix-it
+
+    Parameters
+    ----------
+    value : str, any type
+        If value is string, call ``eval``, with input ``locals`` (dictionary of local objects).
+        "np", "sp", "jnp", "jsp" are recognized as numpy, scipy, jax.numpy, jax.scipy (if jax is installed).
+
+    type : type, default=None
+        If not ``None``, cast output ``value`` with ``type``.
+
+    locals : dict, default=None
+        Dictionary of local objects to use when calling ``eval``.
+
+    Returns
+    -------
+    value : evaluated value.
+
+    """
+    import numpy as np
+    import scipy as sp
+    if isinstance(value, str):
+        from .jax import numpy as jnp
+        from .jax import scipy as jsp
+        locals = dict(locals or {})
+        globals = {'np': np, 'sp': sp, 'jnp': jnp, 'jsp': jsp}
+        tree = ast.parse(value)
+        eval_expr = ast.Expression(tree.body[-1].value)
+        exec_expr = ast.Module(tree.body[:-1], type_ignores=[])
+        compile(exec_expr, 'file', 'exec')
+        try:
+            exec(compile(exec_expr, 'file', 'exec'), globals, locals)
+            value = eval(compile(eval_expr, 'file', 'eval'), globals, locals)
+        except Exception as exc:
+            if verbose:
+                raise Exception('unable to evaluate {} with locals = {} and globals = {}'.format(value, locals, globals)) from exc
+            raise exc
+    if type is not None:
+        value = type(value)
+    return value
+
+
+def weights_trapz(x):
+    """Return weights for trapezoidal integration."""
+    if x.size == 0:
+        return np.array(1.)
+    if x.size == 1:
+        return np.ones(x.size)
+    if x.size == 2:
+        return np.ones(x.size) / 2. * (x[1] - x[0])
+    return np.concatenate([[x[1] - x[0]], x[2:] - x[:-2], [x[-1] - x[-2]]]) / 2.
+
+
+def weights_leggauss(nx, sym=False):
+    """Return weights for Gauss-Legendre integration."""
+    x, wx = np.polynomial.legendre.leggauss((1 + sym) * nx)
+    if sym:
+        x, wx = x[nx:], (wx[nx:] + wx[nx - 1::-1]) / 2.
+    return x, wx

@@ -1,12 +1,35 @@
-"""Cosmological calculation with the emulator."""
+"""Emulated cosmological calculation."""
 
 import numpy as np
-from cosmoprimo.interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D, get_default_k_callable, get_default_z_callable
 
-from cosmoprimo.cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyInputError, CosmologyComputationError
+from scipy import interpolate
+
 from cosmoprimo.interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
-from cosmoprimo import utils
-from . import Emulator
+from cosmoprimo.cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyInputError, CosmologyComputationError, find_conflicts
+from cosmoprimo.interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
+from cosmoprimo import utils, Cosmology, CosmologyError
+
+
+def get_default_k_callable():
+    # Taken from https://github.com/alessiospuriomancini/cosmopower/blob/main/cosmopower/training/spectra_generation_scripts/2_create_spectra.py
+    k = np.concatenate([np.array([1e-6]),
+                        np.logspace(-5, -4, num=20, endpoint=False),
+                        np.logspace(-4, -3, num=40, endpoint=False),
+                        np.logspace(-3, -2, num=60, endpoint=False),
+                        np.logspace(-2, -1, num=80, endpoint=False),
+                        np.logspace(-1, 0, num=100, endpoint=False),
+                        np.logspace(0, 1, num=120, endpoint=True),
+                        np.array([1e2])])
+    return k
+
+
+def get_default_z_callable(key='fourier', non_linear=False):
+    if 'background' in key:
+        return np.insert(np.logspace(-8, 2, 2048), 0, 0.)
+    z = np.linspace(0., 10.**0.5, 30)**2  # approximates default class z
+    if non_linear:
+        return z[z < 2.]
+    return z
 
 
 class EmulatedEngine(BaseEngine):
@@ -19,17 +42,112 @@ class EmulatedEngine(BaseEngine):
         super(EmulatedEngine, self).__init__(*args, **kwargs)
         emulator = getattr(self.__class__, '_emulator', None)
         if emulator is None:
+            from . import Emulator
             emulator = self.__class__._emulator = Emulator.load(self.path)
-        self._state = emulator.predict(**{param: self[param] for param in self._emulator.params})
 
+        self._A_s = self._get_A_s_fid()
+        self._sigma8 = self._get_sigma8_fid()
 
-def get_section_state(state, section='background'):
-    section = section + '.'
-    toret = {}
-    for name, value in state.items():
-        if name.startswith(section):
-            toret[name[len(section):]] = value
-    return toret
+        self._needs_rescale = None
+        params, requires = {}, []
+        for engine in emulator.engines.values():
+            for param in engine.params:
+                if param == 'z':
+                    requires.append(engine)
+                    continue
+                if param in params: continue
+                try: params[param] = self[param]
+                except CosmologyError as exc:
+                    if param == 'sigma8':  # A_s provided by cosmology, emulator wants sigma8
+                        params[param] = self._sigma8
+                        self._needs_rescale = 'A_s'
+                    elif 'A_s' in find_conflicts(param, conflicts=Cosmology._conflict_parameters):  # sigma8 provided by cosmology, emulator wants A_s
+                        self._params['A_s'] = self._A_s
+                        params[param] = self[param]
+                        del self._params['A_s']
+                        self._needs_rescale = 'sigma8'
+                    else:
+                        raise exc
+
+        for operation in emulator.xoperations:
+            params = operation(params)
+
+        def predict(section):
+            fixed = {name: value for name, value in emulator.fixed.items() if name.startswith(section + '.')}
+            base_predict = {}
+            section_requires = False
+            for name, engine in emulator.engines.items():
+                if name.startswith(section + '.'):
+                    if engine in requires:
+                        base_predict[name] = None
+                        section_requires = True
+                    else:
+                        base_predict[name] = engine.predict(params)
+
+            def finalize(predict):
+                predict = {**fixed, **predict}
+                for operation in emulator.yoperations[::-1]:
+                    try: predict = operation.inverse(predict)
+                    except KeyError: pass
+                return {name[len(section) + 1:]: value for name, value in predict.items()}
+
+            if section_requires:
+
+                def predict(**requires):
+                    requires.update(params)
+                    for name, value in base_predict.items():
+                        if value is None:
+                            base_predict[name] = emulator.engines[name].predict(requires)
+                    return finalize(base_predict)
+
+                return predict
+
+            return finalize(base_predict)
+
+        self._predict = predict
+
+    @classmethod
+    def load(cls, filename):
+        """Load class from disk."""
+
+        class EmulatedEngine(cls):
+
+            path = filename
+
+        return EmulatedEngine
+
+    def _rescale_sigma8(self):
+        """Rescale perturbative quantities to match input sigma8 or A_s."""
+        if hasattr(self, '_rsigma8'):
+            return self._rsigma8
+        self._rsigma8 = 1.
+        if self._needs_rescale == 'sigma8':  # sigma8 provided by cosmology, emulator wants A_s
+            self._sections.clear()  # to remove fourier with potential _rsigma8 != 1
+            self._rsigma8 = self._params['sigma8'] / self.get_fourier().sigma8_m
+            # As we cannot rescale sigma8 for the non-linear power spectrum
+            # we recompute the power spectra
+            if any('fourier.pk_non_linear' in name for name in self._emulator.engines):
+                self._params['A_s'] = self._A_s * self._rsigma8**2
+                self._sections.clear()
+                self.__init__(**self._params, extra_params=self._extra_params)
+                del self._params['A_s']
+                self._rsigma8 = 1.
+                self._rsigma8 = self._params['sigma8'] / self.get_fourier().sigma8_m
+            self._sections.clear()  # to reinitialize fourier with correct _rsigma8
+        if self._needs_rescale == 'A_s':  # A_s provided by cosmology, emulator wants sigma8
+            self._sections.clear()  # to remove fourier with potential _rsigma8 != 1
+            self._rsigma8 = (self._params['A_s'] / self.get_primordial().A_s)**0.5
+            # As we cannot rescale sigma8 for the non-linear power spectrum
+            # we recompute the power spectra
+            if any('fourier.pk_non_linear' in name for name in self._emulator.engines):
+                self._params['sigma8'] = self._sigma8 * self._rsigma8**2
+                self._sections.clear()
+                self.__init__(**self._params)
+                del self._params['sigma8']
+                self._rsigma8 = 1.
+                self._rsigma8 = (self._params['A_s'] / self.get_primordial().A_s)**0.5
+            self._sections.clear()  # to reinitialize fourier with correct _rsigma8
+        return self._rsigma8
 
 
 class Background(BaseBackground):
@@ -38,7 +156,25 @@ class Background(BaseBackground):
 
     def __init__(self, engine):
         super(Background, self).__init__(engine=engine)
-        self.__setstate__(get_section_state(engine._state, section='background'))
+        self.__setstate__(engine._predict(section='background'))
+
+    @utils.flatarray(dtype=np.float64)
+    def rho_ncdm(self, z, species=None):
+        return self._state['rho_ncdm'](z)[species if species is not None else slice(None)]
+
+    @utils.flatarray(dtype=np.float64)
+    def p_ncdm(self, z, species=None):
+        return self._state['p_ncdm'](z)[species if species is not None else slice(None)]
+
+    @utils.flatarray()
+    def rho_fld(self, z):
+        r"""Comoving density of dark energy fluid :math:`\rho_{\mathrm{fld}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+        return self._state['rho_fld'](z)
+
+    @utils.flatarray()
+    def rho_tot(self, z):
+        r"""Comoving total density :math:`\rho_{\mathrm{tot}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+        return self._state['rho_tot'](z)
 
     @utils.flatarray(dtype=np.float64)
     def time(self, z):
@@ -103,31 +239,71 @@ class Background(BaseBackground):
 
     def __getstate__(self):
         state = {}
-        state['z'] = z = get_default_z_callable()
-        for name in ['time', 'comoving_radial_distance', 'angular_diameter_distance']:
+        state['z'] = z = get_default_z_callable('background')
+        for name in ['rho_ncdm', 'p_ncdm', 'rho_fld', 'rho_tot', 'time', 'comoving_radial_distance', 'angular_diameter_distance']:
             state[name] = getattr(self, name)(z)
+        return state
 
     def __setstate__(self, state):
-        from scipy import interpolate
         state = dict(state)
         z = state.pop('z')
         for name, value in state.items():
-            state[name] = interpolate.interp1d(z, value, kind='cubic', bounds_error=True, assume_sorted=True)
+            state[name] = interpolate.interp1d(z, value, kind='cubic', bounds_error=True, assume_sorted=True, axis=-1)
         self._state = state
 
 
-class Transfer(BaseSection):
+@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star', 'theta_cosmomc', 'YHe')
+class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
-        self.__setstate__(engine._state, section='transfer')
+        self.__setstate__(engine._predict(section='thermodynamics'))
         self._engine = engine
 
-    def table(self):
-        r"""Return source functions (in array of shape (k.size, z.size))."""
-        return self._table['table']
+    #def table(self):
+    #    r"""Return thermodynamics table."""
+    #    return self._table['table']
 
     def __getstate__(self):
-        return {'state': self.table()}
+        state = {}
+        for name in ['rs_drag', 'z_drag', 'rs_star', 'z_star', 'theta_cosmomc', 'YHe']:
+            if hasattr(self, name):
+                state[name] = getattr(self, name)
+        return state
+
+    def __setstate__(self, state):
+        for name, value in state.items():
+            setattr(self, '_' + name, value)
+
+if False:
+    class Transfer(BaseSection):
+
+        def __init__(self, engine):
+            self.__setstate__(engine._predict(section='transfer'))
+            self._engine = engine
+
+        def table(self):
+            r"""Return source functions (in array of shape (k.size, z.size))."""
+            return self._state['table']
+
+        def __getstate__(self):
+            state = {}
+            for name in ['table']:
+                table = getattr(self, name)()
+                for key in table.dtype.names:
+                    state['{}.{}'.format(name, key)] = table[key]
+            return state
+
+        def __setstate__(self, state):
+            self._state = dict(state)
+            tables = {}
+            for keyname, value in state.items():
+                name, key = keyname.split('.')
+                tables.setdefault(name, {})
+                tables[name][key] = value
+            for name, value in tables.items():
+                names = list(value.keys())
+                self._state[name] = table = np.empty(value[names[0]].shape[0], dtype=[(name, np.float64) for name in names])
+                for name in names: table[name] = value[name]
 
 
 @utils.addproperty('n_s', 'alpha_s', 'beta_s')
@@ -135,10 +311,9 @@ class Primordial(BaseSection):
 
     def __init__(self, engine):
         """Initialize :class:`Primordial`."""
-        self._state = get_section_state(engine._state, section='primordial')
         self._engine = engine
+        self.__setstate__(engine._predict(section='primordial'))
         self._h = self._engine['h']
-        self._A_s = self._engine._A_s
         self._n_s = self._engine['n_s']
         self._alpha_s = self._engine['alpha_s']
         self._beta_s = self._engine['beta_s']
@@ -147,7 +322,7 @@ class Primordial(BaseSection):
     @property
     def A_s(self):
         r"""Scalar amplitude of the primordial power spectrum at :math:`k_\mathrm{pivot}`, unitless."""
-        return self._A_s * self._rsigma8**2
+        return self._state['A_s'] * self._rsigma8**2
 
     @property
     def ln_1e10_A_s(self):
@@ -202,34 +377,49 @@ class Primordial(BaseSection):
         """
         return PowerSpectrumInterpolator1D.from_callable(pk_callable=lambda k: self.pk_k(k, mode=mode))
 
+    def __getstate__(self):
+        """Return this class' state dictionary."""
+        return {name: getattr(self, name) for name in ['A_s']}
+
+    def __setstate__(self, state):
+        """Set this class' state dictionary."""
+        self._state = dict(state)
+
 
 class Harmonic(BaseSection):
 
     def __init__(self, engine):
-        self.__setstate__(engine._state, section='harmonic')
         self._engine = engine
         self._rsigma8 = self._engine._rescale_sigma8()
-        self.ellmax_cl = self._engine['ellmax_cl']
+        self.__setstate__(engine._predict(section='harmonic'))
 
     def unlensed_cl(self, ellmax=-1):
         r"""Return unlensed :math:`C_{\ell}` ['tt', 'ee', 'bb', 'te'], unitless."""
-        return self._state['unlensed_cl'][:ellmax] * self._rsigma8**2
+        if ellmax < 0:
+            ellmax = self._state['unlensed_cl'].size + 1 + ellmax
+        return self._state['unlensed_cl'][:ellmax]
 
     def lens_potential_cl(self, ellmax=-1):
         r"""Return potential :math:`C_{\ell}` ['pp', 'tp', 'ep'], unitless."""
-        return self._state['lens_potential_cl'][:ellmax] * self._rsigma8**2
+        if ellmax < 0:
+            ellmax = self._state['lens_potential_cl'].size + 1 + ellmax
+        return self._state['lens_potential_cl'][:ellmax]
 
     def lensed_cl(self, ellmax=-1):
         r"""Return lensed :math:`C_{\ell}` ['tt', 'ee', 'bb', 'te'], unitless."""
-        return self._state['lensed_cl'][:ellmax] * self._rsigma8**2
+        if ellmax < 0:
+            ellmax = self._state['lensed_cl'].size + 1 + ellmax
+        return self._state['lensed_cl'][:ellmax]
 
     def __getstate__(self):
         """Return this class' state dictionary."""
         state = {}
         for name in ['unlensed_cl', 'lens_potential_cl', 'lensed_cl']:
-            table = getattr(self, name)(ellmax=self.ellmax_cl)
+            try: table = getattr(self, name)()
+            except: continue  # e.g. lensing=False
             for key in table.dtype.names:
-                state['{}.{}'.format(name, key)] = table[key]
+                if key != 'ell':
+                    state['{}.{}'.format(name, key)] = table[key]
         return state
 
     def __setstate__(self, state):
@@ -241,17 +431,29 @@ class Harmonic(BaseSection):
             tables.setdefault(name, {})
             tables[name][key] = value
         for name, value in tables.items():
-            names = list(value.keys())
-            self._state[name] = table = np.empty(value[names[0]].shape[0], [('ell', np.int64)] + [(name, np.float64) for name in names])
-            for name in names: table[name] = value[name]
+            names = [key for key in value if key != 'ell']
+            self._state[name] = table = np.empty(value[names[0]].shape[0], dtype=[('ell', np.int64)] + [(name, np.float64) for name in names])
+            for name in names: table[name] = value[name] * self._rsigma8**2
             table['ell'] = np.arange(table.shape[0])
+
+
+def _make_tuple(of, size=2):
+    if isinstance(of, str): of = (of,)
+    of = list(of)
+    of = of + [of[0]] * (size - len(of))
+    return tuple(sorted(of))
 
 
 @utils.addproperty('sigma8_m')
 class Fourier(BaseSection):
 
     def __init__(self, engine):
-        self.__setstate__(engine._state, section='fourier')
+        self._callable = False
+        state = engine._predict(section='fourier')
+        if callable(state):
+            self._callable = state
+        else:
+            self.__setstate__(state)
         self._engine = engine
         self._h = self._engine['h']
         self._rsigma8 = self._engine._rescale_sigma8()
@@ -291,11 +493,12 @@ class Fourier(BaseSection):
         pk : numpy.ndarray
             Power spectrum array of shape (len(k), len(z)).
         """
-        if isinstance(of, str): of = (of,)
-        of = list(of)
-        of = of + [of[0]] * (2 - len(of))
-        of = tuple(sorted(of))
-        return self._state['k'], self._state['z'], self._state['pk_non_linear' if non_linear else 'pk'][of] * self._rsigma8**2
+        if self._callable:
+            pk_interpolator = self.pk_interpolator(non_linear=non_linear, of=of)
+            return pk_interpolator.k, pk_interpolator.z, pk_interpolator.pk
+        of = _make_tuple(of)
+        suffix = '_non_linear' if non_linear else ''
+        return self._state['k'], self._state['z' + suffix], self._state['pk' + suffix][of] * self._rsigma8**2
 
     def pk_interpolator(self, non_linear=False, of='delta_m', **kwargs):
         r"""
@@ -313,6 +516,34 @@ class Fourier(BaseSection):
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
         """
+        from cosmoprimo.interpolator import _bcast_dtype
+        if self._callable:
+
+            # TODO: if this is ever to be used, vectorize over z
+
+            of = _make_tuple(of)
+            suffix = '_non_linear' if non_linear else ''
+
+            def pk_callable(k, z, grid=True):
+                if not grid:
+                    raise NotImplementedError('grid must be True')
+                pk = []
+                dtype = _bcast_dtype(k, z)
+                k = np.asarray(k, dtype=dtype)
+                z = np.asarray(z, dtype=dtype)
+                zflat = z.ravel()
+                if not zflat.size:
+                    return np.empty(shape=k.shape + z.shape, dtype=dtype)
+                for zz in zflat:
+                    state = self._callable(z=zz)
+                    self.__setstate__(state)
+                    state = self._state
+                    pk.append(state['pk' + suffix][of] * self._rsigma8**2)
+                del self._state
+                return interpolate.interp1d(state['k'], np.column_stack(pk), kind='cubic', bounds_error=True, assume_sorted=True, axis=0)(k).astype(dtype=dtype)
+
+            return PowerSpectrumInterpolator2D.from_callable(k=get_default_k_callable(), z=get_default_z_callable(non_linear=non_linear), pk_callable=pk_callable)
+
         ka, za, pka = self.table(non_linear=non_linear, of=of)
         return PowerSpectrumInterpolator2D(ka, za, pka, **kwargs)
 
@@ -347,19 +578,29 @@ class Fourier(BaseSection):
         state = {}
         state['k'] = k = get_default_k_callable()
         state['z'] = z = get_default_z_callable()
-        try: state['pk_non_linear'] = {of: self.pk_interpolator(non_linear=True, of=of)(k, z) for of in [('delta_m', 'delta_m')]}
-        except: pass
+        z_non_linear = get_default_z_callable(non_linear=True)
+        try:
+            state['pk_non_linear.delta_m.delta_m'] = self.pk_interpolator(non_linear=True, of=('delta_m', 'delta_m'))(k, z_non_linear)
+            state['z_non_linear'] = z_non_linear
+        except:
+            pass
         list_of = []
         ofs = ['delta_cb', 'delta_m', 'theta_cb', 'theta_m', 'phi_plus_psi']
         for iof1, of1 in enumerate(ofs):
             for of2 in ofs[iof1:]:
                 list_of.append(tuple(sorted((of1, of2))))
-        state['pk'] = {}
         for of in list_of:
-            try: state['pk'][of] = self.pk_interpolator(non_linear=False, of=of)(k, z)
-            except: pass
+            try: state['pk.{}.{}'.format(*of)] = self.pk_interpolator(non_linear=False, of=of)(k, z)
+            except: raise
         return state
 
     def __setstate__(self, state):
         """Set this class' state dictionary."""
-        self._state = dict(state)
+        self._state = {}
+        for keyname, value in state.items():
+            if keyname.startswith('pk'):
+                name, *keys = keyname.split('.')
+                self._state.setdefault(name, {})
+                self._state[name][tuple(keys)] = value
+            else: # k, z
+                self._state[keyname] = value

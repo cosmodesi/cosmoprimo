@@ -19,10 +19,12 @@ try:
         except AttributeError:
             pass
     array_types = tuple(array_types)
+    from jax import vmap
 except ImportError:
     jax = None
     import numpy
     import scipy
+    vmap = numpy.vectorize
 
 
 def jit(*args, **kwargs):

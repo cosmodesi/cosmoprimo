@@ -3,6 +3,7 @@
 import os
 import functools
 import inspect
+import logging
 
 import numpy as np
 from scipy import interpolate
@@ -241,11 +242,45 @@ class DistanceToRedshift(BaseClass):
         interp_order : int, default=3
             Interpolation order, e.g. 1 for linear interpolation, 3 for cubic splines.
         """
-        zgrid = np.logspace(-8, np.log10(zmax), nz)
-        self.zgrid = np.concatenate([[0.], zgrid])
+        self.zgrid = np.insert(np.logspace(-8, np.log10(zmax), nz), 0, 0.)
         self.rgrid = distance(self.zgrid)
         self.interp = interpolate.UnivariateSpline(self.rgrid, self.zgrid, k=interp_order, s=0, ext='raise')
 
     def __call__(self, distance):
         """Return (interpolated) redshift at distance ``distance`` (scalar or array)."""
         return self.interp(distance)
+
+
+logger = logging.getLogger('Plotting')
+
+
+def savefig(filename, fig=None, bbox_inches='tight', pad_inches=0.1, dpi=200, **kwargs):
+    """
+    Save figure to ``filename``.
+
+    Warning
+    -------
+    Take care to close figure at the end, ``plt.close(fig)``.
+
+    Parameters
+    ----------
+    filename : string
+        Path where to save figure.
+
+    fig : matplotlib.figure.Figure, default=None
+        Figure to save. Defaults to current figure.
+
+    kwargs : dict
+        Optional arguments for :meth:`matplotlib.figure.Figure.savefig`.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    """
+    from matplotlib import pyplot as plt
+    mkdir(os.path.dirname(filename))
+    logger.info('Saving figure to {}.'.format(filename))
+    if fig is None:
+        fig = plt.gcf()
+    fig.savefig(filename, bbox_inches=bbox_inches, pad_inches=pad_inches, dpi=dpi, **kwargs)
+    return fig

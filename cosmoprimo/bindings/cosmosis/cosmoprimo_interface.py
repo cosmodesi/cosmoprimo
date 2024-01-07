@@ -24,6 +24,7 @@ def setup(options):
               'harmonic': options.get_bool(option_section, 'harmonic', default=False),
               'lensing': options.get_bool(option_section, 'lensing', default=True),
               'fourier': options.get_bool(option_section, 'fourier', default=False),
+              'nonlinear': options.get_string(option_section, 'nonlinear', default=''),
               'engine': options.get_string(option_section, 'engine', default='class')}
 
 
@@ -62,6 +63,7 @@ def get_cosmoprimo_inputs(block, config):
               'm_ncdm': m_ncdm,
               'neutrino_hierarchy': neutrino_hierarchy,
               'use_ppf': config.get('use_ppf', True),
+              'non_linear': config['nonlinear'],
               'engine': engine}
     optional_params = {'alpha_s': (names.cosmological_parameters, 'nrun'),
                        'w0_fld': (names.cosmological_parameters, 'w'),
@@ -95,7 +97,7 @@ def get_cosmoprimo_inputs(block, config):
 
     for key, val in config.items():
         if key.startswith('cosmoprimo_'):
-            params[key[6:]] = val
+            params[key[len('cosmoprimo_'):]] = val
 
     return params
 

@@ -16,7 +16,7 @@ def test_params():
     params = {'Omega_cdm': 0.3, 'Omega_b': 0.02, 'h': 0.8, 'n_s': 0.96}
     cosmo = Cosmology(**params)
     assert cosmo['omega_cdm'] == 0.3 * 0.8**2
-    assert len(cosmo['z_pk']) == 60
+    assert len(cosmo['z_pk']) == 30
     assert cosmo['sigma8'] == 0.8
     for neutrino_hierarchy in ['normal', 'inverted', 'degenerate']:
         cosmo = Cosmology(m_ncdm=0.1, neutrino_hierarchy=neutrino_hierarchy)
@@ -74,10 +74,12 @@ def test_background(params, seed=42):
             assert np.allclose(getattr(ba, name), cosmo[name], atol=1e-9, rtol=1e-8 if name not in ['N_eff'] else 1e-4)
 
     ba_class = Background(cosmo, engine='class')
+    ba = cosmo.get_background(engine='camb')
 
     def assert_allclose(ba, name, atol=0, rtol=1e-4):
         test, ref = getattr(ba, name), getattr(ba_class, name)
-        shape = (cosmo['N_ncdm'], ) if name.endswith('ncdm') else ()
+        has_species = name.endswith('ncdm')
+        shape = (cosmo['N_ncdm'], ) if has_species else ()
         z = rng.uniform(0., 1., 10)
         assert np.allclose(test(z=z), ref(z), atol=atol, rtol=rtol)
         assert test(0.).shape == shape
@@ -89,6 +91,11 @@ def test_background(params, seed=42):
         z = np.array([[0., 1.]] * 4, dtype='f4')
         assert test(z).shape == shape + z.shape
         assert test(z).dtype.itemsize == z.dtype.itemsize
+        if has_species and cosmo['N_ncdm']:
+            assert test(0., species=0).shape == ()
+            assert test([], species=0).shape == (0, )
+            assert test([0., 1.], species=0).shape == (2, )
+            assert test([0., 1.], species=[0]).shape == (1, 2, )
 
     for engine in ['class', 'camb', 'astropy', 'eisenstein_hu']:
         ba = cosmo.get_background(engine=engine)
@@ -313,15 +320,14 @@ def test_pk_norm():
 
 def plot_primordial_power_spectrum():
     from matplotlib import pyplot as plt
-    cosmo = Cosmology()
+    cosmo = Cosmology(Omega_k=0.1)
     pm_class = Primordial(cosmo, engine='class')
-    pr_camb = Primordial(cosmo, engine='camb')
-    pk = pm_class.pk_interpolator()
+    pm_camb = Primordial(cosmo, engine='camb')
+    pm_eh = Primordial(cosmo, engine='eisenstein_hu')
     k = np.logspace(-6, 2, 500)
-    plt.loglog(k, pk(k), label='class')
-    pk = pr_camb.pk_interpolator()
-    k = np.logspace(-6, 2, 500)
-    plt.loglog(k, pk(k), label='camb')
+    plt.loglog(k, pm_class.pk_interpolator()(k), label='class')
+    plt.loglog(k, pm_camb.pk_interpolator()(k), label='camb')
+    plt.loglog(k, pm_eh.pk_interpolator()(k), label='eisenstein_hu')
     plt.legend()
     plt.show()
 
@@ -390,6 +396,55 @@ def plot_matter_power_spectrum():
     plt.loglog(k, pk(k, z=z), label='eisenstein_hu_nowiggle')
     pk = Fourier(cosmo, engine='eisenstein_hu_nowiggle_variants').pk_interpolator()
     plt.loglog(k, pk(k, z=z), label='eisenstein_hu_nowiggle_variants')
+    plt.legend()
+    plt.show()
+
+
+def plot_non_linear_matter_power_spectrum():
+    from matplotlib import pyplot as plt
+    non_linear = 'mead'
+    cosmo = Cosmology(lensing=True, non_linear=non_linear, engine='class')
+    #cosmo.get_harmonic()  # previous bug with pyclass
+    fo_class = Fourier(cosmo)
+    # k, z, pk = fo_class.table()
+    # plt.loglog(k, pk)
+    z = np.linspace(1., 2., 3)
+    k = np.logspace(-6, 2, 500)
+    pklin = fo_class.pk_interpolator(non_linear=False, of='delta_m')
+    pknonlin = fo_class.pk_interpolator(non_linear=True, of='delta_m')
+    for iz, zz in enumerate(z):
+        plt.loglog(k, pklin(k, z=zz), color='C0', label='linear' if iz == 0 else None)
+        plt.loglog(k, pknonlin(k, z=zz), color='C1', label=non_linear if iz == 0 else None)
+    plt.legend()
+    plt.show()
+
+    fo_camb = Fourier(cosmo, engine='camb')
+    pklin_camb = fo_camb.pk_interpolator(non_linear=False, of='delta_m')
+    pknonlin_camb = fo_camb.pk_interpolator(non_linear=True, of='delta_m')
+    for iz, zz in enumerate(z):
+        plt.plot(k, pknonlin(k, z=zz) / pklin(k, z=zz), color='C0', label='class boost' if iz == 0 else None)
+        plt.plot(k, pknonlin_camb(k, z=zz) / pklin_camb(k, z=zz), color='C1', label='camb boost' if iz == 0 else None)
+    plt.xscale('log')
+    plt.legend()
+    plt.show()
+
+
+def plot_matter_power_spectra():
+    from matplotlib import pyplot as plt
+    from cosmoprimo.fiducial import DESI
+    fiducial = DESI()
+    for ii, logA in enumerate(np.linspace(2.9, 3.1, 5)):
+        cosmo = fiducial.clone(logA=logA)
+        fo_class = Fourier(cosmo, engine='class')
+        # k, z, pk = fo_class.table()
+        # plt.loglog(k, pk)
+        z = 1.
+        k = np.logspace(-6, 2, 500)
+        for of in [('delta_m', 'delta_m'), ('delta_cb', 'delta_cb'), ('delta_cb', 'theta_cb'), ('theta_cb', 'theta_cb')]:
+            pk = fo_class.pk_interpolator(non_linear=False, of=of)
+            # pk = fo_class.pk_kz
+            plt.loglog(k, pk(k, z=z), label=str(of) if ii == 0 else None)
+
     plt.legend()
     plt.show()
 
@@ -695,6 +750,26 @@ def test_error():
         cosmo = Cosmology(Omega_m=-0.1)
 
 
+def plot_z_sampling():
+    from cosmoprimo.fiducial import DESI
+
+    cosmo = DESI()
+
+    from matplotlib import pyplot as plt
+    z = cosmo.get_background().table()['z'][::-1]
+    z2 = np.insert(np.logspace(-8, 2, 2048), 0, 0.)
+
+    plt.plot(z[z < 100.])
+    plt.plot(z2)
+    plt.show()
+
+    z = cosmo.get_fourier().table()[1][::-1]
+    z2 = np.linspace(0., 10**0.5, 30)**2
+    plt.plot(z)
+    plt.plot(z2)
+    plt.show()
+
+
 if __name__ == '__main__':
 
     test_params()
@@ -716,6 +791,7 @@ if __name__ == '__main__':
     # plot_primordial_power_spectrum()
     # plot_harmonic()
     # plot_matter_power_spectrum()
+    # plot_non_linear_matter_power_spectrum()
     # plot_eisenstein_hu_nowiggle_variants()
     # test_external_camb()
     test_external_pyccl()
