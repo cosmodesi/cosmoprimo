@@ -158,10 +158,10 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
     @classmethod
     def gather(cls, samples, mpicomm=mpi.COMM_WORLD, mpiroot=0):
         """Gather from this MPI communicator."""
-        params, attrs = mpicomm.bcast((list(samples.keys()), samples.attrs) if mpicomm.rank == mpiroot else None, root=0)
+        params, attrs = mpicomm.bcast((list(samples.keys()), samples.attrs) if mpicomm.rank == mpiroot else None, root=mpiroot)
         toret = cls(attrs=attrs)
         for param in params:
-            toret[param] = mpi.gather(samples[param] if mpicomm.rank == mpiroot else None, mpicomm=mpicomm, mpiroot=mpiroot)
+            toret[param] = mpi.gather(samples[param], mpicomm=mpicomm, mpiroot=mpiroot)
         return toret
 
     @property
@@ -351,17 +351,17 @@ class BaseSampler(BaseClass):
         default_state = {name: np.full_like(value, np.nan) for name, value in default_state.items()}
 
         for isplit in range(nsplits):
-            isample_min, isample_max = isplit * samples.size // nsplits, (isplit + 1) * samples.size // nsplits
-            scatter_samples = Samples.scatter(samples[isample_min:isample_max], mpicomm=self.mpicomm, mpiroot=0)
+            isample_min, isample_max = self.mpicomm.bcast((isplit * samples.size // nsplits, (isplit + 1) * samples.size // nsplits) if self.mpicomm.rank == 0 else None, root=0)
+            scatter_samples = Samples.scatter(samples[isample_min:isample_max] if self.mpicomm.rank == 0 else None, mpicomm=self.mpicomm, mpiroot=0)
+            for name, value in default_state.items():
+                scatter_samples['Y.' + name] = np.repeat(value[None, ...], scatter_samples.size, axis=0)
             for ivalue in range(scatter_samples.size):
                 try:
                     state = self.calculator(**{param: scatter_samples['X.' + param][ivalue] for param in self.params})
                 except CalculatorComputationError:
-                    state = default_state
+                    continue
                 for name, value in state.items():
-                    name = 'Y.' + name
-                    scatter_samples.setdefault(name, [])
-                    scatter_samples[name].append(value)
+                    scatter_samples['Y.' + name][ivalue] = value
             gather_samples = Samples.gather(scatter_samples, mpicomm=self.mpicomm, mpiroot=0)
             if self.mpicomm.rank == 0:
                 gather_samples.attrs['params'] = dict(self.params)

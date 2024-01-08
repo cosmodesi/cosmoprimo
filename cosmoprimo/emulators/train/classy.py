@@ -13,12 +13,11 @@ emulator_fn = this_dir / 'classy/emulator.npy'
 
 
 def sample():
-    cosmo = DESI(lensing=True, non_linear='halofit', engine='class')
-    params = {'logA': (2.5, 3.5), 'n_s': (0.88, 1.06), 'h': (0.4, 1.), 'omega_b': (0.19, 0.26), 'omega_cdm': (0.08, 0.2), 'm_ncdm': (0., 0.8),
-              'Omega_k': (-0.3, 0.3), 'w0_fld': (-1.3, -0.7), 'wa_fld': (-0.7, 0.7), 'tau_reio': (0.02, 0.12)}
-
+    cosmo = DESI(lensing=True, non_linear='mead', engine='class')
+    params = {'logA': (2.5, 3.5), 'n_s': (0.88, 1.06), 'h': (0.4, 1.), 'omega_b': (0.019, 0.026), 'omega_cdm': (0.08, 0.2), 'm_ncdm': (0., 0.8),
+              'Omega_k': (-0.3, 0.3), 'w0_fld': (-1.5, -0.5), 'wa_fld': (-0.7, 0.7), 'tau_reio': (0.02, 0.12)}
     sampler = QMCSampler(cosmo, params, save_fn=samples_fn)
-    sampler.run(save_every=10, niterations=100000)
+    sampler.run(save_every=2, niterations=100)
 
 
 def fit(tofit=('background', 'thermodynamics', 'primordial', 'fourier', 'harmonic')):
@@ -75,6 +74,7 @@ if __name__ == '__main__':
 
     """Uncomment to run."""
 
-    #sample()
+    setup_logging()
+    sample()
     #fit()
     #plot()

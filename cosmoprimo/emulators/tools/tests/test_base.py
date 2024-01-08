@@ -25,6 +25,7 @@ def test_base():
     emulator.set_samples()
     emulator.fit()
     emulator.save(fn)
+    emulator.mpicomm.Barrier()
     emulator = emulator.to_calculator()
     emulator = EmulatedCalculator.load(fn)
     state = emulator(a=1)

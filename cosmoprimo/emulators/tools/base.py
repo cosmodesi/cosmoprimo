@@ -135,6 +135,7 @@ class Emulator(BaseClass):
 
         samples : Samples, default=None
             Input samples, typically obtained with one of :class:`BaseSampler` subclasses, e.g. :class:`QMCSampler`.
+            Can be provided on MPI rank 0 only.
 
         engine : str, dict, BaseEmulatorEngine, default=None
             A dictionary mapping calculator's output names (including wildcard) to emulator engine,
@@ -160,7 +161,7 @@ class Emulator(BaseClass):
             self.set_engine(engine)
         if calculator is not None:
             self.set_calculator(calculator, params)
-        if samples is not None:
+        if self.mpicomm.bcast(samples is not None, root=0):
             self.set_samples(samples=samples)
 
     @property
@@ -249,6 +250,7 @@ class Emulator(BaseClass):
         samples : Samples, default=None
             Input samples, typically obtained with one of :class:`BaseSampler` subclasses, e.g. :class:`QMCSampler`.
             Optional if already provided when instantiating (:meth:`__init__`).
+            Can be provided on MPI rank 0 only.
 
         calculator : BaseCalculator, default=None
             Input calculator, a function ``calculator(**x) -> y``, with ``x`` a dictionary of parameters and ``y`` a dictionary containing output arrays.
@@ -289,7 +291,7 @@ class Emulator(BaseClass):
 
             for engine in this_engines.values():
                 samples = engine.get_default_samples(calculator, params, **kwargs)
-                samples.attrs['fixed'] = dict(fixed)
+                if samples is not None: samples.attrs['fixed'] = dict(fixed)  # only on rank 0
                 break
 
         else:
@@ -302,8 +304,6 @@ class Emulator(BaseClass):
                 varied, fixed = sort_varied_fixed({name[2:]: samples[name] for name in samples.columns('Y.*')}, subsample=min(samples.size, 10))
             else:
                 samples = None
-
-            self.fixed.update(fixed)
 
         import warnings
         if self.mpicomm.rank == 0:
@@ -381,7 +381,7 @@ class Emulator(BaseClass):
         for name in names:
             self.engines[name] = engine = self.engines[name].copy()
             if self.mpicomm.rank == 0:
-                self.log_info('Fitting {}'.format(name))
+                self.log_info('Fitting {}.'.format(name))
             engine.fit(*_get_X_Y(self.samples[name], name), **kwargs)
 
     def predict(self, params):
@@ -496,15 +496,17 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
 
     def fit(self, X, Y, attrs, **kwargs):
         # print('pre', Y.shape)
-        for operation in self.xoperations:
-            operation.initialize(X)
-            X = vmap(operation)(X)
-        for operation in self.yoperations:
-            operation.initialize(Y)
-            Y = vmap(operation)(Y)
-        self.xshape = X.shape[1:]
-        self.yshape = Y.shape[1:]
-        self._fit_no_operation(np.asarray(X).reshape(len(X), -1), np.asarray(Y).reshape(len(Y), -1), attrs, **kwargs)
+        if self.mpicomm.rank == 0:
+            for operation in self.xoperations:
+                operation.initialize(X)
+                X = vmap(operation)(X)
+            for operation in self.yoperations:
+                operation.initialize(Y)
+                Y = vmap(operation)(Y)
+            xshape, yshape = X.shape[1:], Y.shape[1:]
+            X, Y = np.asarray(X).reshape(len(X), -1), np.asarray(Y).reshape(len(Y), -1)
+        self.xshape, self.yshape = self.mpicomm.bcast((xshape, yshape) if self.mpicomm.rank == 0 else None, root=0)
+        self._fit_no_operation(X, Y, attrs, **kwargs)
 
     def _fit_no_operation(self, X, Y, attrs):
         raise NotImplementedError

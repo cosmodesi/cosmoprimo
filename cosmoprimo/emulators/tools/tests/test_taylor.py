@@ -35,15 +35,16 @@ def test_taylor(show=True):
     emulator.set_samples()
     emulator.fit()
     emulator.save(fn)
+    emulator.mpicomm.Barrier()
     emulator = emulator.to_calculator()
     emulator = EmulatedCalculator.load(fn)
     state = emulator(a=1)
-    print(state)
     sampler = DiffSampler(calculator, params, order={'*': 4})
     samples = sampler.run()
     emulator = Emulator(samples=samples, engine=TaylorEmulatorEngine())
     emulator.fit()
     emulator.save(fn)
+    emulator.mpicomm.Barrier()
     emulator = emulator.to_calculator()
 
     if show:
