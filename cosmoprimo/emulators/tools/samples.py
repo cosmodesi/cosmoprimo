@@ -349,7 +349,6 @@ class BaseSampler(BaseClass):
         except Exception as exc:
             raise ValueError('error when running calculator with params {}, could not obtain default state'.format(default_params)) from exc
         default_state = {name: np.full_like(value, np.nan) for name, value in default_state.items()}
-
         for isplit in range(nsplits):
             isample_min, isample_max = self.mpicomm.bcast((isplit * samples.size // nsplits, (isplit + 1) * samples.size // nsplits) if self.mpicomm.rank == 0 else None, root=0)
             scatter_samples = Samples.scatter(samples[isample_min:isample_max] if self.mpicomm.rank == 0 else None, mpicomm=self.mpicomm, mpiroot=0)

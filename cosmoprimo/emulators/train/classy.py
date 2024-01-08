@@ -13,6 +13,7 @@ emulator_fn = this_dir / 'classy/emulator.npy'
 
 
 def sample():
+    # What makes classy run so slow: harmonic, lensing, Omega_k far from 1.
     cosmo = DESI(lensing=True, non_linear='mead', engine='class')
     params = {'logA': (2.5, 3.5), 'n_s': (0.88, 1.06), 'h': (0.4, 1.), 'omega_b': (0.019, 0.026), 'omega_cdm': (0.08, 0.2), 'm_ncdm': (0., 0.8),
               'Omega_k': (-0.3, 0.3), 'w0_fld': (-1.5, -0.5), 'wa_fld': (-0.7, 0.7), 'tau_reio': (0.02, 0.12)}

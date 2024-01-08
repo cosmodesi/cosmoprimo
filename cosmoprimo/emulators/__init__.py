@@ -20,6 +20,11 @@ def get_calculator(cosmo, section=None):
     if not isinstance(cosmo, Cosmology): return cosmo
 
     section_names = tools.base.make_list(section if section is not None else list(cosmo.engine._Sections))
+    sorted_section_names = ['background', 'thermodynamics', 'primordial', 'perturbations', 'transfer', 'fourier', 'harmonic'][::-1]
+    for section_name in section_names:
+        if section_name not in sorted_section_names:
+            sorted_section_names.append(section_name)
+    section_names = [section for section in sorted_section_names if section in section_names]
 
     def calculator(**params):
         from cosmoprimo import CosmologyError
