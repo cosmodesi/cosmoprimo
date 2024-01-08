@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from cosmoprimo.fiducial import DESI
-from cosmoprimo.emulators import Emulator, EmulatedEngine, MLPEmulatorEngine, QMCSampler, Samples, FourierNormOperation, PCAOperation, ChebyshevOperation, plot_residual_background, plot_residual_thermodynamics, plot_residual_primordial, plot_residual_fourier, plot_residual_harmonic, setup_logging
+from cosmoprimo.emulators import Emulator, EmulatedEngine, MLPEmulatorEngine, QMCSampler, InputSampler, get_calculator, Samples, FourierNormOperation, PCAOperation, ChebyshevOperation, plot_residual_background, plot_residual_thermodynamics, plot_residual_primordial, plot_residual_fourier, plot_residual_harmonic, setup_logging
 
 
 this_dir = Path(__file__).parent
@@ -17,8 +17,15 @@ def sample():
     cosmo = DESI(lensing=True, non_linear='mead', engine='class')
     params = {'logA': (2.5, 3.5), 'n_s': (0.88, 1.06), 'h': (0.4, 1.), 'omega_b': (0.019, 0.026), 'omega_cdm': (0.08, 0.2), 'm_ncdm': (0., 0.8),
               'Omega_k': (-0.3, 0.3), 'w0_fld': (-1.5, -0.5), 'wa_fld': (-0.7, 0.7), 'tau_reio': (0.02, 0.12)}
-    sampler = QMCSampler(cosmo, params, save_fn=samples_fn)
-    sampler.run(save_every=2, niterations=100)
+    calculator = get_calculator(cosmo, section=['background', 'thermodynamics', 'primordial', 'perturbations', 'transfer', 'fourier'])
+    sampler = QMCSampler(calculator, params, save_fn=samples_fn)
+    sampler.run(save_every=2, niterations=2)
+
+    cosmo = cosmo.clone(extra_params={'number_count_contributions': []})
+    #cosmo = cosmo.clone(extra_params={'output': ['tCl', 'pCl', 'lCl']})
+    calculator = get_calculator(cosmo, section=['harmonic'])
+    sampler = InputSampler(calculator, samples=samples_fn, params=params, save_fn=samples_fn)
+    sampler.run(save_every=2)
 
 
 def fit(tofit=('background', 'thermodynamics', 'primordial', 'fourier', 'harmonic')):

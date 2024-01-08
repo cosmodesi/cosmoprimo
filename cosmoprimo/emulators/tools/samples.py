@@ -88,7 +88,7 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
             state = {}
             state['attrs'] = np.load(attrs_fn, allow_pickle=True)[()]
             state['data'] = {}
-            for basename in os.listdir(data_dir):
+            for basename in sorted(os.listdir(data_dir)):  # sorted to get same order no matter what process
                 fn = os.path.join(data_dir, basename)
                 if os.path.isfile(fn):
                     state['data'][os.path.splitext(basename)[0]] = np.load(fn)
@@ -413,16 +413,32 @@ class InputSampler(BaseSampler):
             If not ``None``, save samples to this location.
         """
         self.mpicomm = mpicomm
-        params, self._points = None, None
+        params, self._input_samples = None, None
         if self.mpicomm.rank == 0:
+            samples = samples if isinstance(samples, Samples) else Samples.load(samples)
             if params is None:
                 params = dict.fromkeys([name[2:] for name in samples if name.startswith('X.')])
-            self._points = Samples({name: samples['X.' + name] for name in params})
+            self._input_samples = samples
         params = self.mpicomm.bcast(params, root=0)
         super(InputSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=None)
 
     def points(self):
-        return self._points
+        return Samples({name: self._input_samples['X.' + name] for name in self.params})
+
+    def run(self, save_every=20, **kwargs):
+        """
+        Run calculator over ``samples`` argument of :meth:`__init__`.
+
+        Parameters
+        ----------
+        save_every : int, default=20
+            Save every ``save_every`` iterations.
+        """
+        super(InputSampler, self).run(save_every=save_every, **kwargs)
+        if self.mpicomm.rank == 0:
+            self.samples.update(self._input_samples)
+            if self.save_fn is not None:
+                self.samples.save(self.save_fn)
 
 
 class GridSampler(BaseSampler):

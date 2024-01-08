@@ -1,15 +1,7 @@
 import os
 import numpy as np
 
-from cosmoprimo.emulators.tools import Emulator, EmulatedCalculator, Samples, Operation, ScaleOperation, NormOperation, Log10Operation, ArcsinhOperation, PCAOperation, ChebyshevOperation, setup_logging
-
-
-def test_samples():
-    size = 10
-    samples = Samples({'a': np.linspace(0., 1., size), 'b': np.linspace(0., 1., size)})
-    print(list(samples))
-    assert samples.size == size
-    assert samples[:3].size == 3
+from cosmoprimo.emulators.tools import Emulator, EmulatedCalculator, Operation, ScaleOperation, NormOperation, Log10Operation, ArcsinhOperation, PCAOperation, ChebyshevOperation, setup_logging
 
 
 def calculator(a=0, b=0):
@@ -110,7 +102,6 @@ def test_chebyshev():
 if __name__ == '__main__':
 
     setup_logging()
-    test_samples()
     test_base()
     test_operation()
     test_chebyshev()
