@@ -1,6 +1,6 @@
 import os
 import sys
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 package_basename = 'cosmoprimo'
@@ -18,5 +18,5 @@ setup(name=package_basename,
       url='http://github.com/cosmodesi/cosmoprimo',
       install_requires=['numpy', 'scipy'],
       extras_require={'class': ['cython', 'pyclass @ git+https://github.com/adematti/pyclass'], 'camb': ['camb'], 'isitgr': ['isitgr'], 'astropy': ['astropy'], 'extras': ['pyfftw']},
-      package_data={package_basename: ['data/*.dat', 'data/*.csv']},
-      packages=[package_basename])
+      packages=find_packages(),
+      package_data={package_basename: ['data/*.dat', 'data/*.csv']})
