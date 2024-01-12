@@ -12,10 +12,10 @@ def plot_wiggles():
 
     k = np.geomspace(1e-4, 10., 1000)
     wiggles = pk_interpolator(k) / smooth_pk_interpolator(k)
-    plt.plot(k, wiggles, label='truth')
+    #plt.plot(k, wiggles, label='truth')
     cosmo.set_engine('eisenstein_hu')
 
-    for engine in ['hinton2017', 'savgol', 'ehpoly', 'wallish2018', 'brieden2022', 'peakaverage']:
+    for engine in ['hinton2017', 'savgol', 'ehpoly', 'wallish2018', 'brieden2022', 'peakaverage', 'ehsavgol', 'bspline']:
         flt = PowerSpectrumBAOFilter(pk_interpolator, engine=engine, cosmo=cosmo, cosmo_fid=cosmo)
         plt.plot(k, pk_interpolator(k) / flt.smooth_pk_interpolator()(k), label=engine)
     #for engine in ['kirkby2013']:
@@ -60,7 +60,7 @@ def plot_numerical_stability(engine='class'):
     z = 0.
     kp = 0.03
     Ap = {}
-    for engine in ['wallish2018', 'brieden2022', 'peakaverage']:
+    for engine in ['wallish2018', 'brieden2022', 'peakaverage', 'bspline']:
         flt = PowerSpectrumBAOFilter(Fourier(cosmo_fid).pk_interpolator().to_1d(z=z), cosmo=cosmo_fid, cosmo_fid=cosmo_fid, engine=engine)
         Ap[engine] = []
         for value, color in zip(values, colors):
@@ -87,7 +87,7 @@ def plot_xi(engine='class'):
     for engine in ['kirkby2013']:
         flt = CorrelationFunctionBAOFilter(xi_interpolator, engine=engine)
         plt.plot(s, s ** 2 * flt.smooth_xi_interpolator()(s), label=engine)
-    for engine in ['hinton2017', 'savgol', 'ehpoly', 'wallish2018', 'brieden2022', 'peakaverage']:
+    for engine in ['hinton2017', 'savgol', 'ehpoly', 'wallish2018', 'brieden2022', 'peakaverage', 'ehsavgol', 'bspline']:
         flt = PowerSpectrumBAOFilter(pk_interpolator, engine=engine, cosmo=cosmo, cosmo_fid=cosmo)
         plt.plot(s, s ** 2 * flt.smooth_xi_interpolator()(s), label=engine)
     # plt.xscale('log')
@@ -103,11 +103,11 @@ def plot_pk(engine='class'):
     xi_interpolator = pk_interpolator.to_xi()
     k = np.logspace(-5, 2, 1000)
     plt.loglog(k, pk_interpolator(k), label='input')
-    for engine in ['hinton2017', 'savgol', 'ehpoly', 'wallish2018', 'brieden2022', 'peakaverage']:
+    for engine in ['hinton2017', 'savgol', 'ehpoly', 'wallish2018', 'brieden2022', 'peakaverage', 'ehsavgol', 'bspline']:
         flt = PowerSpectrumBAOFilter(pk_interpolator, engine=engine, cosmo=cosmo, cosmo_fid=cosmo)
         # plt.loglog(k, flt.pk_interpolator(k), label=engine)
         plt.loglog(k, flt.smooth_pk_interpolator()(k), label=engine)
-    for engine in ['kirkby2013']:
+    for engine in ['kirkby2013'][:0]:
         flt = CorrelationFunctionBAOFilter(xi_interpolator, engine=engine)
         plt.loglog(k, flt.smooth_pk_interpolator(extrap_pk='lin')(k), label=engine)
     plt.legend()
@@ -120,7 +120,7 @@ def test_2d_pk(engine='class'):
     fo = Fourier(cosmo, engine=engine)
     pk_interpolator = fo.pk_interpolator()
     k = np.logspace(-3, 2, 1000)
-    for engine in ['hinton2017', 'savgol', 'ehpoly', 'wallish2018', 'brieden2022', 'peakaverage']:
+    for engine in ['hinton2017', 'savgol', 'ehpoly', 'wallish2018', 'brieden2022', 'peakaverage', 'ehsavgol', 'bspline']:
         flt = PowerSpectrumBAOFilter(pk_interpolator, engine=engine, cosmo=cosmo, cosmo_fid=cosmo)
         z = pk_interpolator.z
         smooth_pk = flt.smooth_pk_interpolator()(k, z=z)
@@ -262,10 +262,30 @@ def plot_peakaverage(engine='class'):
     plt.show()
 
 
+def plot_mark():
+    from matplotlib import pyplot as plt
+    from cosmoprimo.fiducial import DESI
+
+    cosmo = DESI()
+    pk_interpolator = cosmo.get_fourier().pk_interpolator().to_1d()
+
+    plt.figure(figsize=(10, 5))
+    k = np.geomspace(1e-3, 10., 1000)
+
+    for engine, label in zip(['bspline', 'ehsavgol', 'wallish2018'], ['B-Spline', 'Savitzky-Golay', 'Discrete Sine Transform']):
+        flt = PowerSpectrumBAOFilter(pk_interpolator, engine=engine, cosmo=cosmo, cosmo_fid=cosmo)
+        plt.plot(k, pk_interpolator(k) / flt.smooth_pk_interpolator()(k) - 1, label=label)
+    plt.legend()
+    plt.xlim(0.00, 0.4)
+    plt.ylim(-0.08, 0.08)
+    plt.xlabel('k [h/Mpc]')
+    plt.ylabel(r'$P/P_{nw} - 1$')
+    plt.show()
+
+
 if __name__ == '__main__':
 
     #test_numerical_stability()
-
     plot_pk()
     test_2d_pk()
     plot_2d_pk()
@@ -273,7 +293,8 @@ if __name__ == '__main__':
     test_2d_xi()
     plot_2d_xi()
     plot_wiggles()
-    plot_numerical_stability()
+    # plot_mark()
+    # plot_numerical_stability()
     # plot_wallish2018()
     # plot_brieden2022()
     # plot_peakaverage()
