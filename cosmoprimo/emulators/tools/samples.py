@@ -14,6 +14,32 @@ from .utils import BaseClass
 class BaseMetaClass(type(UserDict), type(BaseClass)): pass
 
 
+def _select_columns(columns, include=None, exclude=None):
+    """
+    Return selected columns.
+
+    Parameters
+    ----------
+    include : str, list, default=None
+        (List of) column names to select including wildcard, e.g. '*' to select all columns,
+        ['X.*', 'a'] to select all columns starting with 'X.' and column 'a' (if exists).
+
+    exclude : str, list, default=None
+        Same as ``include``, but to exclude columns.
+
+    Returns
+    -------
+    columns : list
+        List of selected columns.
+    """
+    columns = list(columns)
+    if include is not None:
+        columns = utils.find_names(columns, include)
+    if exclude is not None:
+        columns = [column for column in columns if column not in utils.find_names(columns, exclude)]
+    return columns
+
+
 class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
 
     """
@@ -77,7 +103,7 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
             np.save(filename, state, allow_pickle=True)
 
     @classmethod
-    def load(cls, filename):
+    def load(cls, filename, include=None, exclude=None):
         """Load samples."""
         filename = str(filename)
         in_dir = not filename.endswith('.npy')
@@ -88,10 +114,12 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
             state = {}
             state['attrs'] = np.load(attrs_fn, allow_pickle=True)[()]
             state['data'] = {}
-            for basename in sorted(os.listdir(data_dir)):  # sorted to get same order no matter what process
-                fn = os.path.join(data_dir, basename)
-                if os.path.isfile(fn):
-                    state['data'][os.path.splitext(basename)[0]] = np.load(fn)
+            # sorted to get same order no matter what process
+            columns = sorted([os.path.splitext(basename)[0] for basename in os.listdir(data_dir) if os.path.isfile(os.path.join(data_dir, basename))])
+            columns = _select_columns(columns, include=include, exclude=exclude)
+            for column in columns:  # sorted to get same order no matter what process
+                fn = os.path.join(data_dir, column + '.npy')
+                state['data'][column] = np.load(fn)
         else:
             cls.log_info('Loading {}.'.format(filename))
             state = np.load(filename, allow_pickle=True)[()]
@@ -200,12 +228,7 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
         columns : list
             List of selected columns.
         """
-        columns = list(self.keys())
-        if include is not None:
-            columns = utils.find_names(columns, include)
-        if exclude is not None:
-            columns = [column for column in columns if column not in utils.find_names(columns, exclude)]
-        return columns
+        return _select_columns(list(self.keys()), include=include, exclude=exclude)
 
     def select(self, include=None, exclude=None):
         """
@@ -318,7 +341,7 @@ class BaseSampler(BaseClass):
         self.calculator = calculator
         self.params = dict(params)
 
-    def run(self, save_every=20, **kwargs):
+    def run(self, save_every=20, timeout=np.inf, **kwargs):
         """
         Run sampling. Sampling can be interrupted anytime, and resumed by providing
         the path to the saved samples in ``samples`` argument of :meth:`__init__`.
@@ -635,13 +658,14 @@ class QMCSampler(BaseSampler):
         super(QMCSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=samples)
         self.engine = get_qmc_engine(engine)(d=len(self.params), **kwargs)
 
-    def points(self, niterations=300):
+    def points(self, niterations=300, nstart=None):
         lower, upper = [], []
         for limits in self.params.values():
             lower.append(limits[0])
             upper.append(limits[1])
         self.engine.reset()
-        nsamples = len(self.samples) if self.samples is not None else 0
-        self.engine.fast_forward(nsamples)
+        if nstart is None:
+            nstart = len(self.samples) if self.samples is not None else 0
+        self.engine.fast_forward(nstart)
         samples = qmc.scale(self.engine.random(n=niterations), lower, upper).T
         return Samples({param: value for param, value in zip(self.params, samples)})

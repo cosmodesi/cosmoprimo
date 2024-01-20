@@ -899,10 +899,10 @@ class Cosmology(BaseCosmology):
             N_ur = params.pop('Omega_ur') / (rho / (h**2 * constants.rho_crit_kgph_per_mph3))
 
         # Check which of the neutrino species are non-relativistic today
-        m_massive = 0.00017  # Lesgourges et al. 2012
+        m_massive = 0.  #0.00017  # Lesgourges et al. 2012
         m_ncdm = np.array(m_ncdm)
         T_ncdm_over_cmb = np.array(T_ncdm_over_cmb)
-        mask_m = m_ncdm > m_massive
+        mask_m = m_ncdm >= m_massive
         # Fill an array with the non-relativistic neutrino masses
         m_ncdm = m_ncdm[mask_m].tolist()
         T_ncdm_over_cmb = T_ncdm_over_cmb[mask_m].tolist()
