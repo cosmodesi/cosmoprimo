@@ -175,13 +175,14 @@ def get_cosmoprimo_outputs(block, cosmo, config):
     D_M = D_A * (1 + z)
     from cosmoprimo import constants
     H = (100. * ba.efunc(z)) / (constants.c / 1e3)
-    D_V = (z * D_M**2 / H)**(1./3.)
-    block[names.distances, 'D_L'] = D_L
-    block[names.distances, 'D_A'] = D_A
-    block[names.distances, 'D_M'] = D_M
-    block[names.distances, 'D_V'] = D_V
-    block[names.distances, 'H'] = H
-    MU = np.full_like(D_L, -np.inf)
+    D_V = (z * D_M**2 / H)**(1. / 3.)
+    h = ba.h
+    block[names.distances, 'D_L'] = D_L / h
+    block[names.distances, 'D_A'] = D_A / h
+    block[names.distances, 'D_M'] = D_M / h
+    block[names.distances, 'D_V'] = D_V / h
+    block[names.distances, 'H'] = H * h
+    MU = np.full_like(D_L / h, -np.inf)
     mask = D_L > 0
     MU[mask] = 5. * np.log10(D_L[mask]) + 25.
     block[names.distances, 'MU'] = MU
@@ -190,7 +191,7 @@ def get_cosmoprimo_outputs(block, cosmo, config):
     block[names.distances, 'age'] = ba.age
 
     th = cosmo.get_thermodynamics()
-    block[names.distances, 'rs_zdrag'] = th.rs_drag
+    block[names.distances, 'rs_zdrag'] = th.rs_drag / h
 
     rs_DV = th.rs_drag * D_V
     F_AP = D_M * H

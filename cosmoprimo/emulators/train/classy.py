@@ -103,14 +103,10 @@ def plot():
 
 if __name__ == '__main__':
 
+    setup_logging()
     """Uncomment to run."""
 
-    #sample()
-    #fit(str(samples_fn['mpk']) + '_0_10000', tofit=['background'])
-    #plot()
-
     todo = ['sample']
-    #todo = []
 
     if todo:
         from desipipe import Queue, Environment, TaskManager, spawn, setup_logging

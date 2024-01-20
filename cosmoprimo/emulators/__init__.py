@@ -148,6 +148,7 @@ def plot_residual_background(ref_samples, emulated_samples, quantities=None, sub
     for ax, name in zip(lax, quantities):
         for ref, emulated in zip(ref_samples[namespace + name], emulated_samples[namespace + name]):
             mask = z > 0.
+            tmp = np.abs(emulated.T[mask] / ref.T[mask] - 1.)
             ax.plot(z[mask], np.abs(emulated.T[mask] / ref.T[mask] - 1.), color='k')
         ax.set_ylabel('|emulated/ref - 1|')
         ax.set_xscale('log')

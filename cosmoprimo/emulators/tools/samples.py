@@ -86,43 +86,32 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
         Else, save in this directory, with a '.npy' file for attrs and each name: array.
         """
         filename = str(filename)
-        in_dir = not filename.endswith('.npy')
         state = self.__getstate__()
-        if in_dir:
-            self.log_info('Saving to directory {}.'.format(filename))
-            attrs_fn = os.path.join(filename, 'attrs.npy')
-            data_dir = os.path.join(filename, 'data')
-            utils.mkdir(filename)
-            utils.mkdir(data_dir)
-            np.save(attrs_fn, state['attrs'], allow_pickle=True)
-            for name, value in state['data'].items():
-                np.save(os.path.join(data_dir, name + '.npy'), value)
+        self.log_info('Saving {}.'.format(filename))
+        utils.mkdir(os.path.dirname(filename))
+        if filename.endswith('.npz'):
+            statez = dict(state)
+            statez.pop('data', None)
+            statez['columns'] = []
+            for iarray, (name, array) in enumerate(state['data'].items()):
+                statez['data.{:d}'.format(iarray)] = array
+                statez['columns'].append(name)
+            np.savez(filename, **statez)
         else:
-            self.log_info('Saving {}.'.format(filename))
-            utils.mkdir(os.path.dirname(filename))
             np.save(filename, state, allow_pickle=True)
 
     @classmethod
     def load(cls, filename, include=None, exclude=None):
         """Load samples."""
         filename = str(filename)
-        in_dir = not filename.endswith('.npy')
-        if in_dir:
-            cls.log_info('Loading from directory {}.'.format(filename))
-            attrs_fn = os.path.join(filename, 'attrs.npy')
-            data_dir = os.path.join(filename, 'data')
-            state = {}
-            state['attrs'] = np.load(attrs_fn, allow_pickle=True)[()]
-            state['data'] = {}
-            # sorted to get same order no matter what process
-            columns = sorted([os.path.splitext(basename)[0] for basename in os.listdir(data_dir) if os.path.isfile(os.path.join(data_dir, basename))])
-            columns = _select_columns(columns, include=include, exclude=exclude)
-            for column in columns:  # sorted to get same order no matter what process
-                fn = os.path.join(data_dir, column + '.npy')
-                state['data'][column] = np.load(fn)
+        cls.log_info('Loading {}.'.format(filename))
+        state = np.load(filename, allow_pickle=True)
+        if filename.endswith('.npz'):
+            state = dict(state)
+            data = {name: state.pop('data.{:d}'.format(iarray)) for iarray, name in enumerate(state.pop('columns')[()])}
+            state = {**{name: value[()] for name, value in state.items()}, 'data': data}
         else:
-            cls.log_info('Loading {}.'.format(filename))
-            state = np.load(filename, allow_pickle=True)[()]
+            state = state[()]
         new = cls.from_state(state)
         return new
 
@@ -251,6 +240,11 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
         new = self.copy()
         new.data = {name: self[name] for name in self.columns(include=include, exclude=exclude)}
         return new
+
+    def __eq__(self, other):
+        """Is ``self`` equal to ``other``, i.e. same type and attributes?"""
+        return type(other) == type(self) and set(other.columns()) == set(self.columns()) and all(np.all(other[name] == self[name]) for name in self.columns())
+
 
 
 class RQuasiRandomSequence(qmc.QMCEngine):
@@ -459,9 +453,10 @@ class InputSampler(BaseSampler):
         """
         super(InputSampler, self).run(save_every=save_every, **kwargs)
         if self.mpicomm.rank == 0:
-            self.samples.update(self._input_samples)
+            self.samples.update(self._input_samples.select([name for name in self._input_samples.columns() if name not in self.samples]))
             if self.save_fn is not None:
                 self.samples.save(self.save_fn)
+        return self.samples
 
 
 class GridSampler(BaseSampler):

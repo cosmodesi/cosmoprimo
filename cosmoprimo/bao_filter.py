@@ -235,12 +235,32 @@ class SavGolPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         self.pknow[-hnfilter:] = self.pk[-hnfilter:]
 
 
+class EHNoWiggleSavGolPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
+    r"""
+    BAO smoothing with Savitzky-Golay filter applied on Eisenstein & Hu no-wiggle analytic formula.
+
+    References
+    ----------
+    Stephen Chen.
+    """
+    name = 'ehsavgol'
+
+    def _compute(self):
+        """Run filter."""
+        from scipy.signal import savgol_filter
+        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k, z=0.)
+        ratio = self.pk.T / pknow
+        # empirical setting of https://github.com/sfschen/velocileptors/blob/master/velocileptors/EPT/cleft_kexpanded_resummed_fftw.py#L37
+        nfilter = int(np.ceil(np.log(7) / np.log(self.k[-1] / self.k[-2])) // 2 * 2 + 1)  # filter length ~ log span of one oscillation from k = 0.01
+        self.pknow = (savgol_filter(ratio, nfilter, polyorder=4, axis=-1) * pknow).T
+
+
 class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
 
     """Remove BAO wiggles using the Eisenstein & Hu no-wiggle analytic formula, emulated with a 6-th order polynomial."""
     name = 'ehpoly'
 
-    def __init__(self, pk_interpolator, krange=(1e-3, 1.), krange_damp=(1e-2, 0.4), sigma_damp=10, rescale_krange=True, cosmo=None, **kwargs):
+    def __init__(self, pk_interpolator, krange=(1e-3, 1.), rescale_krange=True, cosmo=None, **kwargs):
         """
         Run BAO filter.
 
@@ -253,7 +273,7 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
             k-range to fit the Eisenstein & Hu no-wiggle power spectrum to the input one :attr:`pk_interpolator`.
 
         rescale_krange : bool, default=True
-            Whether to rescale ``krange`` and ``krange_damp`` by the ratio of ``rs_drag`` relative to the fiducial cosmology
+            Whether to rescale ``krange`` by the ratio of ``rs_drag`` relative to the fiducial cosmology
             (may help robustify the procedure for cosmologies far from the fiducial one).
 
         cosmo : Cosmology, default=None
@@ -487,6 +507,109 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         rescale = [np.concatenate([np.linspace(1., rescale, npad[0]), np.full(npad[1], rescale), np.linspace(rescale, 1., npad[2])]) for npad in self.pad_peaks]
         pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k)[:, None]
         self.pknow = self._interp(self.k_peaks[0] / rescale[0], self.k_peaks[1] / rescale[1], self.k, self.pk / pknow) * pknow
+
+
+class BSplinePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
+    """
+    Filter BAO wiggles with B-splines.
+
+    References
+    ----------
+    https://arxiv.org/pdf/1509.02120.pdf, Appendix A (thanks to Stephen Chen for the reference and code)
+    """
+    name = 'bspline'
+
+    def __init__(self, pk_interpolator, constraint=('sigma8',), cosmo=None, **kwargs):
+        """
+        Run BAO filter.
+
+        Parameters
+        ----------
+        pk_interpolator : PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
+            Input power spectrum to remove BAO wiggles from.
+
+        constraint : str, list, tuple, default=('sigma8',)
+            Quantities computed on the no-wiggle power spectrum required to match the input ``pk_interpolator``.
+
+        cosmo : Cosmology, default=None
+            Cosmology instance, used to compute the Eisenstein & Hu no-wiggle power spectrum.
+
+        kwargs : dict
+            Arguments for :meth:`set_k`.
+        """
+        if not isinstance(constraint, (tuple, list)):
+            constraint = [constraint]
+        self.constraint = list(constraint)
+        super(BSplinePowerSpectrumBAOFilter, self).__init__(pk_interpolator, cosmo=cosmo, **kwargs)
+
+    def _prepare(self):
+        from scipy import interpolate
+        kmin, kmax = 5e-3, 1.
+        logk = np.log10(self.k)
+        self.kmask_fid = (self.k >= kmin) & (self.k <= kmax)
+        logk_fid = logk[self.kmask_fid]
+        weights_fid = 1 + 1e6 * np.tanh(0.005 * (logk_fid + 1.1)**16)
+        weights_fid /= np.sum(weights_fid)
+        nknots_degrees = [(14, 5), (14, 6), (15, 7)][:1 + len(self.constraint)]
+        self.solvers = []
+
+        for nknots, degree in nknots_degrees:
+            ts = np.concatenate([np.zeros(degree + 1), np.arange(1, nknots - 2 * degree) / (nknots - 2 * degree), np.ones(degree + 1)])
+            #ts = (kmax - kmin) * ts + kmin
+            ts = np.log10((kmax - kmin) * ts + kmin)
+            bsplines = []
+            for ii in range(nknots - degree):
+                cn = np.zeros(len(ts) - degree - 1); cn[ii] = 1
+                bsplines.append(interpolate.BSpline(ts, cn, degree))
+            gradient = np.array([bspline(logk_fid) for bspline in bsplines])
+            constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
+            lss = LeastSquareSolver(gradient, precision=weights_fid, constraint_gradient=constraint_gradient, compute_inverse=True)
+            self.solvers.append(lss)
+
+    def _compute(self):
+        from scipy import integrate
+        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k, z=0.)
+        ratio_fid = self.pk[self.kmask_fid].T / pknow[self.kmask_fid]
+        constraint = np.array([ratio_fid[..., 0], ratio_fid[..., 1] - ratio_fid[..., 0], ratio_fid[..., -1], ratio_fid[..., -2] - ratio_fid[..., -1]]).T
+        spline_models = []
+
+        for lss in self.solvers:
+            lss(ratio_fid, constraint=constraint)
+            spline_model = self.pk.T.copy()
+            spline_model[..., self.kmask_fid] = lss.model() * pknow[self.kmask_fid]
+            spline_models.append(spline_model)
+
+        spline_models = np.array(spline_models)
+
+        def spherical_tophat(k, r):
+            return 3 * (np.sin(k * r) - k * r * np.cos(k * r)) / (k * r)**3
+
+        def sigma8(pk):
+            return 1 / (2. * np.pi**2) * integrate.simps(self.k**2 * spherical_tophat(self.k, 8.)**2 * pk, x=self.k, axis=-1)
+
+        def sigmad(pk):
+            return 1 / (6. * np.pi**2) * integrate.simps(pk, x=self.k, axis=-1)
+
+        contraint_callables = {'sigma8': sigma8, 'sigmad': sigmad}
+
+        # Solve the system:
+        # sum(coeff_i) = 1
+        # sum(coeff_i * sigma_now_i) = sigma_i
+        system, target = [np.ones((len(ratio_fid), 1, len(spline_models)))], [np.ones((len(ratio_fid), 1))]
+        for constraint in self.constraint:
+            if constraint in contraint_callables:
+                constraint = contraint_callables[constraint]
+            # constraint(spline_model) is of shape (len(z), )
+            # following line is of shape (len(z), 1 + len(constraints))
+            system.append(np.concatenate([constraint(spline_model)[..., None, None] for spline_model in spline_models], axis=-1))
+            target.append(constraint(self.pk.T)[..., None])
+
+        system = np.concatenate(system, axis=1)  # of shape (len(z), 1 + len(constraints), 1 + len(constraints))
+        target = np.concatenate(target, axis=1)  # of shape (len(z), 1 + len(constraints))
+        coeffs = np.linalg.solve(system, target)
+
+        # coeffs is shape (len(z), len(spline_models))
+        self.pknow = np.sum(coeffs.T[..., None] * spline_models, axis=0).T
 
 
 class RegisteredCorrelationFunctionBAOFilter(type(BaseClass)):

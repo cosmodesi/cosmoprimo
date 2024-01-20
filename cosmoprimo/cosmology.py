@@ -852,7 +852,9 @@ class Cosmology(BaseCosmology):
                 if sum_ncdm < 0:
                     raise CosmologyInputError('Sum of neutrino masses must be positive.')
                 # Lesgourges & Pastor 2012, arXiv:1212.6154
-                deltam21sq = 7.62e-5
+                #deltam21sq = 7.62e-5
+                # https://arxiv.org/pdf/1907.12598.pdf
+                deltam21sq = 7.39e-5
 
                 def solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq):
                     # m_ncdm is a starting guess
@@ -868,7 +870,8 @@ class Cosmology(BaseCosmology):
                     return m_ncdm
 
                 if (neutrino_hierarchy == 'normal'):
-                    deltam31sq = 2.55e-3
+                    #deltam31sq = 2.55e-3
+                    deltam31sq = 2.525e-3
                     if sum_ncdm**2 < deltam21sq + deltam31sq:
                         raise ValueError('If neutrino_hierarchy is normal, we are using the normal hierarchy and so m_nu must be greater than (~)0.0592')
                     # Split the sum into 3 masses under normal hierarchy, m3 > m2 > m1
@@ -876,11 +879,13 @@ class Cosmology(BaseCosmology):
                     solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
 
                 elif (neutrino_hierarchy == 'inverted'):
-                    deltam31sq = -2.43e-3
-                    if sum_ncdm**2 < -deltam31sq + deltam21sq - deltam31sq:
+                    #deltam31sq = -2.43e-3
+                    deltam32sq = -2.512e-3
+                    deltam31sq = deltam32sq + deltam21sq
+                    if sum_ncdm**2 < -deltam31sq - deltam32sq:
                         raise ValueError('If neutrino_hierarchy is inverted, we are using the inverted hierarchy and so m_nu must be greater than (~)0.0978')
                     # Split the sum into 3 masses under inverted hierarchy, m2 > m1 > m3, here ordered as m1, m2, m3
-                    m_ncdm = [np.sqrt(-deltam31sq), np.sqrt(-deltam31sq + deltam21sq), 1e-5]
+                    m_ncdm = [np.sqrt(-deltam31sq), np.sqrt(-deltam32sq), 1e-5]
                     solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
 
                 elif (neutrino_hierarchy == 'degenerate'):

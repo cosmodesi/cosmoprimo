@@ -1,7 +1,7 @@
 import os
 import numpy as np
 
-from cosmoprimo.emulators.tools import Samples, InputSampler, GridSampler, DiffSampler, QMCSampler
+from cosmoprimo.emulators.tools import Samples, InputSampler, GridSampler, DiffSampler, QMCSampler, setup_logging
 
 
 def test_samples():
@@ -10,6 +10,10 @@ def test_samples():
     print(list(samples))
     assert samples.size == size
     assert samples[:3].size == 3
+    for fn in ['_tests/samples.npy', '_tests/samples.npz']:
+        samples.save(fn)
+        samples2 = Samples.load(fn)
+        assert samples2 == samples
 
 
 def test_samplers():
@@ -42,5 +46,6 @@ def test_samplers():
 
 if __name__ == '__main__':
 
+    setup_logging()
     test_samples()
     test_samplers()

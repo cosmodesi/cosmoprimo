@@ -6,7 +6,7 @@ from cosmoprimo.fiducial import DESI
 from cosmoprimo.emulators import Emulator, EmulatedEngine, MLPEmulatorEngine, QMCSampler, Samples, FourierNormOperation, Log10Operation, PCAOperation, ChebyshevOperation, plot_residual_background, plot_residual_thermodynamics, plot_residual_harmonic, plot_residual_fourier, setup_logging
 
 
-samples_fn = '_tests/samples'
+samples_fn = '_tests/samples.npz'
 
 
 def test_samples():
