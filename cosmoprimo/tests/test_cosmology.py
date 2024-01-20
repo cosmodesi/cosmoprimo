@@ -20,6 +20,9 @@ def test_params():
     assert cosmo['sigma8'] == 0.8
     for neutrino_hierarchy in ['normal', 'inverted', 'degenerate']:
         cosmo = Cosmology(m_ncdm=0.1, neutrino_hierarchy=neutrino_hierarchy)
+        assert len(cosmo['m_ncdm']) == 3
+        assert np.allclose(sum(cosmo['m_ncdm']), 0.1)
+        assert np.allclose(cosmo['m_ncdm_tot'], 0.1)
     m_ncdm = [0.01, 0.02, 0.05]
     cosmo = Cosmology(m_ncdm=m_ncdm)
     Background(cosmo, engine='class')

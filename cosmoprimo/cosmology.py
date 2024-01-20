@@ -880,11 +880,12 @@ class Cosmology(BaseCosmology):
 
                 elif (neutrino_hierarchy == 'inverted'):
                     #deltam31sq = -2.43e-3
-                    deltam31sq = -2.512e-3
-                    if sum_ncdm**2 < -deltam31sq + deltam21sq - deltam31sq:
+                    deltam32sq = -2.512e-3
+                    deltam31sq = deltam32sq + deltam21sq
+                    if sum_ncdm**2 < -deltam31sq - deltam32sq:
                         raise ValueError('If neutrino_hierarchy is inverted, we are using the inverted hierarchy and so m_nu must be greater than (~)0.0978')
                     # Split the sum into 3 masses under inverted hierarchy, m2 > m1 > m3, here ordered as m1, m2, m3
-                    m_ncdm = [np.sqrt(-deltam31sq), np.sqrt(-deltam31sq + deltam21sq), 1e-5]
+                    m_ncdm = [np.sqrt(-deltam31sq), np.sqrt(-deltam32sq), 1e-5]
                     solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
 
                 elif (neutrino_hierarchy == 'degenerate'):
