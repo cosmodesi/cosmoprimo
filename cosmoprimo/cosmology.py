@@ -924,9 +924,8 @@ class Cosmology(BaseCosmology):
             # pncdm = sum(_compute_ncdm_momenta(params['T_cmb'] * T, m, z=z, out='p') for T, m in zip(T_ncdm_over_cmb, m_ncdm))
             # rho_g = params['T_cmb']**4 * (1. + z)**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann * constants.megaparsec**3 / (1e10 * constants.msun)
             # N_ur = N_eff - 3. * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
-        if N_ur < 0.:
-            raise ValueError('N_ur and m_ncdm must result in a number of relativistic neutrino species greater than or equal to zero.')
-
+        #if N_ur < 0.:  # camb can handle it, so remove for now
+        #    raise ValueError('N_ur and m_ncdm must result in a number of relativistic neutrino species greater than or equal to zero.')
         params['N_ur'] = float(N_ur)
         #params['N_eff'] = N_ur + sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in T_ncdm_over_cmb)
         # number of massive neutrino species
