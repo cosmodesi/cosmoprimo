@@ -485,6 +485,9 @@ def get_engine(engine):
         engine = engine.lower()
         if engine == 'class':
             from . import classy
+        #NEW: adding the engine here too (Rafaela)
+        if engine == 'axiclass':
+            from . import axiclassy
         elif engine == 'camb':
             from . import camb
         elif engine == 'isitgr':
