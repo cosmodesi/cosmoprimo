@@ -88,7 +88,7 @@ class CambEngine(BaseEngine):
             self._camb_params.nu_mass_eigenstates = self['N_ncdm']
             delta_neff = self['N_eff'] - constants.NEFF  # used for BBN YHe comps
 
-            # CAMB defines a neutrino degeneracy factor as T_i = g^(1/4)*T_nu
+            # CAMB defines a neutrino degeneracy factor as T_i = g^(1/4) * T_nu
             # where T_nu is the standard neutrino temperature from first order computations
             # CLASS defines the temperature of each neutrino species to be
             # T_i_eff = TNCDM * T_cmb where TNCDM is a fudge factor to get the
@@ -102,6 +102,7 @@ class CambEngine(BaseEngine):
             self._camb_params.nu_mass_numbers = np.ones(self['N_ncdm'], dtype=np.int32)
             self._camb_params.nu_mass_fractions = m_ncdm / m_ncdm.sum()
             self._camb_params.nu_mass_degeneracies = g
+            #print('g', g, np.sum(g) + self['N_ur'], self['N_eff'], self['N_ur'])
 
             # get YHe from BBN
             self._camb_params.bbn_predictor = self.camb.bbn.get_predictor()
