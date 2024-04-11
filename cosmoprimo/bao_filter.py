@@ -350,10 +350,10 @@ class Wallish2018PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         offset_even = offset_odd = (-10, 20)
 
         def smooth_even_odd(even, odd, dd_even, dd_odd):
-            argmax_even = dd_even[margin_first:].argmax() + margin_first
-            argmax_odd = dd_odd[margin_first:].argmax() + margin_first
-            ibox_even = (argmax_even + offset_even[0], argmax_even + margin_second + dd_even[argmax_even + margin_first:].argmax() + offset_even[1])
-            ibox_odd = (argmax_odd + offset_odd[0], argmax_odd + margin_second + dd_odd[argmax_odd + margin_second:].argmax() + offset_odd[1])
+            argmax_even = dd_even[margin_first:-margin_first].argmax() + margin_first
+            argmax_odd = dd_odd[margin_first:-margin_first].argmax() + margin_first
+            ibox_even = (argmax_even + offset_even[0], argmax_even + margin_second + dd_even[argmax_even + margin_second:-margin_first].argmax() + offset_even[1])
+            ibox_odd = (argmax_odd + offset_odd[0], argmax_odd + margin_second + dd_odd[argmax_odd + margin_second:-margin_first].argmax() + offset_odd[1])
             mask_even = np.ones_like(even, dtype=np.bool_)
             mask_even[ibox_even[0]:ibox_even[1] + 1] = False
             mask_odd = np.ones_like(odd, dtype=np.bool_)
