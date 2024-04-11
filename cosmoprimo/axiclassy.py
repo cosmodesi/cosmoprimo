@@ -1,6 +1,8 @@
+"""Cosmological calculation with the Boltzmann code AxiCLASS, wrapping by Rafaela Gsponer."""
+
 from pyclass import axiclass
 
-from .cosmology import BaseEngine
+from .cosmology import BaseEngine, CosmologyInputError, CosmologyComputationError
 from . import classy
 
 
@@ -9,16 +11,12 @@ class AxiClassEngine(classy.ClassEngine):
     """Engine for the Boltzmann code AxiCLASS."""
 
     name = 'axiclass'
-    
-#     def __init__(self, *args, **kwargs):
-#         super(classy.ClassEngine).__init__(*args, **kwargs)
-#         params['n_axion'] = params['n_axion']
+
+    _default_cosmological_parameters = dict()
 
     def _set_classy(self, params):
 
         class _ClassEngine(axiclass.ClassEngine):
-            
-            
 
             def compute(self, tasks):
                 try:
@@ -37,21 +35,23 @@ class Background(classy.BaseClassBackground, axiclass.Background):
 
 
 class Primordial(classy.BaseClassPrimordial, axiclass.Primordial):
-    
+
      """Your modifications, if any."""
-    
+
+
 class Perturbations(classy.BaseClassPerturbations, axiclass.Perturbations):
-    
+
      """Your modifications, if any."""
-        
-    
+
+
 class Transfer(classy.BaseClassTransfer, axiclass.Transfer):
-    
+
      """Your modifications, if any."""
-        
+
+
 class Harmonic(classy.BaseClassHarmonic, axiclass.Harmonic):
      """Your modifications, if any."""
-        
-    
+
+
 class Fourier(classy.BaseClassFourier, axiclass.Fourier):
      """Your modifications, if any."""
