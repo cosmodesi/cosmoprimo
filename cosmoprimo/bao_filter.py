@@ -349,8 +349,6 @@ class Wallish2018PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         margin_second = 5
         offset_even = offset_odd = (-10, 20)
 
-        from matplotlib import pyplot as plt
-
         def smooth_even_odd(even, odd, dd_even, dd_odd):
             argmax_even = dd_even[margin_first:-margin_first].argmax() + margin_first
             argmax_odd = dd_odd[margin_first:-margin_first].argmax() + margin_first
