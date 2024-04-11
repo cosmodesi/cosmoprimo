@@ -1071,6 +1071,9 @@ class Cosmology(BaseCosmology):
         target : float, default=0.
             Target value.
 
+        limits : tuple, list, default=None
+            Variation range for ``param``.
+
         xtol : float, default=1e-6
             Absolute tolerance on the value of ``param``. See :func:`scipy.optimize.bisect`.
 
