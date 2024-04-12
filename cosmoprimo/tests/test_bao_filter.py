@@ -286,6 +286,7 @@ def plot_mark():
 if __name__ == '__main__':
 
     #test_numerical_stability()
+    plot_xi()
     plot_pk()
     test_2d_pk()
     plot_2d_pk()

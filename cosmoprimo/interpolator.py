@@ -34,7 +34,7 @@ def get_default_z_callable():
     return np.linspace(0., 10.**0.5, 30)**2  # approximates default class z
 
 
-def _pad_log(k, pk, extrap_kmin=1e-6, extrap_kmax=1e2):
+def _pad_log(k, pk, extrap_kmin=1e-7, extrap_kmax=1e2):
     """
     Pad ``pk`` and ``k`` in log10-log10-space between ``extrap_kmin`` and ``k[0]`` and ``k[-1]`` and ``extrap_kmax``.
 
@@ -46,7 +46,7 @@ def _pad_log(k, pk, extrap_kmin=1e-6, extrap_kmax=1e2):
     pk : array_like
         Power spectrum.
 
-    extrap_kmin : float, default=1e-6
+    extrap_kmin : float, default=1e-7
         Minimum wavenumber of extrapolation range.
 
     extrap_kmax : float, default=1e2
@@ -118,7 +118,7 @@ def kernel_tophat2(x):
     return _kernel_tophat_highx(x)**2
 
 
-def integrate_sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
+def integrate_sigma_d(pk, kmin=1e-7, kmax=1e2, epsrel=1e-5):
     r"""
     Return the r.m.s. of the displacement field, i.e.:
 
@@ -131,7 +131,7 @@ def integrate_sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
     pk : callable
         Power spectrum.
 
-    kmin : float, default=1e-6
+    kmin : float, default=1e-7
         Minimum wavenumber.
 
     kmax : float, default=1e2
@@ -155,7 +155,7 @@ def integrate_sigma_d(pk, kmin=1e-6, kmax=1e2, epsrel=1e-5):
 
 
 @np.vectorize
-def integrate_sigma_r2(r, pk, kmin=1e-6, kmax=1e2, epsrel=1e-5, kernel=kernel_tophat2):
+def integrate_sigma_r2(r, pk, kmin=1e-7, kmax=1e2, epsrel=1e-5, kernel=kernel_tophat2):
     r"""
     Return the variance of perturbations smoothed by a kernel :math:`W` of radius :math:`r`, i.e.:
 
@@ -171,7 +171,7 @@ def integrate_sigma_r2(r, pk, kmin=1e-6, kmax=1e2, epsrel=1e-5, kernel=kernel_to
     pk : callable
         Power spectrum.
 
-    kmin : float, default=1e-6
+    kmin : float, default=1e-7
         Minimum wavenumber.
 
     kmax : float, default=1e2
@@ -237,7 +237,7 @@ class GenericSpline(BaseClass):
 
     """Base class that handles 1D and 2D splines."""
 
-    def __init__(self, x, y=0, fun=None, interp_x='log', extrap_fun='lin', extrap_xmin=1e-6, extrap_xmax=1e2, interp_order_x=3, interp_order_y=None, extrap_y=False):
+    def __init__(self, x, y=0, fun=None, interp_x='log', extrap_fun='lin', extrap_xmin=1e-7, extrap_xmax=1e2, interp_order_x=3, interp_order_y=None, extrap_y=False):
         """
         Initialize :class:`GenericSpline`.
 
@@ -259,7 +259,7 @@ class GenericSpline(BaseClass):
         extrap_fun : string, default='lin'
             If 'log' (and ``interp_x`` is 'log'), ``fun`` is log-log extrpolated up to ``extrap_xmin``, ``extrap_xmax``.
 
-        extrap_xmin : float, default=1e-6
+        extrap_xmin : float, default=1e-7
             Minimum extrapolation range in ``x``.
 
         extrap_xmax : float, default=1e2
@@ -450,7 +450,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
     such as :meth:`sigma_r` or :meth:`to_xi`.
     """
 
-    def __init__(self, k, pk, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=1e2, interp_order_k=3):
+    def __init__(self, k, pk, interp_k='log', extrap_pk='log', extrap_kmin=1e-7, extrap_kmax=1e2, interp_order_k=3):
         """
         Initialize :class:`PowerSpectrumInterpolator1D`.
 
@@ -468,7 +468,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         extrap_pk : string, default='log'
             If 'log' (and ``interp_k`` is 'log'), ``fun`` is log-log extrapolated up to ``extrap_kmin``, ``extrap_kmax``.
 
-        extrap_kmin : float, default=1e-6
+        extrap_kmin : float, default=1e-7
             Minimum extrapolation range in ``k``.
 
         extrap_kmax : float, default=1e2
@@ -650,7 +650,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     such as :meth:`sigma_rz` or :meth:`to_xi`.
     """
 
-    def __init__(self, k, z=0, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-6, extrap_kmax=1e2,
+    def __init__(self, k, z=0, pk=None, interp_k='log', extrap_pk='log', extrap_kmin=1e-7, extrap_kmax=1e2,
                  interp_order_k=3, interp_order_z=None, extrap_z=None, growth_factor_sq=None):
         r"""
         Initialize :class:`PowerSpectrumInterpolator2D`.
@@ -677,7 +677,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         extrap_pk : string, default='log'
             If 'log' (and ``interp_k`` is 'log'), ``fun`` is log-log extrpolated up to ``extrap_kmin``, ``extrap_kmax``.
 
-        extrap_kmin : float, default=1e-6
+        extrap_kmin : float, default=1e-7
             Minimum extrapolation range in ``k``.
 
         extrap_kmax : float, default=1e2

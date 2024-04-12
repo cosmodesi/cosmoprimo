@@ -747,6 +747,29 @@ def test_isitgr():
     assert 'Q0' in cosmo.get_default_parameters()
 
 
+def test_axiclass():
+
+    cosmo_class = Cosmology(engine='class')
+    try:
+        cosmo = Cosmology(engine='axiclass')
+    except ImportError:
+        return
+
+    k = np.linspace(0.01, 1., 200)
+    z = np.linspace(0., 2., 10)
+    assert np.allclose(cosmo_class.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=1e-4)
+
+    params = {'scf_potential': 'axion', 'n_axion': 2.6, 'log10_axion_ac': -3.531, 'fraction_axion_ac': 0.1, 'scf_parameters': [2.72, 0.0], 'scf_evolve_as_fluid': False,
+              'scf_evolve_like_axionCAMB': False, 'attractor_ic_scf': False, 'compute_phase_shift': False, 'include_scf_in_delta_m': True, 'include_scf_in_delta_cb': True}
+    cosmo = Cosmology(engine='axiclass', **params)
+    assert not np.allclose(cosmo_class.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=1e-4)
+    cosmo.comoving_radial_distance(z)
+
+    from cosmoprimo.fiducial import DESI
+    cosmo = DESI(engine='axiclass', **params)
+    cosmo['log10_axion_ac']
+
+
 def test_error():
 
     with pytest.raises(CosmologyInputError):
@@ -800,3 +823,4 @@ if __name__ == '__main__':
     test_external_pyccl()
     test_isitgr()
     test_bisect()
+    test_axiclass()
