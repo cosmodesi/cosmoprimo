@@ -4,7 +4,6 @@ import os
 import sys
 
 import numpy as np
-from scipy import integrate
 
 from .utils import BaseClass
 from . import utils, constants
@@ -83,6 +82,20 @@ def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
     out : float
         Required momentum, in units of :math:`10^{10} M_{\odot} / \mathrm{Mpc}^{3}` (/ :math:`\mathrm{eV}` if ``out`` is 'drhodm')
     """
+    from .emulators.tools.jax import numpy as jnp
+    from .emulators.tools.jax import use_jax
+
+    # Upper bound of 100 enough (10^⁻16 error)
+    limits = (0., 100.)
+
+    if use_jax(T_eff, m, z):
+        from quadax import quadgk
+        quad = lambda fun: quadgk(fun, limits, epsrel=epsrel)[0]
+    else:
+        jnp = np
+        from scipy import integrate
+        quad = lambda fun: integrate.quad(fun, *limits, epsrel=epsrel)[0]
+
     a = 1. / (1. + z)
     over_T = constants.electronvolt / (constants.Boltzmann * (T_eff / a))
     m2_over_T2 = (m * over_T) ** 2
@@ -90,23 +103,25 @@ def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
 
     if out == 'rho':
         def phase_space_integrand(q):
-            return q**2 * np.sqrt(q**2 + m2_over_T2) / (1. + np.exp(q))
+            return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
     elif out == 'drhodm':
         def phase_space_integrand(q):
-            return m_over_T2 * q**2 / np.sqrt(q**2 + m2_over_T2) / (1. + np.exp(q))
+            return m_over_T2 * q**2 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
     elif out == 'p':
         def phase_space_integrand(q):
-            return 1. / 3. * q**4 / np.sqrt(q**2 + m2_over_T2) / (1. + np.exp(q))
+            return 1. / 3. * q**4 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
     else:
         raise ValueError('Cannot compute ncdm momenta {}; choices are ["rho", "drhodm", "p"]', out)
     # upper bound of 100 enough (10^⁻16 error)
-    toret = integrate.quad(phase_space_integrand, 0, 100, epsrel=epsrel)[0] / (7. * np.pi**4 / 120.)
+    toret = quad(phase_space_integrand) / (7. * np.pi**4 / 120.)
     return 7. / 8. * 4 / constants.c**3 * constants.Stefan_Boltzmann * (T_eff / a)**4 * toret / (1e10 * constants.msun) * constants.megaparsec**3
 
 
 def _compute_rs_cosmomc(omega_b, omega_m, hubble_function):
 
     """Return sound horizon in proper Mpc, and redshift of the last scattering surface in the CosmoMC approximation."""
+
+    from .emulators.tools.jax import use_jax
 
     zstar = 1048 * (1 + 0.00124 * omega_b**(-0.738))\
             * (1 + (0.0783 * omega_b**(-0.238) / (1 + 39.5 * omega_b**0.763))\
@@ -125,7 +140,18 @@ def _compute_rs_cosmomc(omega_b, omega_m, hubble_function):
         cs = (3 * (1 + R))**(-0.5)
         return dtauda(a) * cs
 
-    return integrate.romberg(dsoundda_approx, astart, astar, tol=atol, rtol=atol, vec_func=True), zstar
+    # Upper bound of 100 enough (10^⁻16 error)
+    limits = (astart, astar)
+
+    if use_jax(omega_b, omega_m):
+        from quadax import romberg
+        romberg = lambda fun: romberg(fun, limits, epsabs=atol, epsrel=atol)[0]
+    else:
+        jnp = np
+        from scipy import integrate
+        romberg = lambda fun: integrate.romberg(fun, *limits, tol=atol, rtol=atol, vec_func=True)
+
+    return romberg(dsoundda_approx), zstar
 
 
 class BaseCosmology(BaseClass):
@@ -150,7 +176,17 @@ class BaseCosmology(BaseClass):
         self._derived = {}
         self._input_params = merge_params(self.get_default_params(include_conflicts=False), params, conflicts=self.__class__._conflict_parameters)
         self._params = self._compile_params(self._input_params)
+        self._set_jax()
         self._extra_params = dict(extra_params or {})
+
+    def _set_jax(self):
+        from .emulators.tools.jax import use_jax
+        self._use_jax = use_jax(*self._params.values())
+        if self._use_jax:
+            from jax import numpy as np
+        else:
+            import numpy as np
+        self._np = np
 
     @classmethod
     def get_default_params(cls, of=None, include_conflicts=True):
@@ -254,7 +290,7 @@ class BaseCosmology(BaseClass):
             if name == 'H0':
                 return params['h'] * 100
             if name in ['logA', 'ln10^{10}A_s', 'ln10^10A_s', 'ln_A_s_1e10']:
-                return np.log(1e10 * params['A_s'])
+                return self._np.log(1e10 * params['A_s'])
             # if name == 'rho_crit':
             #     return constants.rho_crit_Msunph_per_Mpcph3
             if name == 'Omega_g':
@@ -263,7 +299,7 @@ class BaseCosmology(BaseClass):
             if name == 'T_ur':
                 return params['T_cmb'] * (4. / 11.)**(1. / 3.)
             if name == 'T_ncdm':
-                return np.array(params['T_ncdm_over_cmb']) * params['T_cmb']
+                return self._np.array(params['T_ncdm_over_cmb']) * params['T_cmb']
             if name == 'Omega_ur':
                 rho = params['N_ur'] * 7. / 8. * self.get('T_ur')**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
                 return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3)
@@ -273,23 +309,29 @@ class BaseCosmology(BaseClass):
             if name == 'm_ncdm_tot':
                 return sum(params['m_ncdm'])
             if name == 'Omega_ncdm':
-                derived['Omega_ncdm'] = self._get_rho_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
+                derived['Omega_ncdm'] = self._np.array(self._get_rho_ncdm(z=0)) / constants.rho_crit_Msunph_per_Mpcph3
                 return derived['Omega_ncdm']
             if name == 'Omega_ncdm_tot':
-                return np.sum(self.get('Omega_ncdm'))
+                return sum(self.get('Omega_ncdm'))
             if name == 'Omega_pncdm':
-                derived['Omega_pncdm'] = 3. * self._get_p_ncdm(z=0) / constants.rho_crit_Msunph_per_Mpcph3
+                derived['Omega_pncdm'] = 3. * self._np.array(self._get_p_ncdm(z=0)) / constants.rho_crit_Msunph_per_Mpcph3
                 return derived['Omega_pncdm']
             if name == 'Omega_pncdm_tot':
-                return np.sum(self.get('Omega_pncdm'))
+                return sum(self.get('Omega_pncdm'))
             if name == 'Omega_m':
                 return self.get('Omega_b') + self.get('Omega_cdm') + self.get('Omega_ncdm_tot') - self.get('Omega_pncdm_tot')
             if name == 'Omega_de':
                 return 1. - sum(self.get(name) for name in ['Omega_cdm', 'Omega_b', 'Omega_g', 'Omega_ur', 'Omega_ncdm_tot', 'Omega_k'])
             if name == 'Omega_Lambda':
+                if self._use_jax:
+                    import jax
+                    return jax.lax.cond(self._has_fld, lambda: 0., lambda: self.get('Omega_de'))
                 if self._has_fld: return 0.
                 return self.get('Omega_de')
             if name == 'Omega_fld':
+                if self._use_jax:
+                    import jax
+                    return jax.lax.cond(self._has_fld, lambda: self.get('Omega_de'), lambda: 0.)
                 if self._has_fld: return self.get('Omega_de')
                 return 0.
             if name == 'K':
@@ -315,7 +357,8 @@ class BaseCosmology(BaseClass):
 
     @property
     def _has_fld(self):
-        return (self._params['w0_fld'], self._params['wa_fld'], self._params['cs2_fld']) != (-1, 0., 1.)
+        #return (self._params['w0_fld'], self._params['wa_fld'], self._params['cs2_fld']) != (-1, 0., 1.)
+        return (self._params['w0_fld'] != -1) | (self._params['wa_fld'] != 0) | (self._params['cs2_fld'] != 1.)  # for jax
 
     def _get_rho_ncdm(self, z=0, species=None, epsrel=1e-7):
         r"""
@@ -346,7 +389,7 @@ class BaseCosmology(BaseClass):
             species = list(range(len(m_ncdm)))
 
         if is_sequence(species):
-            return np.asarray([compute(T_ncdm_over_cmb[s], m_ncdm[s]) for s in species])
+            return [compute(T_ncdm_over_cmb[s], m_ncdm[s]) for s in species]
 
         return compute(self['T_ncdm_over_cmb'][species], self['m_ncdm'][species])
 
@@ -377,7 +420,7 @@ class BaseCosmology(BaseClass):
             species = list(range(len(m_ncdm)))
 
         if is_sequence(species):
-            return np.asarray([compute(T_ncdm_over_cmb[s], m_ncdm[s]) for s in species])
+            return [compute(T_ncdm_over_cmb[s], m_ncdm[s]) for s in species]
 
         return compute(self['T_ncdm_over_cmb'][species], self['m_ncdm'][species])
 
@@ -643,6 +686,7 @@ class Cosmology(BaseCosmology):
         self._engine = None
         self._input_params = merge_params(self.get_default_params(include_conflicts=False), params, conflicts=self._conflict_parameters)
         self._params = self._compile_params(self._input_params)
+        self._set_jax()
         self._extra_params = {}
         if engine is not None:
             self.set_engine(engine, **(extra_params or {}))
@@ -725,6 +769,37 @@ class Cosmology(BaseCosmology):
         params = {}
         params.update(args)
 
+        from .emulators.tools.jax import use_jax
+
+        if use_jax(*params.values()):
+            import jax
+            from jax import numpy as jnp
+            from .emulators.tools.jax import array_types as jax_array_types
+            while_loop = jax.lax.while_loop
+            cond = jax.lax.cond
+            exception = jax.debug.callback
+        else:
+            def while_loop(cond_fun, body_fun, init_val):
+                val = init_val
+                while cond_fun(val):
+                    val = body_fun(val)
+                return val
+
+            def cond(pred, true_fun, false_fun, *operands):
+                if pred:
+                    return true_fun(*operands)
+                else:
+                    return false_fun(*operands)
+
+            def exception(fun, *args):
+                return fun(*args)
+
+            jnp = np
+            jax_array_types = ()
+
+        def _make_float(value):
+            return jnp.array(value, dtype='f8')
+
         if 'H0' in params:
             params['h'] = params.pop('H0') / 100.
 
@@ -732,7 +807,7 @@ class Cosmology(BaseCosmology):
         for name, value in args.items():
             if name.startswith('omega'):
                 omega = params.pop(name)
-                Omega = np.array(omega) / h**2  # array to cope with tuple, lists for e.g. omega_ncdm
+                Omega = _make_float(omega) / h**2  # array to cope with tuple, lists for e.g. omega_ncdm
                 params_name = name.replace('omega', 'Omega')
                 if params_name in params: raise CosmologyInputError('found both {} and {}, must be added to _conflict_parameters'.format(name, params_name))
                 params[params_name] = Omega
@@ -762,13 +837,13 @@ class Cosmology(BaseCosmology):
         set_alias('logA', 'ln_A_s_1e10')
 
         if 'logA' in params:
-            params['A_s'] = np.exp(params.pop('logA')) * 10**(-10)
+            params['A_s'] = jnp.exp(params.pop('logA')) * 10**(-10)
 
         if 'Omega_g' in params:
             params['T_cmb'] = (params.pop('Omega_g') * h**2 * constants.rho_crit_kgph_per_mph3 / (4. / constants.c**3 * constants.Stefan_Boltzmann))**(0.25)
 
         def _make_list(li, name):
-            if isinstance(li, (tuple, list, np.ndarray)):
+            if isinstance(li, (tuple, list, np.ndarray) + jax_array_types):
                 return list(li)
             raise TypeError('{} must be a list'.format(name))
 
@@ -802,22 +877,24 @@ class Cosmology(BaseCosmology):
                     # m is a starting guess
                     omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
 
-                    while (np.abs(omega_ncdm - omega_check) > 1e-15):
+                    def body_fun(args):
+                        m, omega_check = args
                         domegadm = _compute_ncdm_momenta(T_eff, m, z=0, out='drhodm') / constants.rho_crit_Msunph_per_Mpcph3
-                        # domegadm = 1./93.14 # this approximation works as well
                         m = m + (omega_ncdm - omega_check) / domegadm
                         omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
+                        return m, omega_check
+
+                    def cond_fun(args):
+                        m, omega_check = args
+                        return jnp.abs(omega_ncdm - omega_check) > 1e-15
+
+                    m, omega_check = while_loop(cond_fun, body_fun, (m, omega_check))
 
                     return m
 
                 for Omega, T in zip(Omega_ncdm, T_ncdm_over_cmb):
-                    if Omega == 0.:
-                        m_ncdm.append(0.)
-                    else:
-                        T_ncdm = params['T_cmb'] * T
-                        m = solve_newton(Omega * h**2, Omega * h**2 * 93.14, T_ncdm)
-                        # print(m, Omega * h**2 * 93.14)
-                        m_ncdm.append(m)
+                    # print(m, Omega * h**2 * 93.14)
+                    m_ncdm.append(cond(Omega == 0., lambda: 0., lambda: solve_newton(Omega * h**2, Omega * h**2 * 93.14, params['T_cmb'] * T)))
 
                 if single_ncdm: m_ncdm = m_ncdm[0]
 
@@ -849,31 +926,47 @@ class Cosmology(BaseCosmology):
                     raise CosmologyInputError('neutrino_hierarchy {} cannot be passed with a list '
                                             'for m_ncdm, only with a sum.'.format(neutrino_hierarchy))
                 sum_ncdm = m_ncdm[0]
-                if sum_ncdm < 0:
-                    raise CosmologyInputError('Sum of neutrino masses must be positive.')
+
+                def raise_error(sum_ncdm):
+                    if sum_ncdm < 0:
+                        raise CosmologyInputError('Sum of neutrino masses must be positive.')
+
+                exception(raise_error, sum_ncdm)
                 # Lesgourges & Pastor 2012, arXiv:1212.6154
                 #deltam21sq = 7.62e-5
                 # https://arxiv.org/pdf/1907.12598.pdf
                 deltam21sq = 7.39e-5
 
                 def solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq):
-                    # m_ncdm is a starting guess
-                    sum_check = sum(m_ncdm)
+
                     # This is the Newton's method, solving s = m1 + m2 + m3,
                     # with dm2/dm1 = dsqrt(deltam21^2 + m1^2) / dm1 = m1/m2, similarly for m3
-                    while (np.abs(sum_ncdm - sum_check) > 1e-15):
+                    def body_fun(args):
+                        m_ncdm, sum_check = args
                         dsdm1 = 1. + m_ncdm[0] / m_ncdm[1] + m_ncdm[0] / m_ncdm[2]
                         m_ncdm[0] = m_ncdm[0] + (sum_ncdm - sum_check) / dsdm1
-                        m_ncdm[1] = np.sqrt(m_ncdm[0]**2 + deltam21sq)
-                        m_ncdm[2] = np.sqrt(m_ncdm[0]**2 + deltam31sq)
-                        sum_check = sum(m_ncdm)
+                        m_ncdm[1] = jnp.sqrt(m_ncdm[0]**2 + deltam21sq)
+                        m_ncdm[2] = jnp.sqrt(m_ncdm[0]**2 + deltam31sq)
+                        return m_ncdm, sum(m_ncdm)
+
+                    def cond_fun(args):
+                        m_ncdm, sum_check = args
+                        return jnp.abs(sum_ncdm - sum_check) > 1e-15
+
+                    # m_ncdm is a starting guess
+                    m_ncdm, sum_check = while_loop(cond_fun, body_fun, (m_ncdm, sum(m_ncdm)))
+
                     return m_ncdm
 
                 if (neutrino_hierarchy == 'normal'):
                     #deltam31sq = 2.55e-3
                     deltam31sq = 2.525e-3
-                    if sum_ncdm**2 < deltam21sq + deltam31sq:
-                        raise ValueError('If neutrino_hierarchy is normal, we are using the normal hierarchy and so m_nu must be greater than (~)0.0592')
+
+                    def raise_error(sum_ncdm, deltam21sq, deltam31sq):
+                        if sum_ncdm**2 < deltam21sq + deltam31sq:
+                            raise ValueError('If neutrino_hierarchy is normal, we are using the normal hierarchy and so m_nu must be greater than (~)0.0592')
+
+                    exception(raise_error, sum_ncdm, deltam21sq, deltam31sq)
                     # Split the sum into 3 masses under normal hierarchy, m3 > m2 > m1
                     m_ncdm = [0., deltam21sq, deltam31sq]
                     solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
@@ -882,10 +975,14 @@ class Cosmology(BaseCosmology):
                     #deltam31sq = -2.43e-3
                     deltam32sq = -2.512e-3
                     deltam31sq = deltam32sq + deltam21sq
-                    if sum_ncdm**2 < -deltam31sq - deltam32sq:
-                        raise ValueError('If neutrino_hierarchy is inverted, we are using the inverted hierarchy and so m_nu must be greater than (~)0.0978')
+
+                    def raise_error(sum_ncdm, deltam31sq, deltam32sq):
+                        if sum_ncdm**2 < -deltam31sq - deltam32sq:
+                            raise ValueError('If neutrino_hierarchy is inverted, we are using the inverted hierarchy and so m_nu must be greater than (~)0.0978')
+
+                    exception(raise_error, sum_ncdm, deltam31sq, deltam32sq)
                     # Split the sum into 3 masses under inverted hierarchy, m2 > m1 > m3, here ordered as m1, m2, m3
-                    m_ncdm = [np.sqrt(-deltam31sq), np.sqrt(-deltam32sq), 1e-5]
+                    m_ncdm = [jnp.sqrt(-deltam31sq), jnp.sqrt(-deltam32sq), 1e-5]
                     solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
 
                 elif (neutrino_hierarchy == 'degenerate'):
@@ -903,14 +1000,15 @@ class Cosmology(BaseCosmology):
             rho = 7. / 8. * 4. / constants.c**3 * constants.Stefan_Boltzmann * T_ur**4  # density, kg/m^3
             N_ur = params.pop('Omega_ur') / (rho / (h**2 * constants.rho_crit_kgph_per_mph3))
 
+        m_ncdm = _make_float(m_ncdm)
+        T_ncdm_over_cmb = _make_float(T_ncdm_over_cmb)
         # Check which of the neutrino species are non-relativistic today
         m_massive = 0.00017  # Lesgourges et al. 2012
-        m_ncdm = np.array(m_ncdm)
-        T_ncdm_over_cmb = np.array(T_ncdm_over_cmb)
         mask_m = m_ncdm > m_massive
-        # Fill an array with the non-relativistic neutrino masses
-        m_ncdm = m_ncdm[mask_m].tolist()
-        T_ncdm_over_cmb = T_ncdm_over_cmb[mask_m].tolist()
+        if not jax_array_types:
+            # Fill an array with the non-relativistic neutrino masses
+            m_ncdm = m_ncdm[mask_m].tolist()
+            T_ncdm_over_cmb = T_ncdm_over_cmb[mask_m].tolist()
         # arxiv: 1812.05995 eq. 84
         N_eff = params.pop('N_eff', constants.NEFF)
         # We remove massive neutrinos
@@ -926,14 +1024,14 @@ class Cosmology(BaseCosmology):
             # N_ur = N_eff - 3. * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
         #if N_ur < 0.:  # camb can handle it, so remove for now
         #    raise ValueError('N_ur and m_ncdm must result in a number of relativistic neutrino species greater than or equal to zero.')
-        params['N_ur'] = float(N_ur)
+        params['N_ur'] = _make_float(N_ur)
         #params['N_eff'] = N_ur + sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in T_ncdm_over_cmb)
         # number of massive neutrino species
         params['m_ncdm'] = m_ncdm
         params['T_ncdm_over_cmb'] = T_ncdm_over_cmb
 
         if params.get('z_pk', None) is None:
-            # same as pyccl, https://github.com/LSSTDESC/CCL/blob/d2a5630a229378f64468d050de948b91f4480d41/src/ccl_core.c
+            # Same as pyccl, https://github.com/LSSTDESC/CCL/blob/d2a5630a229378f64468d050de948b91f4480d41/src/ccl_core.c
             from . import interpolator
             params['z_pk'] = interpolator.get_default_z_callable()
         if params.get('modes', None) is None:
@@ -941,23 +1039,29 @@ class Cosmology(BaseCosmology):
         for name in ['modes', 'z_pk']:
             if np.ndim(params[name]) == 0:
                 params[name] = [params[name]]
-        params['z_pk'] = np.sort(params['z_pk'])
+        params['z_pk'] = np.sort(params['z_pk'])  # jax not needed
         if 0. not in params['z_pk']:
             params['z_pk'] = np.insert(params['z_pk'], 0, 0.)  # in order to normalise CAMB power spectrum with sigma8
 
         if 'Omega_m' in params:
-            nonrelativistic_ncdm = (BaseEngine._get_rho_ncdm(params, z=0).sum() - 3 * BaseEngine._get_p_ncdm(params, z=0).sum()) / constants.rho_crit_Msunph_per_Mpcph3
+            nonrelativistic_ncdm = (sum(BaseEngine._get_rho_ncdm(params, z=0)) - 3 * sum(BaseEngine._get_p_ncdm(params, z=0))) / constants.rho_crit_Msunph_per_Mpcph3
             params['Omega_cdm'] = params.pop('Omega_m') - params['Omega_b'] - nonrelativistic_ncdm
 
-        defaults = {'w0_fld': (float, -1.), 'wa_fld': (float, 0.), 'cs2_fld': (float, 1.), 'use_ppf': (bool, True)}
-        for name, (type, default) in defaults.items():
-            params[name] = type(params.get(name, default))
+        defaults = {'w0_fld': -1., 'wa_fld': 0., 'cs2_fld': 1.}
+        for name, default in defaults.items():
+            params[name] = _make_float(params.get(name, default))
+        params['use_ppf'] = bool(params.get('use_ppf', True))
 
         for basename in ['Omega_cdm', 'Omega_b', 'T_cmb', 'h', 'A_s', 'sigma8', 'm_ncdm', 'T_ncdm_over_cmb']:
             if basename in params:
-                value = np.asarray(params[basename])
-                if np.any(value < 0.):
-                    raise CosmologyInputError('Parameter {} should be positive, found {}'.format(basename, value))
+                value = _make_float(params[basename])
+
+                def raise_error(value):
+                    if jnp.any(value < 0.):
+                        raise CosmologyInputError('Parameter {} should be positive, found {}'.format(basename, value))
+
+                exception(raise_error, value)
+                params[basename] = value
 
         def is_str(name, default_string, allowed_strings):
             value = params[name]
@@ -969,7 +1073,7 @@ class Cosmology(BaseCosmology):
                     raise CosmologyInputError('Parameter {} should be either a float or one of {}'.format(name, allowed_strings))
                 params[name] = value
                 return True
-            params[name] = float(value)
+            params[name] = _make_float(value)
             return False
 
         is_str('YHe', 'BBN', allowed_strings=('BBN',))
@@ -1001,6 +1105,8 @@ class Cosmology(BaseCosmology):
             Extra engine parameters, typically precision parameters.
         """
         self._engine = _get_cosmology_engine(self, engine, set_engine=set_engine, **extra_params)
+        for name in ['_use_jax', '_np']:
+            setattr(self._engine, name, getattr(self, name))
 
     def clone(self, base='input', engine=None, extra_params=None, **params):
         r"""
@@ -1043,6 +1149,7 @@ class Cosmology(BaseCosmology):
             raise CosmologyInputError('Unknown parameter base {}'.format(base))
         new._input_params = merge_params(base_params, params, conflicts=new.__class__._conflict_parameters)
         new._params = new._compile_params(new._input_params)
+        new._set_jax()
         if engine is None and self._engine is not None:
             engine = self._engine.__class__
         if engine is not None:
@@ -1310,14 +1417,15 @@ class BaseBackground(BaseSection):
 
     def __init__(self, engine):
         self._engine = engine
+        self._np = self._engine._np
         for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'w0_fld', 'wa_fld', 'cs2_fld', 'K']:
             setattr(self, '_{}'.format(name), self._engine[name])
         self._T0_cmb = self._engine['T_cmb']
-        self._T0_ncdm = np.array(self._engine['T_ncdm_over_cmb']) * self._T0_cmb
+        self._T0_ncdm = self._np.array(self._engine['T_ncdm_over_cmb']) * self._T0_cmb
         for name in ['cdm', 'b', 'k', 'g', 'ur', 'r', 'ncdm', 'ncdm_tot', 'pncdm', 'pncdm_tot', 'm', 'Lambda', 'fld', 'de']:
             setattr(self, '_Omega0_{}'.format(name), self._engine['Omega_{}'.format(name)])
         for name in ['_m_ncdm', '_Omega0_pncdm', '_Omega0_ncdm']:
-            setattr(self, name, np.array(getattr(self, name), dtype='f8'))
+            setattr(self, name, self._np.array(getattr(self, name), dtype='f8'))
 
     @utils.flatarray()
     def rho_ncdm(self, z, species=None):
@@ -1330,16 +1438,16 @@ class BaseBackground(BaseSection):
             species = list(range(self.N_ncdm))
 
         def compute(z, species):
-            return np.array([self._engine._get_rho_ncdm(z=zz, species=species) for zz in z])
+            return self._np.array([self._engine._get_rho_ncdm(z=zz, species=species) for zz in z])
 
         if is_sequence(species):
-            return np.array([compute(z, species=s) for s in species]).reshape(len(species), len(z))
+            return self._np.array([compute(z, species=s) for s in species]).reshape(len(species), len(z))
 
         return compute(z, species)
 
     def rho_ncdm_tot(self, z):
         r"""Total comoving density of non-relativistic part of massive neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return np.sum(self.rho_ncdm(z, species=None), axis=0)
+        return self._np.sum(self.rho_ncdm(z, species=None), axis=0)
 
     @utils.flatarray()
     def p_ncdm(self, z, species=None):
@@ -1352,10 +1460,10 @@ class BaseBackground(BaseSection):
             species = list(range(self.N_ncdm))
 
         def compute(z, species):
-            return np.array([self._engine._get_p_ncdm(z=zz, species=species) for zz in z])
+            return self._np.array([self._engine._get_p_ncdm(z=zz, species=species) for zz in z])
 
         if is_sequence(species):
-            return np.array([compute(z, species=s) for s in species]).reshape(len(species), len(z))
+            return self._np.array([compute(z, species=s) for s in species]).reshape(len(species), len(z))
 
         return compute(z, species)
 
@@ -1371,7 +1479,7 @@ class BaseBackground(BaseSection):
     @utils.flatarray()
     def rho_b(self, z):
         r"""Comoving density of baryons :math:`\rho_{b}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self.Omega0_b * np.ones_like(z) * constants.rho_crit_Msunph_per_Mpcph3
+        return self.Omega0_b * self._np.ones_like(z) * constants.rho_crit_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_ur(self, z):
@@ -1385,7 +1493,7 @@ class BaseBackground(BaseSection):
     @utils.flatarray()
     def rho_cdm(self, z):
         r"""Comoving density of cold dark matter :math:`\rho_{cdm}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self.Omega0_cdm * np.ones_like(z) * constants.rho_crit_Msunph_per_Mpcph3
+        return self.Omega0_cdm * self._np.ones_like(z) * constants.rho_crit_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_m(self, z):
@@ -1405,10 +1513,8 @@ class BaseBackground(BaseSection):
     @utils.flatarray()
     def rho_fld(self, z):
         r"""Comoving density of dark energy fluid :math:`\rho_{\mathrm{fld}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        if self.Omega0_fld == 0.:
-            return np.zeros_like(z)
         # return self.Omega0_fld * (1 + z) ** (3. * (1 + self.w0_fld + self.wa_fld)) * np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_Msunph_per_Mpcph3 / (1 + z)**3
-        return self.Omega0_fld * (1 + z) ** (3. * (self.w0_fld + self.wa_fld)) * np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_Msunph_per_Mpcph3
+        return self.Omega0_fld * (1 + z) ** (3. * (self.w0_fld + self.wa_fld)) * self._np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_de(self, z):
@@ -1439,7 +1545,7 @@ class BaseBackground(BaseSection):
     @utils.flatarray()
     def efunc(self, z):
         r"""Function giving :math:`E(z)`, where the Hubble parameter is defined as :math:`H(z) = H_{0} E(z)`, unitless."""
-        return np.sqrt(self.rho_crit(z) * (1 + z)**3 / constants.rho_crit_Msunph_per_Mpcph3)
+        return self._np.sqrt(self.rho_crit(z) * (1 + z)**3 / constants.rho_crit_Msunph_per_Mpcph3)
 
     @utils.flatarray()
     def hubble_function(self, z):

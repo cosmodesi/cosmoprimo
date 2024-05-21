@@ -10,7 +10,8 @@ array_types = ()
 try:
     # raise ImportError
     import jax, jaxlib
-    from jax.config import config; config.update('jax_enable_x64', True)
+    from jax import config
+    config.update('jax_enable_x64', True)
     from jax import numpy, scipy
     array_types = []
     for line in ['jaxlib.xla_extension.DeviceArrayBase', 'type(numpy.array(0))', 'jax.core.Tracer']:
@@ -44,9 +45,9 @@ def jit(*args, **kwargs):
     return get_wrapper(args[0])
 
 
-def use_jax(array):
+def use_jax(*arrays):
     """Whether to use jax.numpy depending on whether array is jax's object."""
-    return isinstance(array, tuple(array_types))
+    return any(isinstance(array, array_types) for array in arrays)
 
 
 def dist_name(dist):

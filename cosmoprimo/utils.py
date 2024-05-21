@@ -71,13 +71,14 @@ def flatarray(iargs=[0], dtype=np.float64):
             ba = sig.bind_partial(*args, **kwargs)
             ba.apply_defaults()
             self, args = ba.args[0], list(ba.args[1:])
+            _np = getattr(self, '_np', np)
             toret_dtype = _bcast_dtype(*[args[iarg] for iarg in iargs])
             input_dtype = dtype
             if input_dtype is None:
                 input_dtype = toret_dtype
             shape = None
             for iarg in iargs:
-                array = np.asarray(args[iarg], dtype=input_dtype)
+                array = _np.asarray(args[iarg], dtype=input_dtype)
                 if shape is not None:
                     if array.shape != shape:
                         raise ValueError('input arrays must have same shape, found {}, {}'.format(shape, array.shape))
@@ -88,7 +89,7 @@ def flatarray(iargs=[0], dtype=np.float64):
             toret = func(self, *args, **ba.kwargs)
 
             def reshape(toret):
-                toret = np.asarray(toret, dtype=toret_dtype)
+                toret = _np.asarray(toret, dtype=toret_dtype)
                 toret.shape = toret.shape[:-1] + shape
                 return toret
 
