@@ -110,6 +110,7 @@ class CambEngine(BaseEngine):
 
             if self._has_fld:
                 self._camb_params.set_classes(dark_energy_model=self.camb.dark_energy.DarkEnergyPPF if self['use_ppf'] else self.camb.dark_energy.DarkEnergyFluid)
+                print(self['w0_fld'], self['wa_fld'], self['cs2_fld'], type(self['w0_fld']), type(self['wa_fld']), type(self['cs2_fld']))
                 self._camb_params.DarkEnergy.set_params(w=self['w0_fld'], wa=self['wa_fld'], cs2=self['cs2_fld'])
 
             self._camb_params.DoLensing = self['lensing']

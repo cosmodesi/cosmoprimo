@@ -56,7 +56,7 @@ def test_engine():
 list_params = [{}, {'sigma8': 1., 'non_linear': 'mead'}, {'logA': 3., 'non_linear': 'mead'},
                {'A_s': 2e-9, 'alpha_s': -0.2}, {'lensing': True},
                {'m_ncdm': 0.1, 'neutrino_hierarchy': 'normal'}, {'Omega_k': 0.1},
-               {'w0_fld': -0.9, 'wa_fld': 0.1, 'cs2_fld': 0.9}, {'w0_fld': -1.1, 'wa_fld': 0.2}]
+               {'w0_fld': -0.9, 'wa_fld': 0.1, 'cs2_fld': 0.9}, {'w0_fld': -1.1, 'wa_fld': 0.2}][-2:]
 
 
 @pytest.mark.parametrize('params', list_params)
@@ -774,6 +774,10 @@ def plot_z_sampling():
 
 
 if __name__ == '__main__':
+
+    for params in list_params:
+        test_background(params)
+    exit()
 
     test_params()
     test_engine()

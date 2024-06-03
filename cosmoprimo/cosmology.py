@@ -1007,8 +1007,8 @@ class Cosmology(BaseCosmology):
         mask_m = m_ncdm > m_massive
         if not jax_array_types:
             # Fill an array with the non-relativistic neutrino masses
-            m_ncdm = m_ncdm[mask_m].tolist()
-            T_ncdm_over_cmb = T_ncdm_over_cmb[mask_m].tolist()
+            m_ncdm = m_ncdm[mask_m]#.tolist()
+            T_ncdm_over_cmb = T_ncdm_over_cmb[mask_m]#.tolist()
         # arxiv: 1812.05995 eq. 84
         N_eff = params.pop('N_eff', constants.NEFF)
         # We remove massive neutrinos
@@ -1106,7 +1106,7 @@ class Cosmology(BaseCosmology):
         """
         self._engine = _get_cosmology_engine(self, engine, set_engine=set_engine, **extra_params)
         for name in ['_use_jax', '_np']:
-            setattr(self._engine, name, getattr(self, name))
+            setattr(self._engine, name, getattr(self, name, None))
 
     def clone(self, base='input', engine=None, extra_params=None, **params):
         r"""
