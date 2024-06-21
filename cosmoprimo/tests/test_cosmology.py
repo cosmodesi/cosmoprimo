@@ -775,10 +775,6 @@ def plot_z_sampling():
 
 if __name__ == '__main__':
 
-    for params in list_params:
-        test_background(params)
-    exit()
-
     test_params()
     test_engine()
     for params in list_params:

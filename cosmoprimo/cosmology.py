@@ -1106,7 +1106,7 @@ class Cosmology(BaseCosmology):
         """
         self._engine = _get_cosmology_engine(self, engine, set_engine=set_engine, **extra_params)
         for name in ['_use_jax', '_np']:
-            setattr(self._engine, name, getattr(self, name, None))
+            setattr(self._engine, name, getattr(self, name))
 
     def clone(self, base='input', engine=None, extra_params=None, **params):
         r"""
@@ -1229,6 +1229,7 @@ class Cosmology(BaseCosmology):
         #if 'N_eff' not in self._params:
         #    self._params['N_eff'] = self._params['N_ur'] + sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in self._params['T_ncdm_over_cmb'])
         #    del self._params['N_ur']
+        self._set_jax()
         if state.get('engine', None) is not None:
             self.set_engine(state['engine']['name'], **state['engine']['extra_params'])
 

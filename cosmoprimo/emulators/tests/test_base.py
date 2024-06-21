@@ -44,9 +44,27 @@ def test_jax():
     print(test(0.2))
 
 
+def test_interpax():
+    x = np.linspace(0., 2. * np.pi, 100)
+    fun = np.sin(x)
+    from interpax import Interpolator1D
+    from scipy import interpolate
+    spline1 = Interpolator1D(x, fun, method='cubic2', extrap=True, period=None)
+    spline2 = interpolate.interp1d(x, fun, kind='cubic', axis=0, fill_value='extrapolate', assume_sorted=True)
+    xp = np.linspace(-1., 2. * np.pi + 1., 100)
+
+    from matplotlib import pyplot as plt
+    ax = plt.gca()
+    ax.plot(xp, spline1(xp), label='interpax')
+    ax.plot(xp, spline2(xp), label='scipy')
+    ax.legend()
+    plt.show()
+
+
 if __name__ == '__main__':
 
     setup_logging()
 
     #test_base()
-    test_jax()
+    #test_jax()
+    test_interpax()

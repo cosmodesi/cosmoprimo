@@ -159,6 +159,63 @@ class rv_frozen(object):
         return self.args, self.kwds
 
 
+from cosmoprimo.utils import _bcast_dtype
+np = numpy
+
+
+if jax is None:
+
+    pass
+
+else:
+
+    def _to_method(k):
+        return  {1: 'linear', 3: 'cubic2'}[k]
+
+    class Interpolator1D(object):
+
+        def __init__(self, x, fun, k=3):
+            from interpax import Interpolator1D
+            self._spline = Interpolator1D(x, fun, method=_to_method(k), extrap=False, period=None)
+            self.xmin, self.xmax = np.min(x), np.max(x)
+
+        def __call__(self, x, bounds_error=True):
+            dtype = _bcast_dtype(x)
+            x = np.asarray(x, dtype=dtype)
+            toret_shape = x.shape
+            if bounds_error and (np.any(x < self.xmin) or np.any(x > self.xmax)):
+                raise ValueError('Input x outside of extrapolation range (min: {} vs. {}; max: {} vs. {})'.format(x.min(), self.xmin, x.max(), self.xmax))
+            toret = self._spline(x.ravel())
+            return toret.reshape(toret_shape).astype(dtype, copy=False)
+
+
+    class Interpolator2D(object):
+
+        def __init__(self, x, y, fun, kx=3, ky=3):
+            from interpax import Interpolator2D
+            methodx = _to_method(kx)
+            methody = _to_method(ky)
+            assert methody == methodx, 'interpax supports ky = ky only'
+            self._spline = Interpolator2D(x, y, fun, method=methodx, extrap=False, period=None)
+            self.xmin, self.xmax = np.min(x), np.max(x)
+            self.ymin, self.ymax = np.min(y), np.max(y)
+
+        def __call__(self, x, y, grid=True, bounds_error=True):
+            dtype = _bcast_dtype(x, y)
+            x, y = (np.asarray(xx, dtype=dtype) for xx in (x, y))
+            if grid:
+                toret_shape = x.shape + y.shape
+            else:
+                toret_shape = x.shape
+            if bounds_error and (np.any(x < self.extrap_xmin) or np.any(x > self.extrap_xmax)):
+                raise ValueError('Input x outside of extrapolation range (min: {} vs. {}; max: {} vs. {})'.format(x.min(), self.extrap_xmin, x.max(), self.extrap_xmax))
+
+            if grid:
+                x, y = np.meshgrid(x, y, indexing='ij')
+
+            toret = self._spline(x.ravel(), y.ravel())
+            return toret.reshape(toret_shape).astype(dtype, copy=False)
+
 
 class InterpolatedUnivariateSpline(object):
 
