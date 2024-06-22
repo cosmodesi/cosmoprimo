@@ -47,6 +47,7 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
             Arguments for :meth:`set_k`.
         """
         self._cosmo_fid = cosmo_fid
+        self._cosmo = cosmo
         self.pk_interpolator = pk_interpolator
         self.set_k(**kwargs)
         self.set_pk(pk_interpolator, cosmo=cosmo)
@@ -71,7 +72,7 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
 
     def set_pk(self, pk_interpolator, cosmo=None):
         """Set input power spectrum to remove BAO wiggles from."""
-        self._cosmo = cosmo
+        if cosmo is not None: self._cosmo = cosmo
         self.pk_interpolator = pk_interpolator
         self.is2d = isinstance(pk_interpolator, PowerSpectrumInterpolator2D)
         if self.is2d:
