@@ -132,7 +132,7 @@ def plot_residual_background(ref_samples, emulated_samples, quantities=None, sub
     if isinstance(emulated_samples, Samples):
         emulated_samples = emulated_samples[mask]
     else:
-        sampler = InputSampler(get_calculator(emulated_samples, section='background'), samples=ref_samples)
+        sampler = InputSampler(get_calculator(emulated_samples, section='background'), params=[name[2:] for name in ref_samples.columns('X.*')], samples=ref_samples)
         emulated_samples = sampler.run()
 
     namespace = 'Y.background.'
@@ -146,13 +146,14 @@ def plot_residual_background(ref_samples, emulated_samples, quantities=None, sub
     if namespace + 'z' in ref_samples: z = ref_samples[namespace + 'z'][0]
     else: z = ref_samples.attrs['fixed']['background.z']
     for ax, name in zip(lax, quantities):
+        print(name)
         for ref, emulated in zip(ref_samples[namespace + name], emulated_samples[namespace + name]):
             mask = z > 0.
-            tmp = np.abs(emulated.T[mask] / ref.T[mask] - 1.)
             ax.plot(z[mask], np.abs(emulated.T[mask] / ref.T[mask] - 1.), color='k')
         ax.set_ylabel('|emulated/ref - 1|')
-        ax.set_xscale('log')
+        #ax.set_xscale('log')
         ax.set_yscale('log')
+        ax.set_ylim(1e-5, 1.)
         ax.set_title(name)
         ax.grid(True)
     ax.set_xlabel('$z$')
@@ -204,11 +205,12 @@ def plot_residual_thermodynamics(ref_samples, emulated_samples, quantities=None,
     idx = np.linspace(0., 1., len(quantities))
     for iname, name in enumerate(quantities):
         for ref, emulated in zip(ref_samples[namespace + name], emulated_samples[namespace + name]):
-            ax.plot(idx[iname], np.abs(emulated / ref - 1.), color='k', marker='o')
+            ax.plot(idx[iname], np.abs(emulated / ref - 1.), color='k', marker='o', alpha=0.1)
     ax.set_xticks(idx)
     ax.set_xticklabels(quantities, rotation=40, ha='right')
     ax.set_ylabel('|emulated/ref - 1|')
     ax.set_yscale('log')
+    ax.set_ylim(1e-5, 1.)
     ax.grid(True)
     if fn is not None:
         utils.savefig(fn, fig=fig)

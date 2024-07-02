@@ -4,7 +4,8 @@ from pathlib import Path
 this_dir = Path(__file__).parent
 train_dir = Path(os.getenv('SCRATCH')) / 'emulators/train/classy/'
 samples_fn = {'mpk': train_dir / 'samples_mpk', 'cmb': train_dir / 'samples_cmb'}
-emulator_fn = this_dir / 'classy/emulator.npy'
+emulator_dir = this_dir / 'classy'
+emulator_fn = emulator_dir / 'emulator.npy'
 
 
 def sample(samples_fn, observable='mpk', start=0, stop=100000):
@@ -36,24 +37,27 @@ def fit(samples_fn, tofit=('background', 'thermodynamics', 'primordial', 'fourie
     import glob
     import logging
     import numpy as np
-    from cosmoprimo.emulators import Emulator, EmulatedEngine, MLPEmulatorEngine, Samples, FourierNormOperation, PCAOperation, ChebyshevOperation, setup_logging
+    #import tensorflow as tf
+    #tf.keras.backend.set_floatx('float64')
+
+    from cosmoprimo.emulators import Emulator, EmulatedEngine, MLPEmulatorEngine, Samples, FourierNormOperation, Log10Operation, ArcsinhOperation, PCAOperation, ChebyshevOperation, setup_logging
 
     logger = logging.getLogger('Fit')
     setup_logging()
 
     def load_samples(**kwargs):
-        samples = Samples.concatenate([Samples.load(fn, **kwargs) for fn in glob.glob(samples_fn)])
-        for name, value in samples.items():
-            mask = np.isnan(value).any(axis=tuple(range(1, value.ndim)))
-        logger.info('Removing {:d} / {:d} NaN samples.'.format(mask.sum(), mask.size))
-        samples = samples[~mask]
-        return samples
+        samples = Samples.concatenate([Samples.load(fn, **kwargs) for fn in glob.glob(str(samples_fn) + '*')])
+        mask = samples.isfinite()
+        logger.info('Removing {:d} / {:d} NaN samples.'.format((~mask).sum(), mask.size))
+        return samples[mask]
 
     operations = []
     operations.append(FourierNormOperation(ref_pk_name='fourier.pk.delta_cb.delta_cb'))
     engine = {}
-    engine['background.*'] = MLPEmulatorEngine(nhidden=(100,) * 2, yoperation=ChebyshevOperation(axis=0, order=100))
-    engine['thermodynamics.*'] = MLPEmulatorEngine(nhidden=(20,) * 2)
+    #engine['thermodynamics.*'] = MLPEmulatorEngine(nhidden=(20,) * 2)
+    engine['thermodynamics.*'] = MLPEmulatorEngine(nhidden=(20,) * 3)
+    engine['thermodynamics.*'] = MLPEmulatorEngine(nhidden=(10,) * 5)
+    engine['thermodynamics.*'] = MLPEmulatorEngine(nhidden=(30,) * 5)
     engine['primordial.*'] = MLPEmulatorEngine(nhidden=(20,) * 2)
     engine['fourier.*'] = MLPEmulatorEngine(nhidden=(512,) * 3, yoperation=[ChebyshevOperation(axis=0, order=100), ChebyshevOperation(axis=1, order=10)])
     engine['fourier.pk.delta_cb.delta_cb'] = MLPEmulatorEngine(nhidden=(512,) * 3, yoperation=[ChebyshevOperation(axis=0, order=100)])
@@ -67,12 +71,26 @@ def fit(samples_fn, tofit=('background', 'thermodynamics', 'primordial', 'fourie
     emulator.yoperations = operations
     if 'background' in tofit:
         samples = load_samples(include=['X.*', 'Y.background.*'], exclude=['X.logA', 'X.n_s', 'X.tau_reio'])
+        #z = np.linspace(0., 10., 1000)
+        for name in samples.columns('Y.*'):
+            if samples[name].ndim > 1:
+                ee = MLPEmulatorEngine(nhidden=(512,) * 4, yoperation=ArcsinhOperation())  #, yoperation=Log10Operation()) #, cChebyshevOperation(axis=-1, order=100))
+                #samples[name] = samples[name][...,1000:]
+            else:
+                ee = MLPEmulatorEngine(nhidden=(20,) * 2)
+            engine[name[2:]] = ee
+        emulator.set_engine(engine)
         emulator.set_samples(samples=samples)
-        emulator.fit(name='background.*', batch_frac=(0.2, 0.4, 1.), learning_rate=(1e-2, 1e-4, 1e-6), epochs=1000)
+        #emulator.fit(name='background.*', batch_frac=[0.02, 0.05, 0.1, 0.2, 0.4, 0.5], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], epochs=1000, verbose=True)
+        emulator.fit(name='background.*', batch_frac=[0.02, 0.05, 0.3], learning_rate=[1e-2, 1e-3, 1e-4], epochs=1000, verbose=False)
         emulator.save(emulator_fn)
     if 'thermodynamics' in tofit:
-        emulator.set_samples(samples=samples.select(['X.*', 'Y.thermodynamics.*'], exclude=['X.logA', 'X.n_s']))
-        emulator.fit(name='thermodynamics.*', batch_frac=(0.2, 0.4, 1.), learning_rate=(1e-2, 1e-4, 1e-6), epochs=1000)
+        samples = load_samples(include=['X.*', 'Y.thermodynamics.*'], exclude=['X.logA', 'X.n_s', 'X.tau_reio'])
+        emulator.set_samples(samples=samples)
+        #emulator.fit(name='thermodynamics.rs_drag', batch_frac=[0.02, 0.05, 0.1, 0.2, 0.4, 0.5], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], epochs=1000, verbose=True)
+        emulator.fit(name='thermodynamics.rs_drag', batch_frac=[0.02, 0.05, 0.1, 0.2, 0.4, 0.5], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], epochs=1000, verbose=True)
+        #emulator.fit(name='thermodynamics.rs_drag', batch_frac=[0.05, 0.1, 0.2, 0.4, 0.5], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-7], epochs=1000, verbose=True)
+        #emulator.fit(name='thermodynamics.rs_drag', batch_frac=[0.05, 0.1, 0.2, 0.4], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5], epochs=1000, verbose=True)
         emulator.save(emulator_fn)
     if 'primordial' in tofit:
         emulator.set_samples(samples=samples.select(['X.logA', 'X.n_s', 'Y.primordial.*']))
@@ -84,29 +102,87 @@ def fit(samples_fn, tofit=('background', 'thermodynamics', 'primordial', 'fourie
         emulator.save(emulator_fn)
     if 'harmonic' in tofit:
         emulator.set_samples(samples=samples.select(['X.*', 'Y.harmonic.*']))
-        emulator.fit(name='fourier.*', batch_frac=(0.2, 0.4, 1.), learning_rate=(1e-2, 1e-4, 1e-6), epochs=1000)
+        emulator.fit(name='harmonic.*', batch_frac=(0.2, 0.4, 1.), learning_rate=(1e-2, 1e-4, 1e-6), epochs=1000)
         emulator.save(emulator_fn)
 
 
-def plot():
+def plot(samples_fn, toplot=('background', 'thermodynamics', 'primordial', 'fourier', 'harmonic')):
+    import glob
     from cosmoprimo.fiducial import DESI
-    from cosmoprimo.emulators import EmulatedEngine, Samples, plot_residual_background, plot_residual_thermodynamics, plot_residual_primordial, plot_residual_fourier, plot_residual_harmonic
+    from cosmoprimo.emulators import Emulator, EmulatedEngine, Samples, plot_residual_background, plot_residual_thermodynamics, plot_residual_primordial, plot_residual_fourier, plot_residual_harmonic, setup_logging
 
-    samples = Samples.load(samples_fn)
+    setup_logging()
+    
+    def load_samples(**kwargs):
+        samples = Samples.concatenate([Samples.load(fn, **kwargs) for fn in glob.glob(str(samples_fn) + '*')[:1]])
+        return samples
+        #mask = samples.isfinite()
+        #return samples[mask]
+
+    emulator = Emulator.load(emulator_fn)
+    #engine = emulator.engines['thermodynamics.rs_drag']
+    #print(engine.params)
+    #print([(operation._direct, operation._locals) for operation in engine.xoperations])
+    #print([(operation._direct, operation._locals) for operation in engine.yoperations])
+    #print([(operation._direct, operation._locals) for operation in engine.model_operations])
+    #exit()
     cosmo = DESI(engine=EmulatedEngine.load(emulator_fn))
-    plot_residual_background(samples, emulated_samples=cosmo, fn=train_dir / 'background.png')
-    plot_residual_thermodynamics(samples, emulated_samples=cosmo, fn=train_dir / 'thermodynamics.png')
-    plot_residual_primordial(samples, emulated_samples=cosmo, fn=train_dir / 'primordial.png')
-    plot_residual_fourier(samples, emulated_samples=cosmo, fn=train_dir / 'fourier.png')
-    plot_residual_harmonic(samples, emulated_samples=cosmo, fn=train_dir / 'harmonic.png')
+
+    samples = load_samples(include=['X.*', 'Y.thermodynamics.*'])
+    for i in range(10):
+        params = {name[2:]: samples[name][i] for name in samples.columns('X.*')}
+        c = cosmo.clone(**params)
+        ref = DESI(**params)
+        print(c.rs_drag, ref.rs_drag, samples['Y.thermodynamics.rs_drag'][i])
+    
+    if 'background' in toplot:
+        samples = load_samples(include=['X.*', 'Y.background.*'], exclude=['X.logA', 'X.n_s', 'X.tau_reio'])
+        plot_residual_background(samples, emulated_samples=cosmo, subsample=0.1, fn=emulator_dir / 'background.png')
+    if 'thermodynamics' in toplot:
+        samples = load_samples(include=['X.*', 'Y.thermodynamics.*'], exclude=['X.logA', 'X.n_s', 'X.tau_reio'])
+        plot_residual_thermodynamics(samples, emulated_samples=cosmo, subsample=0.1, fn=emulator_dir / 'thermodynamics.png')
+    if 'primordial' in toplot:
+        plot_residual_primordial(samples, emulated_samples=cosmo, fn=emulator_dir / 'primordial.png')
+    if 'fourier' in toplot:
+        plot_residual_fourier(samples, emulated_samples=cosmo, fn=emulator_dir / 'fourier.png')
+    if 'harmonic' in toplot:
+        plot_residual_harmonic(samples, emulated_samples=cosmo, fn=emulator_dir / 'harmonic.png')
+
+        
+def test():
+
+    def load_samples(**kwargs):
+        samples = Samples.concatenate([Samples.load(fn, **kwargs) for fn in glob.glob(str(samples_fn) + '*')])
+        mask = samples.isfinite()
+        logger.info('Removing {:d} / {:d} NaN samples.'.format((~mask).sum(), mask.size))
+        return samples[mask]
+
+    samples = load_samples(include=['X.*', 'Y.thermodynamics.*'], exclude=['X.logA', 'X.n_s', 'X.tau_reio'])
+    params = [name[2:] for name in samples.columns('X.*')]
+    X = np.column_stack([samples['X.' + param] for param in samples])
+    Y = samples['Y.thermodynamics.rs_drag']
+    from cosmoprimo.emulators import MLPEmulatorEngine
+    
+    fn = 'tmp.npy'
+    if True:
+        engine = MLPEmulatorEngine(nhidden=(10,) * 3)
+        engine.initialize(params=params)
+        engine.fit(X, Y, batch_frac=[0.02, 0.05, 0.1, 0.2, 0.4, 0.5], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], epochs=1000, verbose=True)
+        engine.save(fn)
+    if True:
+        engine = MLPEmulatorEngine.load(fn)
+        from jax import vmap
+        Y_pred = vmap(engine.predict)(X)
+        diff = np.max(Y / Y_pred - 1.)
+        print(diff.mean(), diff.max())
 
 
 if __name__ == '__main__':
 
-    setup_logging()
     """Uncomment to run."""
 
-    todo = ['sample']
+    #todo = ['sample']
+    todo = ['fit', 'plot']
 
     if todo:
         from desipipe import Queue, Environment, TaskManager, spawn, setup_logging
@@ -138,3 +214,17 @@ if __name__ == '__main__':
                 for start, stop in zip(steps[:-1], steps[1:]):
                     s(samples_fn[observable], observable=observable, start=start, stop=stop)
                     break
+        
+        if 'fit' in todo:
+            for observable in ['mpk', 'cmb'][:1]:
+                tofit = ['background', 'thermodynamics', 'primordial', 'fourier'][1:2]
+                if observable == 'cmb': tofit = ['harmonic']
+                for tofit in tofit:
+                    fit(samples_fn[observable], tofit=tofit)
+        
+        if 'plot' in todo:
+            for observable in ['mpk', 'cmb'][:1]:
+                toplot = ['background', 'thermodynamics', 'primordial', 'fourier'][1:2]
+                if observable == 'cmb': toplot = ['harmonic']
+                for toplot in toplot:
+                    plot(samples_fn[observable], toplot=toplot)

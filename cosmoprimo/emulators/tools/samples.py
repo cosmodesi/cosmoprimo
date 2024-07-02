@@ -112,7 +112,7 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
             state = {**{name: value[()] for name, value in state.items()}, 'data': data}
         else:
             state = state[()]
-        new = cls.from_state(state)
+        new = cls.from_state(state).select(include=include, exclude=exclude)
         return new
 
     def __copy__(self):
@@ -199,6 +199,12 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
             return s
         return 0
 
+    def isfinite(self):
+        mask = True
+        for name, value in self.items():
+            mask &= np.isfinite(value).all(axis=tuple(range(1, value.ndim)))
+        return mask
+    
     def columns(self, include=None, exclude=None):
         """
         Return selected columns.
