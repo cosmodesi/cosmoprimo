@@ -12,7 +12,7 @@ class AstropyEngine(BaseEngine):
     name = 'astropy'
 
     def __init__(self, *args, **kwargs):
-        super(AstropyEngine, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         N_eff = self['N_eff']
         m_nu = self['m_ncdm']
         m_nu = list(m_nu) + [0.] * (int(N_eff) - len(m_nu))
@@ -51,7 +51,7 @@ class Background(BaseBackground):
     hence we do not include them here.
     """
     def __init__(self, engine):
-        super(Background, self).__init__(engine=engine)
+        super().__init__(engine)
         self.ba = self._engine._astropy
 
     @property
@@ -96,7 +96,7 @@ class Background(BaseBackground):
               \rho_{\mathrm{crit}}(z) = \frac{3 H(z)^{2}}{8 \pi G}.
         """
         # astropy in g/cm3
-        return self.ba.critical_density(z).value * 1e3 / (1e10 * constants.msun) * constants.megaparsec**3 / self.h**2 / (1 + z)**3
+        return self.ba.critical_density(z).value * 1e3 / (1e10 * constants.msun_over_kg) * constants.megaparsec_over_m**3 / self.h**2 / (1 + z)**3
 
     @utils.flatarray()
     def efunc(self, z):

@@ -37,7 +37,6 @@ def test_power_spectrum():
     tr = Transfer(cosmo, engine='eisenstein_hu')
     k = np.logspace(-3, 1.5, 100)
     pk = tr.transfer_k(k)**2 * k ** cosmo['n_s']
-
     interp = PowerSpectrumInterpolator1D(k, pk)
     check_shape_1d(interp)
     interp2 = interp.clone()
@@ -49,7 +48,8 @@ def test_power_spectrum():
     check_shape_2d(interp)
     check_shape_2d(interp, grid=False)
     interp2 = interp.clone()
-    assert np.all(interp2(k, z=[0] * 2) == interp(k, z=[0] * 2))
+    assert np.all(interp2._pk == interp._pk)
+    assert np.allclose(interp2(k, z=[0] * 2), interp(k, z=[0] * 2), atol=1e-18, rtol=1e-18)
 
     rng = np.random.RandomState(seed=42)
     z = np.linspace(1., 0., 10)

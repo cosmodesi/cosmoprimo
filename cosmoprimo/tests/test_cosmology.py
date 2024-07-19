@@ -600,6 +600,22 @@ def test_neutrinos():
         cosmo = Cosmology(Omega_ncdm=cosmo['Omega_ncdm'])
         assert np.allclose(cosmo['m_ncdm'], m_ncdm)
 
+    m = 0.06
+    z = 0.01
+    niterations = 100
+    z = np.linspace(0., 1., niterations)
+    import time
+    t0 = time.time()
+    #for i in range(niterations): _compute_ncdm_momenta(T_eff, m, z)
+    toret = _compute_ncdm_momenta(T_eff, m, z, method='quad')
+    toret2 = _compute_ncdm_momenta(T_eff, m, z, method='laguerre')
+    print((toret2 - toret) / toret)
+
+    import time
+    t0 = time.time()
+    toret2 = _compute_ncdm_momenta(T_eff, m, z)
+    print(time.time() - t0, toret)
+
 
 def test_clone():
 

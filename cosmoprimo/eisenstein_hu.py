@@ -5,6 +5,7 @@ import numpy as np
 from .cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyError
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 from . import constants, utils
+from .jax import exception
 
 
 class EisensteinHuEngine(BaseEngine):
@@ -18,13 +19,15 @@ class EisensteinHuEngine(BaseEngine):
     name = 'eisenstein_hu'
 
     def __init__(self, *args, **kwargs):
-        super(EisensteinHuEngine, self).__init__(*args, **kwargs)
-        if self['N_ncdm']:
-            warnings.warn('{} cannot cope with massive neutrinos'.format(self.__class__.__name__))
-        if self['Omega_k'] != 0.:
-            warnings.warn('{} cannot cope with non-zero curvature'.format(self.__class__.__name__))
-        if self._has_fld:
-            warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
+        super().__init__(*args, **kwargs)
+        def raise_error(N_ncdm, Omega_k, has_fld):
+            if N_ncdm:
+                warnings.warn('{} cannot cope with massive neutrinos'.format(self.__class__.__name__))
+            if Omega_k != 0.:
+                warnings.warn('{} cannot cope with non-zero curvature'.format(self.__class__.__name__))
+            if has_fld:
+                warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
+        exception(raise_error, self['N_ncdm'], self['Omega_k'], self._has_fld)
         self.compute()
         self._A_s = self._get_A_s_fid()
 
@@ -54,8 +57,8 @@ class EisensteinHuEngine(BaseEngine):
         self.r_eq = 31.5 * self.omega_b * self.theta_cmb ** (-4) * (1000. / (1 + self.z_eq))
 
         # EH eq. 6
-        self.rs_drag = 2. / (3. * self.k_eq) * np.sqrt(6. / self.r_eq)\
-                       * np.log((np.sqrt(1 + self.r_drag) + np.sqrt(self.r_drag + self.r_eq)) / (1 + np.sqrt(self.r_eq)))
+        self.rs_drag = 2. / (3. * self.k_eq) * self._np.sqrt(6. / self.r_eq)\
+                       * self._np.log((self._np.sqrt(1 + self.r_drag) + self._np.sqrt(self.r_drag + self.r_eq)) / (1 + self._np.sqrt(self.r_eq)))
         # self.rs_drag = 44.5 * np.log(9.83 / self.omega_m) / np.sqrt(1. + 10. * self.omega_b**0.75)
 
     def compute(self):
@@ -80,13 +83,13 @@ class EisensteinHuEngine(BaseEngine):
 
         y_drag = (1 + self.z_eq) / (1 + self.z_drag)
         # EH eq. 15
-        alpha_b_G = y_drag * (-6. * np.sqrt(1 + y_drag) + (2. + 3. * y_drag) * np.log((np.sqrt(1 + y_drag) + 1) / (np.sqrt(1 + y_drag) - 1)))
+        alpha_b_G = y_drag * (-6. * self._np.sqrt(1 + y_drag) + (2. + 3. * y_drag) * self._np.log((self._np.sqrt(1 + y_drag) + 1) / (self._np.sqrt(1 + y_drag) - 1)))
         self.alpha_b = 2.07 * self.k_eq * self.rs_drag * (1 + self.r_drag)**(-0.75) * alpha_b_G
 
         # EH eq. 23
         self.beta_node = 8.41 * self.omega_m ** 0.435
         # EH eq. 24
-        self.beta_b = 0.5 + self.frac_b + (3. - 2. * self.frac_b) * np.sqrt((17.2 * self.omega_m) ** 2 + 1)
+        self.beta_b = 0.5 + self.frac_b + (3. - 2. * self.frac_b) * self._np.sqrt((17.2 * self.omega_m) ** 2 + 1)
 
     def _rescale_sigma8(self):
         """Rescale perturbative quantities to match input sigma8."""
@@ -153,7 +156,7 @@ class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
         """Initialize :class:`Thermodynamics`."""
-        self._engine = engine
+        super().__init__(engine)
         self._rs_drag = self._engine.rs_drag * self._engine['h']
         self._z_drag = self._engine.z_drag
 
@@ -163,7 +166,7 @@ class Primordial(BaseSection):
 
     def __init__(self, engine):
         """Initialize :class:`Primordial`."""
-        self._engine = engine
+        super().__init__(engine)
         self._h = self._engine['h']
         self._A_s = self._engine._A_s
         self._n_s = self._engine['n_s']
@@ -211,7 +214,7 @@ class Primordial(BaseSection):
             The primordial power spectrum.
         """
         index = ['scalar'].index(mode)
-        lnkkp = np.log(k / self.k_pivot)
+        lnkkp = self._np.log(k / self.k_pivot)
         return self._h**3 * self.A_s * (k / self.k_pivot) ** (self.n_s - 1. + 1. / 2. * self.alpha_s * lnkkp + 1. / 6. * self.beta_s * lnkkp**2)
 
     def pk_interpolator(self, mode='scalar'):
@@ -245,13 +248,13 @@ class Transfer(BaseSection):
         -------
         transfer : array
         """
-        k = np.asarray(k) * self._engine['h']  # now in 1/Mpc
+        k = self._np.asarray(k) * self._engine['h']  # now in 1/Mpc
         # EH eq. 10
         q = k / (13.41 * self._engine.k_eq)
         ks = k * self._engine.rs_drag
 
-        T_c_ln_beta = np.log(np.e + 1.8 * self._engine.beta_c * q)
-        T_c_ln_nobeta = np.log(np.e + 1.8 * q)
+        T_c_ln_beta = self._np.log(np.e + 1.8 * self._engine.beta_c * q)
+        T_c_ln_nobeta = self._np.log(np.e + 1.8 * q)
         T_c_C_alpha = 14.2 / self._engine.alpha_c + 386. / (1 + 69.9 * q ** 1.08)
         T_c_C_noalpha = 14.2 + 386. / (1 + 69.9 * q ** 1.08)
 
@@ -270,8 +273,8 @@ class Transfer(BaseSection):
         # EH eq. 21
         T_b_T0 = T0(T_c_ln_nobeta, T_c_C_noalpha)
         T_b_1 = T_b_T0 / (1 + (ks / 5.2)**2)
-        T_b_2 = self._engine.alpha_b / (1 + (self._engine.beta_b / ks)**3) * np.exp(-(k / self._engine.k_silk) ** 1.4)
-        T_b = np.sinc(ks_tilde / np.pi) * (T_b_1 + T_b_2)
+        T_b_2 = self._engine.alpha_b / (1 + (self._engine.beta_b / ks)**3) * self._np.exp(-(k / self._engine.k_silk) ** 1.4)
+        T_b = self._np.sinc(ks_tilde / np.pi) * (T_b_1 + T_b_2)
 
         # EH eq. 16
         return self._engine.frac_b * T_b + (1 - self._engine.frac_b) * T_c
@@ -280,7 +283,7 @@ class Transfer(BaseSection):
 class Fourier(BaseSection):
 
     def __init__(self, engine):
-        self._engine = engine
+        super().__init__(engine)
         self.pm = self._engine.get_primordial()
         self.tr = self._engine.get_transfer()
         self.ba = self._engine.get_background()

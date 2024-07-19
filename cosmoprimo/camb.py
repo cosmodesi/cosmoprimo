@@ -52,7 +52,7 @@ class CambEngine(BaseEngine):
     def __init__(self, *args, **kwargs):
         # Big thanks to https://github.com/LSSTDESC/CCL/blob/master/pyccl/boltzmann.py!
         # Quantities in the synchronous gauge
-        super(CambEngine, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         if self._params.get('Omega_Lambda', None) is not None:
             warnings.warn('{} cannot cope with dynamic dark energy + cosmological constant'.format(self.__class__.__name__))
         self._set_camb()
@@ -225,14 +225,14 @@ class CambEngine(BaseEngine):
 class Background(BaseBackground):
 
     def __init__(self, engine):
-        super(Background, self).__init__(engine=engine)
+        super().__init__(engine)
         self._engine.compute('background')
         self.ba = self._engine.ba
         # convert RHO to 1e10 Msun/h
         # self._H0 = self.ba.Params.H0
         #self._h = self.H0 / 100
         # camb densities are 8 pi G a^4 rho in Mpc unit
-        self._RH0_ = constants.rho_crit_Msunph_per_Mpcph3 * constants.c**2 / (self.H0 * 1e3)**2 / 3.
+        self._RH0_ = constants.rho_crit_over_Msunph_per_Mpcph3 * constants.c**2 / (self.H0 * 1e3)**2 / 3.
         # for name in ['m', 'ncdm_tot']:
         #     setattr(self,'_Omega0_{}'.format(name),getattr(self,'Omega_{}'.format(name))(0.))
 
@@ -391,7 +391,7 @@ class Background(BaseBackground):
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
-        self._engine = engine
+        super().__init__(engine)
         self._engine.compute('thermodynamics')
         self.th = self._engine.th
         self.ba = self._engine.ba
@@ -448,7 +448,7 @@ class Transfer(BaseSection):
 class Primordial(BaseSection):
 
     def __init__(self, engine):
-        self._engine = engine
+        super().__init__(engine)
         self.pm = self._engine._camb_params.InitPower
         self._h = self._engine._camb_params.h
         self._rsigma8 = self._engine._rescale_sigma8()
@@ -544,7 +544,7 @@ class Primordial(BaseSection):
 class Harmonic(BaseSection):
 
     def __init__(self, engine):
-        self._engine = engine
+        super().__init__(engine)
         self._engine.compute('harmonic')
         self.hr = self._engine.hr
         self._rsigma8 = self._engine._rescale_sigma8()
@@ -600,7 +600,7 @@ def _make_tuple(of, size=2):
 class Fourier(BaseSection):
 
     def __init__(self, engine):
-        self._engine = engine
+        super().__init__(engine)
         self._engine.compute('fourier')
         self.fo = self._engine.fo
         self._h = self._engine._camb_params.h

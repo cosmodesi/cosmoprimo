@@ -7,8 +7,6 @@ import traceback
 
 import numpy as np
 
-from . import jax
-
 
 """A few utilities."""
 
@@ -227,6 +225,7 @@ def expand_dict(di, names):
 
 def deep_eq(obj1, obj2, equal_nan=True):
     """(Recursively) test equality between ``obj1`` and ``obj2``."""
+    from cosmoprimo import jax
     if type(obj2) is type(obj1):
         if isinstance(obj1, dict):
             if obj2.keys() == obj1.keys():

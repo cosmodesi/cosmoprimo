@@ -9,36 +9,7 @@ import numpy as np
 
 from scipy.special import gamma, loggamma
 
-
-# jax array types
-jax_array_types = ()
-
-try:
-    # raise ImportError
-    import jax, jaxlib
-    import jax.numpy as jnp
-    jax_array_types = []
-    for line in ['jaxlib.xla_extension.DeviceArrayBase', 'type(jnp.array(0))', 'jax.core.Tracer']:
-        try:
-            jax_array_types.append(eval(line))
-        except AttributeError:
-            pass
-    jax_array_types = tuple(jax_array_types)
-except ImportError:
-    jax = None
-    import numpy as jnp
-
-
-def use_jax(array):
-    """Whether to use jax.numpy depending on whether array is jax's object."""
-    return isinstance(array, tuple(jax_array_types))
-
-
-def np_jax(array):
-    """Return numpy or jax.numpy depending on whether array is jax's object"""
-    if use_jax(array):
-        return jnp
-    return np
+from .jax import numpy_jax
 
 
 class FFTlog(object):
@@ -223,7 +194,7 @@ class FFTlog(object):
         fftloged : array
             Transformed function.
         """
-        jnp = np_jax(fun)
+        jnp = numpy_jax(fun)
         fun = jnp.asarray(fun)
         padded_fun = pad(fun, (self.padded_size_in_left, self.padded_size_in_right), axis=-1, extrap=extrap)
         fftloged = self._engine.backward(self._engine.forward(padded_fun * self.padded_prefactor) * self.padded_u) * self.padded_postfactor
@@ -453,7 +424,7 @@ def pad(array, pad_width, axis=-1, extrap=0):
     array : array
         Padded array.
     """
-    jnp = np_jax(array)
+    jnp = numpy_jax(array)
     array = jnp.asarray(array)
 
     try:
@@ -527,11 +498,11 @@ class NumpyFFTEngine(BaseFFTEngine):
 
     def forward(self, fun):
         """Forward transform of ``fun``."""
-        return np_jax(fun).fft.rfft(fun, axis=-1)
+        return numpy_jax(fun).fft.rfft(fun, axis=-1)
 
     def backward(self, fun):
         """Backward transform of ``fun``."""
-        return np_jax(fun).fft.irfft(fun.conj(), n=self.size, axis=-1)
+        return numpy_jax(fun).fft.irfft(fun.conj(), n=self.size, axis=-1)
 
 
 def apply_along_last_axes(func, array, naxes=1, toret=None):

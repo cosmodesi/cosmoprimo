@@ -25,7 +25,7 @@ def get_default_k_callable():
 
 def get_default_z_callable(key='fourier', non_linear=False):
     if 'background' in key:
-        return np.insert(np.logspace(-8, 2, 2048), 0, 0.)
+        return 1. / np.logspace(-3, 0., 256)[::-1] - 1.
     z = np.linspace(0., 10.**0.5, 30)**2  # approximates default class z
     if non_linear:
         return z[z < 2.]
@@ -158,11 +158,11 @@ class Background(BaseBackground):
         super(Background, self).__init__(engine=engine)
         self.__setstate__(engine._predict(section='background'))
 
-    @utils.flatarray(dtype=np.float64)
+    @utils.flatarray()
     def rho_ncdm(self, z, species=None):
         return self._state['rho_ncdm'](z)[species if species is not None else slice(None)]
 
-    @utils.flatarray(dtype=np.float64)
+    @utils.flatarray()
     def p_ncdm(self, z, species=None):
         return self._state['p_ncdm'](z)[species if species is not None else slice(None)]
 
@@ -176,12 +176,12 @@ class Background(BaseBackground):
         r"""Comoving total density :math:`\rho_{\mathrm{tot}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self._state['rho_tot'](z)
 
-    @utils.flatarray(dtype=np.float64)
+    @utils.flatarray()
     def time(self, z):
         r"""Proper time (age of universe), in :math:`\mathrm{Gy}`."""
         return self._state['time'](z)
 
-    @utils.flatarray(dtype=np.float64)
+    @utils.flatarray()
     def comoving_radial_distance(self, z):
         r"""
         Comoving radial distance, in :math:`mathrm{Mpc}/h`.
@@ -190,16 +190,22 @@ class Background(BaseBackground):
         """
         return self._state['comoving_radial_distance'](z)
 
-    @utils.flatarray(dtype=np.float64)
+    @utils.flatarray()
     def angular_diameter_distance(self, z):
         r"""
         Proper angular diameter distance, in :math:`\mathrm{Mpc}/h`.
 
         See eq. 18 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{A}(z)`.
         """
-        return self._state['angular_diameter_distance'](z)
+        chi = self.comoving_radial_distance(z)
+        K = self.K  # in (h/Mpc)^2
+        if K == 0:
+            return chi / (1 + z)
+        if K > 0:
+            return np.sin(np.sqrt(K) * chi) / np.sqrt(K) / (1 + z)
+        return np.sinh(np.sqrt(-K) * chi) / np.sqrt(-K) / (1 + z)
 
-    @utils.flatarray(iargs=[0, 1], dtype=np.float64)
+    @utils.flatarray(iargs=[0, 1], )
     def angular_diameter_distance_2(self, z1, z2):
         r"""
         Angular diameter distance of object at :math:`z_{2}` as seen by observer at :math:`z_{1}`,
@@ -219,7 +225,7 @@ class Background(BaseBackground):
             return np.sin(np.sqrt(K) * (chi2 - chi1)) / np.sqrt(K) / (1 + z2)
         return np.sinh(np.sqrt(-K) * (chi2 - chi1)) / np.sqrt(-K) / (1 + z2)
 
-    @utils.flatarray(dtype=np.float64)
+    @utils.flatarray()
     def comoving_angular_distance(self, z):
         r"""
         Comoving angular distance, in :math:`\mathrm{Mpc}/h`.
@@ -228,7 +234,7 @@ class Background(BaseBackground):
         """
         return self.angular_diameter_distance(z) * (1. + z)
 
-    @utils.flatarray(dtype=np.float64)
+    @utils.flatarray()
     def luminosity_distance(self, z):
         r"""
         Luminosity distance, in :math:`\mathrm{Mpc}/h`.

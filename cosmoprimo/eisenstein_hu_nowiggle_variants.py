@@ -7,6 +7,7 @@ from .eisenstein_hu import Background, Thermodynamics, Primordial, CosmologyErro
 from .eisenstein_hu import Fourier as EHFourier
 from .interpolator import PowerSpectrumInterpolator2D
 from . import constants
+from .jax import exception
 
 
 class EisensteinHuNoWiggleVariantsEngine(BaseEngine):
@@ -20,9 +21,11 @@ class EisensteinHuNoWiggleVariantsEngine(BaseEngine):
     name = 'eisenstein_hu_nowiggle_variants'
 
     def __init__(self, *args, **kwargs):
-        super(EisensteinHuNoWiggleVariantsEngine, self).__init__(*args, **kwargs)
-        if self._has_fld:
-            warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
+        super().__init__(*args, **kwargs)
+        def raise_error(has_fld):
+            if has_fld:
+                warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
+        exception(raise_error, self._has_fld)
         self.compute()
         self._A_s = self._get_A_s_fid()
 
@@ -51,22 +54,22 @@ class EisensteinHuNoWiggleVariantsEngine(BaseEngine):
         # HS1996, arXiv 9510117, eq. E1 actually better match to CLASS
         # self.z_drag = 1345 * self.omega_m ** 0.251 / (1. + 0.659 * self.omega_m ** 0.828) * (1. + z_drag_b1 * self.omega_b ** z_drag_b2)
 
-        self.rs_drag = 44.5 * np.log(9.83 / self.omega_m) / np.sqrt(1. + 10. * self.omega_b ** 0.75)
+        self.rs_drag = 44.5 * self._np.log(9.83 / self.omega_m) / self._np.sqrt(1. + 10. * self.omega_b ** 0.75)
 
     def compute(self):
         """Precompute coefficients for the transfer function."""
         self._set_rsdrag()
         frac_bncdm = self.frac_b + self.frac_ncdm
         # EH eq. 11
-        self.p_c = (5. - np.sqrt(1 + 24 * self.frac_cdm)) / 4.
-        self.p_cb = (5. - np.sqrt(1 + 24. * self.frac_cb)) / 4.
+        self.p_c = (5. - self._np.sqrt(1 + 24 * self.frac_cdm)) / 4.
+        self.p_cb = (5. - self._np.sqrt(1 + 24. * self.frac_cb)) / 4.
         y_drag = (1 + self.z_eq) / (1 + self.z_drag)
         # EH eq. 15
         alpha_ncdm = self.frac_cdm / self.frac_cb * (5. - 2. * (self.p_c + self.p_cb)) / (5. - 4. * self.p_cb) * (1 + y_drag) ** (self.p_cb - self.p_c)\
                      * (1 + frac_bncdm * (-0.553 + 0.126 * frac_bncdm ** 2))\
-                     / (1 - 0.193 * np.sqrt(self.frac_ncdm * self.N_ncdm) + 0.169 * self.frac_ncdm * self.N_ncdm ** 0.2)\
+                     / (1 - 0.193 * self._np.sqrt(self.frac_ncdm * self.N_ncdm) + 0.169 * self.frac_ncdm * self.N_ncdm ** 0.2)\
                      * (1 + (self.p_c - self.p_cb) / 2 * (1 + 1 / (3. - 4. * self.p_c) / (7. - 4. * self.p_cb)) / (1 + y_drag))
-        self.gamma_ncdm = np.sqrt(alpha_ncdm)
+        self.gamma_ncdm = self._np.sqrt(alpha_ncdm)
         self.beta_c = 1 / (1 - 0.949 * frac_bncdm)
 
 
@@ -94,8 +97,8 @@ class Transfer(BaseSection):
         -------
         transfer : array
         """
-        z = np.asarray(z)
-        k = np.asarray(k) * self._engine['h']  # now in 1/Mpc
+        z = self._np.asarray(z)
+        k = self._np.asarray(k) * self._engine['h']  # now in 1/Mpc
         if grid:
             toret_shape = k.shape + z.shape
             k = k.reshape(k.shape + (1,) * z.ndim)
@@ -125,13 +128,13 @@ class Transfer(BaseSection):
         q_eff = q * self._engine.omega_m / gamma_eff
 
         # EH eq. 18
-        T_sup_L = np.log(np.e + 1.84 * self._engine.beta_c * self._engine.gamma_ncdm * q_eff)
+        T_sup_L = self._np.log(np.e + 1.84 * self._engine.beta_c * self._engine.gamma_ncdm * q_eff)
         T_sup_C = 14.4 + 325. / (1 + 60.5 * q_eff ** 1.08)
         T_sup = T_sup_L / (T_sup_L + T_sup_C * q_eff ** 2)
 
         # EH eq. 22 - 23
         if self._engine.N_ncdm:
-            q_ncdm = 3.92 * q * np.sqrt(self._engine.N_ncdm / self._engine.frac_ncdm)
+            q_ncdm = 3.92 * q * self._np.sqrt(self._engine.N_ncdm / self._engine.frac_ncdm)
             max_fs_correction = 1 + 1.24 * self._engine.frac_ncdm ** 0.64 * self._engine.N_ncdm ** (0.3 + 0.6 * self._engine.frac_ncdm)\
                                 / (q_ncdm ** (-1.6) + q_ncdm ** 0.8)
             T_sup *= max_fs_correction

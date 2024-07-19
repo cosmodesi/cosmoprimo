@@ -13,7 +13,7 @@ class ClassEngine(BaseEngine):
     name = 'class'
 
     def __init__(self, *args, **kwargs):
-        super(ClassEngine, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         params = self._params.copy()
         extra_params = self._extra_params.copy()
         params = {**extra_params, **params}

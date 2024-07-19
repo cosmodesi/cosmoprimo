@@ -53,7 +53,7 @@ def is_sequence(item):
     return isinstance(item, (tuple, list))
 
 
-def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
+def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e-7, out='rho'):
     r"""
     Return momenta of non-CDM components (massive neutrinos)
     by integrating over the phase-space distribution (frozen since CMB).
@@ -66,7 +66,7 @@ def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
     m : float
         Mass in :math:`\mathrm{eV}`.
 
-    z : float, default=0
+    z : float, array
         Redshift.
 
     epsrel : float, default=1e-7
@@ -79,49 +79,74 @@ def _compute_ncdm_momenta(T_eff, m, z=0, epsrel=1e-7, out='rho'):
 
     Returns
     -------
-    out : float
-        Required momentum, in units of :math:`10^{10} M_{\odot} / \mathrm{Mpc}^{3}` (/ :math:`\mathrm{eV}` if ``out`` is 'drhodm')
+    out : float, array
+        For each input redshift, required momentum, in units of :math:`10^{10} M_{\odot} / \mathrm{Mpc}^{3}` (/ :math:`\mathrm{eV}` if ``out`` is 'drhodm')
     """
-    from .emulators.tools.jax import numpy as jnp
-    from .emulators.tools.jax import use_jax
+    from .jax import numpy as jnp
+    #from .jax import use_jax
 
-    # Upper bound of 100 enough (10^⁻16 error)
-    limits = (0., 100.)
-
-    if use_jax(T_eff, m, z):
-        from quadax import quadgk
-        quad = lambda fun: quadgk(fun, limits, epsrel=epsrel)[0]
-    else:
-        jnp = np
-        from scipy import integrate
-        quad = lambda fun: integrate.quad(fun, *limits, epsrel=epsrel)[0]
-
+    z = jnp.asarray(z)
+    shape = z.shape
+    z = z.ravel()
     a = 1. / (1. + z)
-    over_T = constants.electronvolt / (constants.Boltzmann * (T_eff / a))
+    over_T = constants.electronvolt_over_joule / (constants.Boltzmann * (T_eff / a))
     m2_over_T2 = (m * over_T) ** 2
     m_over_T2 = m * over_T ** 2
 
-    if out == 'rho':
-        def phase_space_integrand(q):
-            return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
-    elif out == 'drhodm':
-        def phase_space_integrand(q):
-            return m_over_T2 * q**2 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
-    elif out == 'p':
-        def phase_space_integrand(q):
-            return 1. / 3. * q**4 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
+    if method == 'quad':
+        # Upper bound of 100 enough (10^⁻16 error)
+        limits = (0., 100.)
+
+        if out == 'rho':
+            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
+                return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
+        elif out == 'drhodm':
+            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
+                return m_over_T2 * q**2 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
+        elif out == 'p':
+            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
+                return 1. / 3. * q**4 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
+        else:
+            raise ValueError('Cannot compute ncdm momenta {}; choices are ["rho", "drhodm", "p"]', out)
+
+        #if use_jax(T_eff, m, z):
+        #    from quadax import quadgk
+        #    quad = lambda fun, args: quadgk(fun, limits, args=args, epsabs=epsabs, epsrel=epsrel)[0]
+        #else:
+        #    jnp = np
+        from scipy import integrate
+        quad = lambda fun, args: integrate.quad(fun, *limits, args=args, epsabs=epsabs, epsrel=epsrel)[0]
+        toret = jnp.array([quad(phase_space_integrand, (m_over_T2[iz], m2_over_T2[iz])) for iz in range(len(z))])
+
     else:
-        raise ValueError('Cannot compute ncdm momenta {}; choices are ["rho", "drhodm", "p"]', out)
-    # upper bound of 100 enough (10^⁻16 error)
-    toret = quad(phase_space_integrand) / (7. * np.pi**4 / 120.)
-    return 7. / 8. * 4 / constants.c**3 * constants.Stefan_Boltzmann * (T_eff / a)**4 * toret / (1e10 * constants.msun) * constants.megaparsec**3
+
+        if out == 'rho':
+            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
+                return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(-q))
+        elif out == 'drhodm':
+            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
+                return m_over_T2 * q**2 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(-q))
+        elif out == 'p':
+            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
+                return 1. / 3. * q**4 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(-q))
+        else:
+            raise ValueError('Cannot compute ncdm momenta {}; choices are ["rho", "drhodm", "p"]', out)
+
+        # With Laguerre, \int e^{-x} f(x) = \sum f(ti) wi
+        # Accuracy ~1e-12
+        ti, wi = np.polynomial.laguerre.laggauss(100)[:2]
+        toret = jnp.sum(phase_space_integrand(ti,  m_over_T2[:, None], m2_over_T2[:, None]) * wi, axis=-1)
+
+    toret = 7. / 8. * 4 / constants.c**3 * constants.Stefan_Boltzmann * (T_eff / a)**4 * toret / (7. * np.pi**4 / 120.) / (1e10 * constants.msun_over_kg) * constants.megaparsec_over_m**3
+    if not shape: toret = toret[0]
+    return toret.reshape(shape)
 
 
-def _compute_rs_cosmomc(omega_b, omega_m, hubble_function):
+def _compute_rs_cosmomc(omega_b, omega_m, hubble_function, epsabs=1e-7, epsrel=1e-7):
 
     """Return sound horizon in proper Mpc, and redshift of the last scattering surface in the CosmoMC approximation."""
 
-    from .emulators.tools.jax import use_jax
+    from .jax import romberg
 
     zstar = 1048 * (1 + 0.00124 * omega_b**(-0.738))\
             * (1 + (0.0783 * omega_b**(-0.238) / (1 + 39.5 * omega_b**0.763))\
@@ -140,18 +165,8 @@ def _compute_rs_cosmomc(omega_b, omega_m, hubble_function):
         cs = (3 * (1 + R))**(-0.5)
         return dtauda(a) * cs
 
-    # Upper bound of 100 enough (10^⁻16 error)
     limits = (astart, astar)
-
-    if use_jax(omega_b, omega_m):
-        from quadax import romberg
-        romberg = lambda fun: romberg(fun, limits, epsabs=atol, epsrel=atol)[0]
-    else:
-        jnp = np
-        from scipy import integrate
-        romberg = lambda fun: integrate.romberg(fun, *limits, tol=atol, rtol=atol, vec_func=True)
-
-    return romberg(dsoundda_approx), zstar
+    return romberg(dsoundda_approx, *limits, epsabs=epsabs, epsrel=epsrel), zstar
 
 
 class BaseCosmology(BaseClass):
@@ -180,7 +195,7 @@ class BaseCosmology(BaseClass):
         self._extra_params = dict(extra_params or {})
 
     def _set_jax(self):
-        from .emulators.tools.jax import use_jax
+        from .jax import use_jax
         self._use_jax = use_jax(*self._params.values())
         if self._use_jax:
             from jax import numpy as np
@@ -295,26 +310,26 @@ class BaseCosmology(BaseClass):
             #     return constants.rho_crit_Msunph_per_Mpcph3
             if name == 'Omega_g':
                 rho = params['T_cmb']**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
-                return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3)
+                return rho / (self.get('h')**2 * constants.rho_crit_over_kgph_per_mph3)
             if name == 'T_ur':
                 return params['T_cmb'] * (4. / 11.)**(1. / 3.)
             if name == 'T_ncdm':
                 return self._np.array(params['T_ncdm_over_cmb']) * params['T_cmb']
             if name == 'Omega_ur':
                 rho = params['N_ur'] * 7. / 8. * self.get('T_ur')**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
-                return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3)
+                return rho / (self.get('h')**2 * constants.rho_crit_over_kgph_per_mph3)
             if name == 'Omega_r':
                 rho = (params['T_cmb']**4 + params['N_ur'] * 7. / 8. * self.get('T_ur')**4) * 4. / constants.c**3 * constants.Stefan_Boltzmann
-                return rho / (self.get('h')**2 * constants.rho_crit_kgph_per_mph3) + self.get('Omega_pncdm_tot')
+                return rho / (self.get('h')**2 * constants.rho_crit_over_kgph_per_mph3) + self.get('Omega_pncdm_tot')
             if name == 'm_ncdm_tot':
                 return sum(params['m_ncdm'])
             if name == 'Omega_ncdm':
-                derived['Omega_ncdm'] = self._np.array(self._get_rho_ncdm(z=0)) / constants.rho_crit_Msunph_per_Mpcph3
+                derived['Omega_ncdm'] = self._np.array(self._get_rho_ncdm(z=0)) / constants.rho_crit_over_Msunph_per_Mpcph3
                 return derived['Omega_ncdm']
             if name == 'Omega_ncdm_tot':
                 return sum(self.get('Omega_ncdm'))
             if name == 'Omega_pncdm':
-                derived['Omega_pncdm'] = 3. * self._np.array(self._get_p_ncdm(z=0)) / constants.rho_crit_Msunph_per_Mpcph3
+                derived['Omega_pncdm'] = 3. * self._np.array(self._get_p_ncdm(z=0)) / constants.rho_crit_over_Msunph_per_Mpcph3
                 return derived['Omega_pncdm']
             if name == 'Omega_pncdm_tot':
                 return sum(self.get('Omega_pncdm'))
@@ -368,7 +383,7 @@ class BaseCosmology(BaseClass):
 
         Parameters
         ----------
-        z : float, default=0
+        z : float, array, default=0
             Redshift.
 
         epsrel : float, default=1e-7
@@ -399,7 +414,7 @@ class BaseCosmology(BaseClass):
 
         Parameters
         ----------
-        z : float, default=0
+        z : float, array, default=0.
             Redshift.
 
         epsrel : float, default=1e-7
@@ -588,6 +603,8 @@ def _get_cosmology_engine(cosmology, engine=None, set_engine=True, **extra_param
         engine = get_engine(engine)(**cosmology._params, extra_params=extra_params)
     if set_engine:
         cosmology._engine = engine
+    engine._np = cosmology._np
+    engine._use_jax = cosmology._use_jax
     return engine
 
 
@@ -769,31 +786,16 @@ class Cosmology(BaseCosmology):
         params = {}
         params.update(args)
 
-        from .emulators.tools.jax import use_jax
+        from .jax import use_jax
 
         if use_jax(*params.values()):
-            import jax
             from jax import numpy as jnp
-            from .emulators.tools.jax import array_types as jax_array_types
-            while_loop = jax.lax.while_loop
-            cond = jax.lax.cond
-            exception = jax.debug.callback
+            from .jax import array_types as jax_array_types
+            from .jax import for_cond_loop, cond, exception
         else:
-            def while_loop(cond_fun, body_fun, init_val):
-                val = init_val
-                while cond_fun(val):
-                    val = body_fun(val)
-                return val
-
-            def cond(pred, true_fun, false_fun, *operands):
-                if pred:
-                    return true_fun(*operands)
-                else:
-                    return false_fun(*operands)
-
-            def exception(fun, *args):
-                return fun(*args)
-
+            from .jax import for_cond_loop_numpy as for_cond_loop
+            from .jax import cond_numpy as cond
+            from .jax import exception_numpy as exception
             jnp = np
             jax_array_types = ()
 
@@ -840,7 +842,7 @@ class Cosmology(BaseCosmology):
             params['A_s'] = jnp.exp(params.pop('logA')) * 10**(-10)
 
         if 'Omega_g' in params:
-            params['T_cmb'] = (params.pop('Omega_g') * h**2 * constants.rho_crit_kgph_per_mph3 / (4. / constants.c**3 * constants.Stefan_Boltzmann))**(0.25)
+            params['T_cmb'] = (params.pop('Omega_g') * h**2 * constants.rho_crit_over_kgph_per_mph3 / (4. / constants.c**3 * constants.Stefan_Boltzmann))**(0.25)
 
         def _make_list(li, name):
             if isinstance(li, (tuple, list, np.ndarray) + jax_array_types):
@@ -875,20 +877,20 @@ class Cosmology(BaseCosmology):
 
                 def solve_newton(omega_ncdm, m, T_eff):
                     # m is a starting guess
-                    omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
+                    omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
 
                     def body_fun(args):
                         m, omega_check = args
-                        domegadm = _compute_ncdm_momenta(T_eff, m, z=0, out='drhodm') / constants.rho_crit_Msunph_per_Mpcph3
+                        domegadm = _compute_ncdm_momenta(T_eff, m, z=0, out='drhodm') / constants.rho_crit_over_Msunph_per_Mpcph3
                         m = m + (omega_ncdm - omega_check) / domegadm
-                        omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
+                        omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
                         return m, omega_check
 
                     def cond_fun(args):
                         m, omega_check = args
                         return jnp.abs(omega_ncdm - omega_check) > 1e-15
 
-                    m, omega_check = while_loop(cond_fun, body_fun, (m, omega_check))
+                    m, omega_check = for_cond_loop(0, 1000, cond_fun, body_fun, (m, omega_check))
 
                     return m
 
@@ -941,7 +943,7 @@ class Cosmology(BaseCosmology):
 
                     # This is the Newton's method, solving s = m1 + m2 + m3,
                     # with dm2/dm1 = dsqrt(deltam21^2 + m1^2) / dm1 = m1/m2, similarly for m3
-                    def body_fun(args):
+                    def body_fun(i, args):
                         m_ncdm, sum_check = args
                         dsdm1 = 1. + m_ncdm[0] / m_ncdm[1] + m_ncdm[0] / m_ncdm[2]
                         m_ncdm[0] = m_ncdm[0] + (sum_ncdm - sum_check) / dsdm1
@@ -949,12 +951,12 @@ class Cosmology(BaseCosmology):
                         m_ncdm[2] = jnp.sqrt(m_ncdm[0]**2 + deltam31sq)
                         return m_ncdm, sum(m_ncdm)
 
-                    def cond_fun(args):
+                    def cond_fun(i, args):
                         m_ncdm, sum_check = args
                         return jnp.abs(sum_ncdm - sum_check) > 1e-15
 
                     # m_ncdm is a starting guess
-                    m_ncdm, sum_check = while_loop(cond_fun, body_fun, (m_ncdm, sum(m_ncdm)))
+                    m_ncdm, sum_check = for_cond_loop(0, 1000, cond_fun, body_fun, (m_ncdm, sum(m_ncdm)))
 
                     return m_ncdm
 
@@ -998,7 +1000,7 @@ class Cosmology(BaseCosmology):
         if 'Omega_ur' in params:
             T_ur = params['T_cmb'] * (4. / 11.)**(1. / 3.)
             rho = 7. / 8. * 4. / constants.c**3 * constants.Stefan_Boltzmann * T_ur**4  # density, kg/m^3
-            N_ur = params.pop('Omega_ur') / (rho / (h**2 * constants.rho_crit_kgph_per_mph3))
+            N_ur = params.pop('Omega_ur') / (rho / (h**2 * constants.rho_crit_over_kgph_per_mph3))
 
         m_ncdm = _make_float(m_ncdm)
         T_ncdm_over_cmb = _make_float(T_ncdm_over_cmb)
@@ -1020,7 +1022,7 @@ class Cosmology(BaseCosmology):
             # so N_ur = N_eff - 3 * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
             # z = 1e10
             # pncdm = sum(_compute_ncdm_momenta(params['T_cmb'] * T, m, z=z, out='p') for T, m in zip(T_ncdm_over_cmb, m_ncdm))
-            # rho_g = params['T_cmb']**4 * (1. + z)**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann * constants.megaparsec**3 / (1e10 * constants.msun)
+            # rho_g = params['T_cmb']**4 * (1. + z)**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann * constants.megaparsec_over_m**3 / (1e10 * constants.msun_over_kg)
             # N_ur = N_eff - 3. * pncdm / rho_g / (7. / 8. * (4. / 11.)**(4. / 3.))
         #if N_ur < 0.:  # camb can handle it, so remove for now
         #    raise ValueError('N_ur and m_ncdm must result in a number of relativistic neutrino species greater than or equal to zero.')
@@ -1044,7 +1046,7 @@ class Cosmology(BaseCosmology):
             params['z_pk'] = np.insert(params['z_pk'], 0, 0.)  # in order to normalise CAMB power spectrum with sigma8
 
         if 'Omega_m' in params:
-            nonrelativistic_ncdm = (sum(BaseEngine._get_rho_ncdm(params, z=0)) - 3 * sum(BaseEngine._get_p_ncdm(params, z=0))) / constants.rho_crit_Msunph_per_Mpcph3
+            nonrelativistic_ncdm = (sum(BaseEngine._get_rho_ncdm(params, z=0)) - 3 * sum(BaseEngine._get_p_ncdm(params, z=0))) / constants.rho_crit_over_Msunph_per_Mpcph3
             params['Omega_cdm'] = params.pop('Omega_m') - params['Omega_b'] - nonrelativistic_ncdm
 
         defaults = {'w0_fld': -1., 'wa_fld': 0., 'cs2_fld': 1.}
@@ -1105,8 +1107,6 @@ class Cosmology(BaseCosmology):
             Extra engine parameters, typically precision parameters.
         """
         self._engine = _get_cosmology_engine(self, engine, set_engine=set_engine, **extra_params)
-        for name in ['_use_jax', '_np']:
-            setattr(self._engine, name, getattr(self, name))
 
     def clone(self, base='input', engine=None, extra_params=None, **params):
         r"""
@@ -1307,6 +1307,7 @@ class BaseSection(object):
 
     def __init__(self, engine):
         self._engine = engine
+        self._np = engine._np
 
 
 def _make_section_getter(section):
@@ -1417,8 +1418,7 @@ class BaseBackground(BaseSection):
     """Base background engine, including a few definitions."""
 
     def __init__(self, engine):
-        self._engine = engine
-        self._np = self._engine._np
+        super().__init__(engine)
         for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'w0_fld', 'wa_fld', 'cs2_fld', 'K']:
             setattr(self, '_{}'.format(name), self._engine[name])
         self._T0_cmb = self._engine['T_cmb']
@@ -1439,7 +1439,7 @@ class BaseBackground(BaseSection):
             species = list(range(self.N_ncdm))
 
         def compute(z, species):
-            return self._np.array([self._engine._get_rho_ncdm(z=zz, species=species) for zz in z])
+            return self._np.array(self._engine._get_rho_ncdm(z=z, species=species))
 
         if is_sequence(species):
             return self._np.array([compute(z, species=s) for s in species]).reshape(len(species), len(z))
@@ -1461,7 +1461,7 @@ class BaseBackground(BaseSection):
             species = list(range(self.N_ncdm))
 
         def compute(z, species):
-            return self._np.array([self._engine._get_p_ncdm(z=zz, species=species) for zz in z])
+            return self._np.array(self._engine._get_p_ncdm(z=z, species=species))
 
         if is_sequence(species):
             return self._np.array([compute(z, species=s) for s in species]).reshape(len(species), len(z))
@@ -1475,17 +1475,17 @@ class BaseBackground(BaseSection):
     @utils.flatarray()
     def rho_g(self, z):
         r"""Comoving density of photons :math:`\rho_{g}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self.Omega0_g * (1 + z) * constants.rho_crit_Msunph_per_Mpcph3
+        return self.Omega0_g * (1 + z) * constants.rho_crit_over_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_b(self, z):
         r"""Comoving density of baryons :math:`\rho_{b}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self.Omega0_b * self._np.ones_like(z) * constants.rho_crit_Msunph_per_Mpcph3
+        return self.Omega0_b * self._np.ones_like(z) * constants.rho_crit_over_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_ur(self, z):
         r"""Comoving density of massless neutrinos :math:`\rho_{ur}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self.Omega0_ur * (1 + z) * constants.rho_crit_Msunph_per_Mpcph3
+        return self.Omega0_ur * (1 + z) * constants.rho_crit_over_Msunph_per_Mpcph3
 
     def rho_r(self, z):
         r"""Comoving density of radiation :math:`\rho_{r}`, including photons and relativistic part of massive and massless neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
@@ -1494,7 +1494,7 @@ class BaseBackground(BaseSection):
     @utils.flatarray()
     def rho_cdm(self, z):
         r"""Comoving density of cold dark matter :math:`\rho_{cdm}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self.Omega0_cdm * self._np.ones_like(z) * constants.rho_crit_Msunph_per_Mpcph3
+        return self.Omega0_cdm * self._np.ones_like(z) * constants.rho_crit_over_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_m(self, z):
@@ -1504,18 +1504,18 @@ class BaseBackground(BaseSection):
     @utils.flatarray()
     def rho_k(self, z):
         r"""Comoving density of curvature :math:`\rho_{k}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self.Omega0_k / (1 + z) * constants.rho_crit_Msunph_per_Mpcph3
+        return self.Omega0_k / (1 + z) * constants.rho_crit_over_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_Lambda(self, z):
         r"""Comoving density of cosmological constant :math:`\rho_{\Lambda}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self.Omega0_Lambda / (1 + z)**3 * constants.rho_crit_Msunph_per_Mpcph3
+        return self.Omega0_Lambda / (1 + z)**3 * constants.rho_crit_over_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_fld(self, z):
         r"""Comoving density of dark energy fluid :math:`\rho_{\mathrm{fld}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        # return self.Omega0_fld * (1 + z) ** (3. * (1 + self.w0_fld + self.wa_fld)) * np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_Msunph_per_Mpcph3 / (1 + z)**3
-        return self.Omega0_fld * (1 + z) ** (3. * (self.w0_fld + self.wa_fld)) * self._np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_Msunph_per_Mpcph3
+        # return self.Omega0_fld * (1 + z) ** (3. * (1 + self.w0_fld + self.wa_fld)) * np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3 / (1 + z)**3
+        return self.Omega0_fld * (1 + z) ** (3. * (self.w0_fld + self.wa_fld)) * self._np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_de(self, z):
@@ -1546,7 +1546,7 @@ class BaseBackground(BaseSection):
     @utils.flatarray()
     def efunc(self, z):
         r"""Function giving :math:`E(z)`, where the Hubble parameter is defined as :math:`H(z) = H_{0} E(z)`, unitless."""
-        return self._np.sqrt(self.rho_crit(z) * (1 + z)**3 / constants.rho_crit_Msunph_per_Mpcph3)
+        return self._np.sqrt(self.rho_crit(z) * (1 + z)**3 / constants.rho_crit_over_Msunph_per_Mpcph3)
 
     @utils.flatarray()
     def hubble_function(self, z):
@@ -1646,3 +1646,134 @@ class BaseBackground(BaseSection):
     def Omega_de(self, z):
         r"""Density of total dark energy (fluid + cosmological constant), unitless."""
         return self.rho_de(z) / self.rho_crit(z)
+
+    @utils.flatarray()
+    def time(self, z):
+        r"""Proper time (age of universe), in :math:`\mathrm{Gy}`."""
+        def integrand(y, z):
+            return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
+
+        from .jax import odeint
+        z = self._np.append(z, 1e10)
+        tmp = odeint(integrand, 0., z)
+        return (tmp[0] - tmp[:-1]) * self.h / constants.gigayear_over_megaparsec
+
+    @utils.flatarray()
+    def comoving_radial_distance(self, z):
+        r"""
+        Comoving radial distance, in :math:`mathrm{Mpc}/h`.
+
+        See eq. 15 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_C(z)`.
+        """
+        def integrand(y, z):
+            return constants.c / 1e3 / (100. * self.efunc(z))
+
+        from .jax import odeint
+        return odeint(integrand, 0., z)
+
+    @utils.flatarray()
+    def angular_diameter_distance(self, z):
+        r"""
+        Proper angular diameter distance, in :math:`\mathrm{Mpc}/h`.
+
+        See eq. 18 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{A}(z)`.
+        """
+        from .jax import select, switch
+        K = self.K  # in (h/Mpc)^2
+        index = select(K == 0, 0, select(K > 0, 1, 2))
+        def flat(chi): return chi
+        def close(chi): return self._np.sin(self._np.sqrt(K) * chi) / self._np.sqrt(K)
+        def open(chi): return self._np.sinh(self._np.sqrt(-K) * chi) / self._np.sqrt(-K)
+        return switch(index, [flat, close, open], self.comoving_radial_distance(z)) / (1 + z)
+
+    @utils.flatarray(iargs=[0, 1])
+    def angular_diameter_distance_2(self, z1, z2):
+        r"""
+        Angular diameter distance of object at :math:`z_{2}` as seen by observer at :math:`z_{1}`,
+        that is, :math:`S_{K}((\chi(z_{2}) - \chi(z_{1})) \sqrt{|K|}) / \sqrt{|K|} / (1 + z_{2})`,
+        where :math:`S_{K}` is the identity if :math:`K = 0`, :math:`\sin` if :math:`K < 0`
+        and :math:`\sinh` if :math:`K > 0`.
+        camb's ``angular_diameter_distance2(z1, z2)`` is not used as it returns 0 when z2 < z1.
+        """
+        from .jax import select, switch, exception
+
+        def warn(z1, z2):
+            if np.any(z2 < z1):
+                import warnings
+                warnings.warn(f"Second redshift(s) z2 ({z2}) is less than first redshift(s) z1 ({z1}).")
+
+        exception(warn, z1, z2)
+        K = self.K  # in (h/Mpc)^2
+        index = select(K == 0, 0, select(K > 0, 1, 2))
+        def flat(chi): return chi
+        def close(chi): return self._np.sin(self._np.sqrt(K) * chi) / self._np.sqrt(K)
+        def open(chi): return self._np.sinh(self._np.sqrt(-K) * chi) / self._np.sqrt(-K)
+        return switch(index, [flat, close, open], self.comoving_radial_distance(z2) - self.comoving_radial_distance(z1)) / (1 + z2)
+
+    @utils.flatarray()
+    def comoving_angular_distance(self, z):
+        r"""
+        Comoving angular distance, in :math:`\mathrm{Mpc}/h`.
+
+        See eq. 16 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{M}(z)`.
+        """
+        return self.angular_diameter_distance(z) * (1. + z)
+
+    @utils.flatarray()
+    def luminosity_distance(self, z):
+        r"""
+        Luminosity distance, in :math:`\mathrm{Mpc}/h`.
+
+        See eq. 21 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{L}(z)`.
+        """
+        return self.angular_diameter_distance(z) * (1. + z)**2
+
+
+class DefaultBackground(BaseBackground):
+
+    def __init__(self, engine):
+        super().__init__(engine)
+        self._cache = {'z': 1. / np.logspace(-3, 0., 256)[::-1] - 1.}
+
+
+import functools
+from .jax import Interpolator1D
+
+
+def _cache(func):
+
+    name = func.__name__
+    @functools.wraps(func)
+    def wrapper(self, z):
+        zc = self._cache['z']
+        if name not in self._cache:
+            self._cache[name] = Interpolator1D(zc, func(zc))
+        return self._cache[name](z)
+
+    return wrapper
+
+
+def _cache_with_species(func):
+
+    name = func.__name__
+    @functools.wraps(func)
+    def wrapper(self, z, species=None):
+        zc = self._cache['z']
+        if name not in self._cache:
+            self._cache[name] = Interpolator1D(zc, func(zc).T)  # interpolation along axis = 0
+        if species is None:
+            species = list(range(self.N_ncdm))
+
+        return self._cache[name](z).T[species]
+
+    return wrapper
+
+
+for name in ['time', 'comoving_radial_distance']:
+
+    setattr(DefaultBackground, name, _cache(getattr(BaseBackground, name)))
+
+
+for name in ['rho_ncdm', 'p_ncdm']:
+
+    setattr(DefaultBackground, name, _cache_with_species(getattr(BaseBackground, name)))

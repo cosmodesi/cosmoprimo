@@ -56,7 +56,9 @@ def addproperty(*attrs):
 
 def _bcast_dtype(*args):
     r"""If input arrays are all float32, return float32; else float64."""
-    toret = np.result_type(*(getattr(arg, 'dtype', None) for arg in args))
+    tmp = [arg.dtype for arg in args if hasattr(arg, 'dtype')]
+    if not tmp: tmp.append(np.float64)
+    toret = np.result_type(*tmp)
     if not np.issubdtype(toret, np.floating):
         toret = np.float64
     return toret
@@ -106,6 +108,9 @@ def flatarray(iargs=[0], dtype=np.float64):
     return make_wrapper
 
 
+from .jax import numpy_jax, Interpolator1D, exception
+
+
 class LeastSquareSolver(BaseClass):
     r"""
     Class that solves the least square problem, i.e. solves :math:`d\chi^{2}/d\mathbf{p} = 0` for :math:`\mathbf{p}`, with:
@@ -149,14 +154,15 @@ class LeastSquareSolver(BaseClass):
             Else, ``np.linalg.solve`` is used to solve the system at each call, which may be numerically more stable
             than computing the inverse.
         """
-        # gradient shape = (nparams,ndata)
-        self.gradient = np.atleast_1d(gradient)
+        # gradient shape = (nparams, ndata)
+        jnp = numpy_jax(gradient)
+        self.gradient = jnp.atleast_1d(gradient)
         self.isscalar = self.gradient.ndim == 1
         if self.isscalar:
             self.gradient = self.gradient[None, :]
         elif self.gradient.ndim != 2:
             raise ValueError('gradient must be at most 2D')
-        self.precision = np.asarray(precision)
+        self.precision = jnp.asarray(precision)
         if self.precision.ndim == 1:
             hv = self.gradient * self.precision
         else:
@@ -165,40 +171,45 @@ class LeastSquareSolver(BaseClass):
         if constraint_gradient is None:
             self.nconstraints = 0
         else:
-            constraint_gradient = np.atleast_2d(constraint_gradient)
+            constraint_gradient = jnp.atleast_2d(constraint_gradient)
             self.nconstraints = constraint_gradient.shape[-1]
             if constraint_gradient.ndim != 2 or constraint_gradient.shape[0] != self.gradient.shape[0]:
                 raise ValueError('constraint_gradient must be 2D, of first dimension the number of model parameters (gradient first dimension)')
             dtype = constraint_gradient.dtype
             # Possible improvement: block-inverse
-            invfisher = np.bmat([[invfisher, - constraint_gradient],
-                                 [constraint_gradient.T, np.zeros((self.nconstraints,) * 2, dtype=dtype)]]).A
-            hv = np.bmat([[hv, np.zeros(constraint_gradient.shape, dtype=dtype)],
-                          [np.zeros((self.nconstraints, self.gradient.shape[-1]), dtype=dtype), np.eye(self.nconstraints, dtype=dtype)]]).A
+            invfisher = jnp.bmat([[invfisher, - constraint_gradient],
+                                  [constraint_gradient.T, np.zeros((self.nconstraints,) * 2, dtype=dtype)]]).A
+            hv = jnp.bmat([[hv, jnp.zeros(constraint_gradient.shape, dtype=dtype)],
+                           [jnp.zeros((self.nconstraints, self.gradient.shape[-1]), dtype=dtype), jnp.eye(self.nconstraints, dtype=dtype)]]).A
         self.inverse_fisher = invfisher
         self.gradient_precision = hv
 
         if compute_inverse:
-            fisher = np.linalg.inv(invfisher)
+            fisher = jnp.linalg.inv(invfisher)
 
             # Check inversion
             tmp = fisher.dot(invfisher)
-            ref = np.eye(tmp.shape[0], dtype=tmp.dtype)
-            if not np.allclose(tmp, ref, rtol=1e-04, atol=1e-04):
-                import warnings
-                warnings.warn('Numerically inaccurate inverse matrix, max absolute diff {:.6f}.'.format(np.max(np.abs(tmp - ref))))
+            ref = jnp.eye(tmp.shape[0], dtype=tmp.dtype)
+
+            def raise_error(tmp, ref):
+                if not jnp.allclose(tmp, ref, rtol=1e-04, atol=1e-04):
+                    import warnings
+                    warnings.warn('Numerically inaccurate inverse matrix, max absolute diff {:.6f}.'.format(jnp.max(jnp.abs(tmp - ref))))
+
+            exception(raise_error, tmp, ref)
 
             self.projector = fisher.dot(hv).T
 
     def compute(self, delta, constraint=None):
         """Solve least square problem for ``delta`` given :attr:`gradient`, :attr:`precision`."""
-        self.delta = delta = np.atleast_1d(delta)
+        jnp = numpy_jax(delta, self.gradient_precision)
+        self.delta = delta = jnp.atleast_1d(delta)
         if constraint is not None:
-            delta = np.concatenate([self.delta, np.atleast_1d(constraint)], axis=-1)
+            delta = jnp.concatenate([self.delta, jnp.atleast_1d(constraint)], axis=-1)
         if hasattr(self, 'projector'):
             params = delta.dot(self.projector)
         else:
-            params = np.linalg.solve(self.inverse_fisher, self.gradient_precision.dot(delta.T)).T
+            params = jnp.linalg.solve(self.inverse_fisher, self.gradient_precision.dot(delta.T)).T
         self.params = params[..., :self.gradient.shape[0]]
 
     def __call__(self, delta, constraint=None):
@@ -215,15 +226,15 @@ class LeastSquareSolver(BaseClass):
         r"""Return :math:`\chi^{2}` at :math:`\mathbf{p}`."""
         delta = self.delta - self.model()
         if self.precision.ndim == 1:
-            return np.sum((delta * self.precision) * delta, axis=-1)
-        return np.sum(delta.dot(self.precision) * delta, axis=-1)
+            return ((delta * self.precision) * delta).sum(axis=-1)
+        return (delta.dot(self.precision) * delta).sum(axis=-1)
 
 
 class DistanceToRedshift(BaseClass):
 
     """Class that holds a conversion distance -> redshift."""
 
-    def __init__(self, distance, zmax=100., nz=2048, interp_order=3):
+    def __init__(self, distance, zmax=100., nz=512, interp_order=3):
         """
         Initialize :class:`DistanceToRedshift`.
         Creates an array of redshift -> distance in log(redshift) and instantiates
@@ -237,19 +248,19 @@ class DistanceToRedshift(BaseClass):
         zmax : float, default=100.
             Maximum redshift for redshift <-> distance mapping.
 
-        nz : int, default=2048
+        nz : int, default=512
             Number of points for redshift <-> distance mapping.
 
         interp_order : int, default=3
             Interpolation order, e.g. 1 for linear interpolation, 3 for cubic splines.
         """
-        self.zgrid = np.insert(np.logspace(-8, np.log10(zmax), nz), 0, 0.)
+        self.zgrid = 1. / np.geomspace(1. / (1. + zmax), 1., nz)[::-1] - 1.
         self.rgrid = distance(self.zgrid)
-        self.interp = interpolate.UnivariateSpline(self.rgrid, self.zgrid, k=interp_order, s=0, ext='raise')
+        self._interp = Interpolator1D(self.rgrid, self.zgrid, k=interp_order)
 
-    def __call__(self, distance):
+    def __call__(self, distance, bounds_error=True):
         """Return (interpolated) redshift at distance ``distance`` (scalar or array)."""
-        return self.interp(distance)
+        return self._interp(distance, bounds_error=bounds_error)
 
 
 logger = logging.getLogger('Plotting')
