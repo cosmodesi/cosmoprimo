@@ -49,7 +49,7 @@ class FFTlog(object):
             Power-law tilt(s) to regularise integration.
 
         minfolds : int, default=2
-            The c is chosen with minimum :math:`n` chosen such that ``2**n > minfolds * x.size``.
+            Padded size is ``2**n``, with minimum :math:`n` statisfying ``2**n > minfolds * x.size``.
 
         lowring : bool, default=True
             If ``True`` set output coordinates according to the low-ringing condition, otherwise set it with ``xy``.

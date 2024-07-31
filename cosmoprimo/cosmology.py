@@ -6,6 +6,7 @@ import sys
 import numpy as np
 
 from .utils import BaseClass
+from .jax import numpy_jax
 from . import utils, constants
 
 
@@ -82,8 +83,7 @@ def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e
     out : float, array
         For each input redshift, required momentum, in units of :math:`10^{10} M_{\odot} / \mathrm{Mpc}^{3}` (/ :math:`\mathrm{eV}` if ``out`` is 'drhodm')
     """
-    from .jax import numpy as jnp
-    #from .jax import use_jax
+    jnp = numpy_jax(T_eff, m, z)
 
     z = jnp.asarray(z)
     shape = z.shape
@@ -879,14 +879,14 @@ class Cosmology(BaseCosmology):
                     # m is a starting guess
                     omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
 
-                    def body_fun(args):
+                    def body_fun(i, args):
                         m, omega_check = args
                         domegadm = _compute_ncdm_momenta(T_eff, m, z=0, out='drhodm') / constants.rho_crit_over_Msunph_per_Mpcph3
                         m = m + (omega_ncdm - omega_check) / domegadm
                         omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
                         return m, omega_check
 
-                    def cond_fun(args):
+                    def cond_fun(i, args):
                         m, omega_check = args
                         return jnp.abs(omega_ncdm - omega_check) > 1e-15
 

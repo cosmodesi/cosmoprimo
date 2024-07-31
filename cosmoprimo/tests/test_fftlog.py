@@ -170,7 +170,7 @@ def external_test_mcfit():
 
 def test_jax():
     from cosmoprimo import fftlog
-    jax = fftlog.jax
+    from cosmoprimo.jax import jax
     if jax is None:
         return
     print('With jax')

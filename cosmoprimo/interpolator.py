@@ -12,8 +12,7 @@ from scipy import integrate
 from .utils import BaseClass, _bcast_dtype
 from .fftlog import PowerToCorrelation, CorrelationToPower, TophatVariance
 from .jax import numpy as jnp
-from .jax import romberg
-from .jax import numpy_jax
+from .jax import romberg, simpson, opmask, _mask_bounds, numpy_jax
 
 
 def get_default_k_callable():
@@ -36,8 +35,12 @@ def get_default_z_callable():
     return np.linspace(0., 10.**0.5, 30)**2  # approximates default class z
 
 
-def _pad_log(k, pk, extrap_kmin=1e-7, extrap_kmax=1e2):
-    """
+_default_extrap_kmin = 1e-7
+_default_extrap_kmax = 1e2
+
+
+def _pad_log(k, pk, extrap_kmin=_default_extrap_kmin, extrap_kmax=_default_extrap_kmax):
+    f"""
     Pad ``pk`` and ``k`` in log10-log10-space between ``extrap_kmin`` and ``k[0]`` and ``k[-1]`` and ``extrap_kmax``.
 
     Parameters
@@ -48,10 +51,10 @@ def _pad_log(k, pk, extrap_kmin=1e-7, extrap_kmax=1e2):
     pk : array_like
         Power spectrum.
 
-    extrap_kmin : float, default=1e-7
+    extrap_kmin : float, default={_default_extrap_kmin}
         Minimum wavenumber of extrapolation range.
 
-    extrap_kmax : float, default=1e2
+    extrap_kmax : float, default={_default_extrap_kmax}
         Maximum wavenumber of extrapolation range.
 
     Returns
@@ -111,16 +114,25 @@ def _kernel_tophat_lowx(x2):
 
 def _kernel_tophat_highx(x):
     r"""Tophat function math:`W(x) = 3 (\sin(x)-x\cos(x))/x^{3}`."""
-    return 3. * (np.sin(x) - x * np.cos(x)) / x**3
+    jnp = numpy_jax(x)
+    return 3. * (jnp.sin(x) - x * jnp.cos(x)) / x**3
 
 
 def kernel_tophat2(x):
     """Non-vectorized tophat function."""
-    if x < 0.1: return _kernel_tophat_lowx(x**2)**2
+    jnp = numpy_jax(x)
+    x = jnp.array(x)
+    mask = x < 0.1
+    if x.size:
+        x = x.copy()
+        x = opmask(x, mask, _kernel_tophat_lowx(x[mask]**2)**2)
+        x = opmask(x, ~mask, _kernel_tophat_highx(x[~mask])**2)
+        return x
+    if mask: return _kernel_tophat_lowx(x**2)**2
     return _kernel_tophat_highx(x)**2
 
 
-def integrate_sigma_d2(pk, kmin=1e-7, kmax=1e2, method='leggauss', epsabs=1e-5, epsrel=1e-5, nk=None):
+def integrate_sigma_d2(pk, kmin=1e-7, kmax=1e2, method='simpson', epsabs=1e-5, epsrel=1e-5, nk=None):
     r"""
     Return the variance of the displacement field, i.e.:
 
@@ -148,7 +160,7 @@ def integrate_sigma_d2(pk, kmin=1e-7, kmax=1e2, method='leggauss', epsabs=1e-5, 
         r.m.s. of the displacement field.
 
     """
-    p = pk(kmin)
+    p = pk(float(kmin))
     pshape = p.shape
     jnp = numpy_jax(p)
 
@@ -159,9 +171,9 @@ def integrate_sigma_d2(pk, kmin=1e-7, kmax=1e2, method='leggauss', epsabs=1e-5, 
     def integrand(logk):
         k = jnp.exp(logk)
         p = pk(k).reshape(k.shape + (-1,))
-        return k * p  # extra k factor because log integration
+        return k[:, None] * p  # extra k factor because log integration
 
-    limits = (jnp.log(kmin), jnp.log(kmax))
+    limits = (jnp.log(kmin * (1. + 1e-9)), jnp.log(kmax * (1. - 1e-9)))  # to avoid nan's at the extremities (numerical inaccuracy)
 
     if method == 'quad':
         jnp = np
@@ -170,24 +182,30 @@ def integrate_sigma_d2(pk, kmin=1e-7, kmax=1e2, method='leggauss', epsabs=1e-5, 
             k = jnp.exp(logk)
             p = pk(k)
             if i is not None: p = p[:, i]
-            return (k * p)  # extra k factor because log integration
+            return k * p  # extra k factor because log integration
 
         if pshape:
             psize = pshape[0]
             tmp = [integrate.quad(integrand, *limits, args=(i,), epsabs=epsabs, epsrel=epsrel)[0] for i in range(psize)]
         else:
             tmp = integrate.quad(integrand, *limits, epsabs=epsabs, epsrel=epsrel)[0]
+
     elif method == 'romberg':
         tmp = romberg(integrand, *limits, epsabs=epsabs, epsrel=epsrel)
-    elif method == 'leggauss':
+    elif method == 'leggauss':  # not accurate
         if nk is None: nk = 100
         x, wx = np.polynomial.legendre.leggauss(nk)
-        logk = (limits[1] - limits[0]) * x + limits[0]
+        logk = (limits[1] - limits[0]) / 2. * (1. + x) + limits[0]
         y = integrand(logk)
-        w = (limits[1] - limits[0]) * wx
-        tmp = jnp.sum(y * w, axis=0)
+        w = (limits[1] - limits[0]) / 2. * wx
+        tmp = jnp.sum(y * w[:, None], axis=0)
+    elif method == 'simpson':  # accurate
+        if nk is None: nk = 1024
+        logk = jnp.linspace(*limits, nk)
+        y = integrand(logk)
+        tmp = simpson(y, x=logk, axis=0)
     tmp = jnp.asarray(tmp).reshape(pshape)
-    sigmad2 = 1. / 6. / jnp.pi**2 * tmp
+    sigmad2 = 1. / (6. * jnp.pi**2) * tmp
     return sigmad2.astype(dtype)
 
 
@@ -224,16 +242,16 @@ def integrate_sigma_r2(r, pk, kmin=1e-7, kmax=1e2, method='fftlog', epsabs=1e-5,
     sigmar2 : float
         Variance of perturbations.
     """
-    p = pk(kmin)
+    p = pk(float(kmin))
     pshape = p.shape
     jnp = numpy_jax(p)
 
     def integrand(logk):
         k = jnp.exp(logk)
-        p = pk(k).reshape(k.shape + (1, -1))
+        p = pk(k).reshape(k.shape + (-1,))
         # shape (k, r, z)
         # extra k factor because log integration
-        return kernel(k[:, None] * r) * (k[:, None, None]**3 * p)
+        return kernel(k[:, None] * r)[:, :, None] * (k[:, None]**3 * p)[:, None, :]
 
     dtype = _bcast_dtype(r, p if p.shape else None)
     r = jnp.array(r)
@@ -242,7 +260,7 @@ def integrate_sigma_r2(r, pk, kmin=1e-7, kmax=1e2, method='fftlog', epsabs=1e-5,
         return jnp.zeros(rshape + pshape, dtype=dtype)
     r = r.ravel()
 
-    limits = (jnp.log(kmin), jnp.log(kmax))
+    limits = (jnp.log(kmin * (1. + 1e-9)), jnp.log(kmax * (1. - 1e-9)))
 
     if method == 'quad':
         jnp = np
@@ -264,20 +282,25 @@ def integrate_sigma_r2(r, pk, kmin=1e-7, kmax=1e2, method='fftlog', epsabs=1e-5,
             tmp.append(tt)
     elif method == 'romberg':
         tmp = romberg(integrand, *limits, epsabs=epsabs, epsrel=epsrel)
-    elif method == 'leggauss':
+    elif method == 'leggauss':  # not accurate
         if nk is None: nk = 100
         x, wx = np.polynomial.legendre.leggauss(nk)
-        logk = (limits[1] - limits[0]) * x + limits[0]
+        logk = (limits[1] - limits[0])/ 2. * (1. + x) + limits[0]
         y = integrand(logk)
-        w = (limits[1] - limits[0]) * wx
+        w = (limits[1] - limits[0]) / 2. * wx
         tmp = jnp.sum(y * w[:, None, None], axis=0)
+    elif method == 'simpson':  # accurate
+        if nk is None: nk = 1024
+        logk = jnp.linspace(*limits, nk)
+        y = integrand(logk)
+        tmp = simpson(y, x=logk, axis=0)
     elif method == 'fftlog':
         if nk is None: nk = 1024
         k = jnp.geomspace(kmin, kmax, nk)
         s, var = TophatVariance(k)(pk(k).reshape(k.shape + (-1,)).T)
-        tmp = Interpolator1D(s, var.T)(r)
+        tmp = (2. * np.pi**2) * Interpolator1D(s, var.T)(r)
     tmp = jnp.asarray(tmp).reshape(rshape + pshape)
-    sigmar2 = 1. / 2. / np.pi**2 * tmp
+    sigmar2 = 1. / (2. * jnp.pi**2) * tmp
     return sigmar2.astype(dtype)
 
 
@@ -315,23 +338,31 @@ class _BasePowerSpectrumInterpolator(BaseClass):
 
     """Base class for power spectrum interpolators."""
 
-    def _prepare(self, k, pk, interp_k='log', extrap_pk='log', extrap_kmin=1e-7, extrap_kmax=1e2):
+    def _prepare(self, k, pk, z=None, interp_k='log', extrap_pk='log', extrap_kmin=_default_extrap_kmin, extrap_kmax=_default_extrap_kmax):
         self._np = numpy_jax(k, pk)
         self.k = self._np.asarray(k, dtype='f8').ravel()
         self._pk = self._np.asarray(pk, dtype='f8')
-        if self._pk.ndim > 1: self._pk = self._pk.reshape(self.k.shape + (-1,))
+        if self._pk.ndim > 1 or z is not None:
+            self._pk = self._pk.reshape(self.k.shape + (-1,))
+        ix = self._np.argsort(self.k)
+        self.k, self._pk = (xx[ix] for xx in (self.k, self._pk))
+        if z is not None:
+            self.z = self._np.asarray(z, dtype='f8').ravel()
+            ix = self._np.argsort(self.z)
+            self.z, self._pk = self.z[ix], self._pk[:, ix]
         self.interp_k = str(interp_k)
         self.extrap_pk = str(extrap_pk)
+        k, pk = self.k, self._pk
         if self.extrap_pk == 'log':
             if self.interp_k != 'log':
                 raise ValueError('log-log extrapolation requires log-x interpolation')
-            extrap_kmin = min(extrap_kmin, self.k[0]) # * (1 - 1e-9))
-            extrap_kmax = max(extrap_kmax, self.k[-1]) # * (1 + 1e-9))
-            k, pk = _pad_log(self.k, self._pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
-            self.k, self._pk = 10**k, 10**pk
-        self.extrap_kmin = self.k[0]
-        self.extrap_kmax = self.k[-1]
-
+            extrap_kmin = min(extrap_kmin, self.k[0] * (1 - 1e-9))
+            extrap_kmax = max(extrap_kmax, self.k[-1] * (1 + 1e-9))
+            k, pk = _pad_log(k, pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
+            k, pk = 10**k, 10**pk
+        self.extrap_kmin = k[0]
+        self.extrap_kmax = k[-1]
+        return k, pk
 
     def params(self):
         """Return interpolator parameter dictionary."""
@@ -342,6 +373,8 @@ class _BasePowerSpectrumInterpolator(BaseClass):
         state = self.params()
         for name in ['k', 'pk']:
             state[name] = getattr(self, name)
+        if hasattr(self, 'z'):
+            state['z'] = self.z
         return state
 
     def clone(self, **kwargs):
@@ -384,8 +417,8 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
     such as :meth:`sigma_r` or :meth:`to_xi`.
     """
 
-    def __init__(self, k, pk, interp_k='log', extrap_pk='log', extrap_kmin=1e-7, extrap_kmax=1e2, interp_order_k=3):
-        """
+    def __init__(self, k, pk, interp_k='log', extrap_pk='log', extrap_kmin=_default_extrap_kmin, extrap_kmax=_default_extrap_kmax, interp_order_k=3):
+        f"""
         Initialize :class:`PowerSpectrumInterpolator1D`.
 
         Parameters
@@ -402,19 +435,20 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         extrap_pk : string, default='log'
             If 'log' (and ``interp_k`` is 'log'), ``fun`` is log-log extrapolated up to ``extrap_kmin``, ``extrap_kmax``.
 
-        extrap_kmin : float, default=1e-7
+        extrap_kmin : float, default={_default_extrap_kmin}
             Minimum extrapolation range in ``k``.
 
-        extrap_kmax : float, default=1e2
+        extrap_kmax : float, default={_default_extrap_kmax}
             Maximum extrapolation range in ``k``.
 
         interp_order_k : int, default=3
             Interpolation order, i.e. degree of smoothing spline along ``k``.
         """
         self._rsigma8sq = 1.
-        self._prepare(k, pk, interp_k=interp_k, extrap_pk=extrap_pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
+        k, pk = self._prepare(k, pk, interp_k=interp_k, extrap_pk=extrap_pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
         self.interp_order_k = int(interp_order_k)
-        self._interp = Interpolator1D(self.k, self._pk, k=self.interp_order_k, interp_x=self.interp_k, interp_fun=self.extrap_pk)
+        _interp = Interpolator1D(k, pk, k=self.interp_order_k, interp_x=self.interp_k, interp_fun=self.extrap_pk, assume_sorted=True)
+        self._interp = _interp
         self.is_from_callable = False
 
     default_params = _get_default_kwargs(__init__, start=3)
@@ -427,7 +461,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         return self._pk * self._rsigma8sq
 
     @classmethod
-    def from_callable(cls, k=None, pk_callable=None):
+    def from_callable(cls, k=None, pk_callable=None, extrap_kmin=_default_extrap_kmin, extrap_kmax=_default_extrap_kmax):
         """
         Build :class:`PowerSpectrumInterpolator1D` from callable.
 
@@ -449,16 +483,23 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         self = cls.__new__(cls)
         self.__dict__.update(self.default_params)
         self._rsigma8sq = 1.
-        self._np = jnp
-        self.k = self._np.asarray(k, dtype='f8').ravel()
-        self.extrap_kmin, self.extrap_kmax = self.kmin, self.kmax
+        self.k = np.sort(np.asarray(k, dtype='f8').ravel())
+        self._np = numpy_jax(pk_callable(k[:1]))
+        self.extrap_kmin, self.extrap_kmax = min(extrap_kmin, self.k[0]), max(extrap_kmax, self.k[-1])
+        #self.extrap_kmin, self.extrap_kmax = self.kmin, self.kmax
         self.is_from_callable = True
 
-        def interp(k, **kwargs):
+        def interp(k, bounds_error=False, **kwargs):
             dtype = _bcast_dtype(k)
             k = self._np.asarray(k, dtype=dtype)
-            toret = pk_callable(k, **kwargs)
-            return toret.astype(dtype=dtype)
+            toret_shape = k.shape
+            k = k.ravel()
+            toret = self._np.full(k.size, self._np.nan, dtype=dtype)
+            if toret.size:
+                mask_k, = _mask_bounds([k], [(self.extrap_kmin, self.extrap_kmax)], bounds_error=bounds_error)
+                k = k[mask_k]
+                toret = opmask(toret, mask_k, pk_callable(k, **kwargs))
+            return toret.reshape(toret_shape)
 
         self._interp = interp
 
@@ -554,11 +595,11 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         -------
         xi : CorrelationFunctionInterpolator1D
         """
-        k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
-        s, xi = PowerToCorrelation(k, complex=False, **(fftlog_kwargs or {}))(self(k))
+        k = self._np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
+        s, xi = PowerToCorrelation(k, complex=False, **(fftlog_kwargs or {}))(self(k).T)
         default_params = dict(interp_s='log', interp_order_s=self.interp_order_k)
         default_params.update(kwargs)
-        return CorrelationFunctionInterpolator1D(s, xi=xi, **default_params)
+        return CorrelationFunctionInterpolator1D(s, xi=xi.T, **default_params)
 
 
 class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
@@ -568,9 +609,9 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     such as :meth:`sigma_rz` or :meth:`to_xi`.
     """
 
-    def __init__(self, k, z, pk, interp_k='log', extrap_pk='log', extrap_kmin=1e-7, extrap_kmax=1e2,
+    def __init__(self, k, z, pk, interp_k='log', extrap_pk='log', extrap_kmin=_default_extrap_kmin, extrap_kmax=_default_extrap_kmax,
                  interp_order_k=3, interp_order_z=3, growth_factor_sq=None):
-        r"""
+        rf"""
         Initialize :class:`PowerSpectrumInterpolator2D`.
 
         ``growth_factor_sq`` is a callable that can be prodided to rescale the output of the base spline interpolation.
@@ -595,10 +636,10 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         extrap_pk : string, default='log'
             If 'log' (and ``interp_k`` is 'log'), ``fun`` is log-log extrpolated up to ``extrap_kmin``, ``extrap_kmax``.
 
-        extrap_kmin : float, default=1e-7
+        extrap_kmin : float, default={_default_extrap_kmin}
             Minimum extrapolation range in ``k``.
 
-        extrap_kmax : float, default=1e2
+        extrap_kmax : float, default={_default_extrap_kmax}
             Maximum extrapolation range in ``k``.
 
         interp_order_k : int, default=3
@@ -615,22 +656,19 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         """
         self._rsigma8sq = 1.
         self.growth_factor_sq = growth_factor_sq
-        self._prepare(k, pk, interp_k=interp_k, extrap_pk=extrap_pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
-        self._pk = self._np.reshape(self._pk, (self._pk.shape[0], -1))
-        self.z = self._np.asarray(z, dtype='f8').ravel()
-
+        k, pk = self._prepare(k, pk, z=z, interp_k=interp_k, extrap_pk=extrap_pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
         self.interp_order_k, self.interp_order_z = int(interp_order_k), int(interp_order_z)
         is2d = self._pk.shape[1] > 1
         if is2d:
-            _interp = Interpolator2D(self.k, self.z, self._pk, kx=self.interp_order_k, ky=self.interp_order_z, interp_x=self.interp_k, interp_fun=self.extrap_pk)
+            _interp = Interpolator2D(k, self.z, pk, kx=self.interp_order_k, ky=self.interp_order_z, interp_x=self.interp_k, interp_fun=self.extrap_pk, assume_sorted=True)
         else:
             if self.growth_factor_sq is None:
                 raise ValueError('provide either 2D pk array or growth_factor_sq')
-            _interp = Interpolator1D(self.k, self._pk[:, 0], k=self.interp_order_k, interp_x=self.interp_k, interp_fun=self.extrap_pk)
+            _interp = Interpolator1D(k, pk[:, 0], k=self.interp_order_k, interp_x=self.interp_k, interp_fun=self.extrap_pk, assume_sorted=True)
 
         self.is_from_callable = False
 
-        def interp(k, z, ignore_growth=False, grid=True, **kwargs):
+        def interp(k, z, grid=True, ignore_growth=False, bounds_error=False, **kwargs):
             dtype = _bcast_dtype(k, z)
             k, z = (self._np.asarray(xx, dtype=dtype) for xx in (k, z))
             if grid:
@@ -638,25 +676,29 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             else:
                 toret_shape = k.shape
             k, z = (xx.ravel() for xx in (k, z))
-            if is2d:
-                toret = _interp(k, z, grid=grid, **kwargs)
-            else:
-                toret = _interp(k, **kwargs)
+            toret = self._np.full((k.size, z.size) if grid else (k.size,), self._np.nan, dtype=dtype)
+            if toret.size:
+                mask_k, mask_z = _mask_bounds([k, z], [(self.extrap_kmin, self.extrap_kmax), (self.zmin, self.zmax) if is2d else (-self._np.inf, self._np.inf)], bounds_error=bounds_error)
                 if grid:
-                    toret = self._np.repeat(toret[..., None], z.size, axis=-1)
-            if self.growth_factor_sq is not None and not ignore_growth:
-                toret = toret * self.growth_factor_sq(z)
-            return toret.reshape(toret_shape).astype(dtype=dtype)
+                    mask_k, mask_z = (self._np.nonzero(mask)[0] for mask in (mask_k, mask_z))  # for jnp.ix_
+                else:
+                    mask_k = mask_z = mask_k & mask_z
+                k, z = k[mask_k], z[mask_z]
+                if is2d:
+                    toret = opmask(toret, self._np.ix_(mask_k, mask_z) if grid else mask_k, _interp(k, z, grid=grid, **kwargs))
+                else:
+                    tmp = _interp(k, **kwargs)
+                    if grid:
+                        toret = opmask(toret, self._np.ix_(mask_k, mask_z), tmp[:, None])
+                    else:
+                        toret = opmask(toret, mask_k, tmp)
+                if self.growth_factor_sq is not None and not ignore_growth:
+                    toret = opmask(toret, (slice(None), mask_z) if grid else mask_z, toret[..., mask_z] * self.growth_factor_sq(z).astype(dtype))
+            return toret.reshape(toret_shape)
 
         self._interp = interp
 
     default_params = _get_default_kwargs(__init__, start=4)
-
-    def as_dict(self):
-        """Return interpolator as a dictionary."""
-        state = super(PowerSpectrumInterpolator2D, self).as_dict()
-        state['z'] = self.z
-        return state
 
     @property
     def pk(self):
@@ -677,7 +719,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         return self.z[-1]
 
     @classmethod
-    def from_callable(cls, k=None, z=None, pk_callable=None, growth_factor_sq=None):
+    def from_callable(cls, k=None, z=None, pk_callable=None, growth_factor_sq=None, extrap_kmin=_default_extrap_kmin, extrap_kmax=_default_extrap_kmax):
         """
         Build :class:`PowerSpectrumInterpolator2D` from callable.
 
@@ -710,39 +752,44 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         self = cls.__new__(cls)
         self.__dict__.update(self.default_params)
         self._rsigma8sq = 1.
-        self._np = jnp
-        self.k, self.z = (self._np.array(xx, dtype='f8').ravel() for xx in (k, z))
-        self.extrap_kmin, self.extrap_kmax = self.kmin, self.kmax
+        self.k, self.z = (np.sort(np.array(xx, dtype='f8').ravel()) for xx in (k, z))
+        self.extrap_kmin, self.extrap_kmax = min(extrap_kmin, self.k[0]), max(extrap_kmax, self.k[-1])
+        #self.extrap_kmin, self.extrap_kmax = self.kmin, self.kmax
         self.growth_factor_sq = growth_factor_sq
+        self._np = numpy_jax(pk_callable(k[:1], z[:1]) if self.growth_factor_sq is None else pk_callable(k[:1]) * self.growth_factor_sq(z[:1]))
         self.is_from_callable = True
 
-        if self.growth_factor_sq is not None:
-
-            def interp(k, z, grid=True, ignore_growth=False):
-                dtype = _bcast_dtype(k, z)
-                k, z = (self._np.asarray(xx, dtype=dtype) for xx in (k, z))
+        def interp(k, z, grid=True, ignore_growth=False, bounds_error=False):
+            dtype = _bcast_dtype(k, z)
+            k, z = (self._np.asarray(xx, dtype=dtype) for xx in (k, z))
+            if grid:
+                toret_shape = k.shape + z.shape
+            else:
+                toret_shape = k.shape
+            k, z = (xx.ravel() for xx in (k, z))
+            toret = self._np.full((k.size, z.size) if grid else (k.size,), self._np.nan, dtype=dtype)
+            if toret.size:
+                mask_k, mask_z = _mask_bounds([k, z], [(self.extrap_kmin, self.extrap_kmax), (self.zmin, self.zmax)], bounds_error=bounds_error)
                 if grid:
-                    toret_shape = k.shape + z.shape
+                    mask_k, mask_z = (self._np.nonzero(mask)[0] for mask in (mask_k, mask_z))
                 else:
-                    toret_shape = k.shape
-                toret = pk_callable(k)
-                if not ignore_growth:
-                    growth = self.growth_factor_sq(z)
-                    if grid:
-                        toret = toret[..., None] * growth.ravel()
+                    mask_k = mask_z = mask_k & mask_z
+                k, z = k[mask_k], z[mask_z]
+
+                if self.growth_factor_sq is not None:
+                    tmp = pk_callable(k).astype(dtype)
+                    if not ignore_growth:
+                        growth = self.growth_factor_sq(z).astype(dtype)
                     else:
-                        toret = toret * growth
-                elif z.size:
-                    toret = self._np.repeat(toret[..., None], z.size, axis=-1)
-                return toret.reshape(toret_shape).astype(dtype=dtype)
-
-        else:
-
-            def interp(k, z, grid=True):
-                dtype = _bcast_dtype(k, z)
-                k, z = (self._np.asarray(xx, dtype=dtype) for xx in (k, z))
-                toret = pk_callable(k, z, grid=grid)
-                return toret.astype(dtype=dtype)
+                        growth = 1.
+                    if grid:
+                        toret = opmask(toret, self._np.ix_(mask_k, mask_z), tmp[..., None] * growth)
+                    else:
+                        toret = opmask(toret, mask_k, tmp * growth)
+                else:
+                    tmp = pk_callable(k, z, grid=grid)
+                    toret = opmask(toret, self._np.ix_(mask_k, mask_z) if grid else mask_k, tmp)
+            return toret.reshape(toret_shape)
 
         self._interp = interp
         return self
@@ -824,7 +871,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         sigmarz : array_like
             Array of shape ``(r.size, z.size)``.
         """
-        return integrate_sigma_r2(r, lambda k: self(k, z), kmin=float(self.extrap_kmin), kmax=float(self.extrap_kmax), **kwargs)**0.5
+        return integrate_sigma_r2(r, lambda k: self(k, z), kmin=self.extrap_kmin, kmax=self.extrap_kmax, **kwargs)**0.5
 
     def sigma8_z(self, z=0, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""
@@ -872,8 +919,9 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         dtype = _bcast_dtype(r, z)
         r, z = (self._np.asarray(xx, dtype=dtype) for xx in (r, z))
         toret_shape = r.shape + z.shape
+        if not all(toret_shape):
+            return self._np.zeros(toret_shape, dtype=dtype)
         z = z.ravel()
-        from .jax import opmask
 
         def finite_difference(fun):
             mask_min = z < self.zmin + hdz
@@ -883,9 +931,13 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             toret_max = -(-fun(z[mask_max] - dz) + 4 * fun(z[mask_max] - hdz) - 3 * fun(z[mask_max])) / dz
             toret_mid = (fun(z[mask_mid] + hdz) - fun(z[mask_mid] - hdz)) / dz
             toret = self._np.empty(r.shape + z.shape, dtype=dtype)
-            toret = opmask(toret, mask_min, toret_min)
-            toret = opmask(toret, mask_max, toret_max)
-            toret = opmask(toret, mask_mid, toret_mid)
+
+            def reshape(mask):
+                return (slice(None),) * r.ndim + self._np.nonzero(mask)
+
+            toret = opmask(toret, reshape(mask_min), toret_min)
+            toret = opmask(toret, reshape(mask_max), toret_max)
+            toret = opmask(toret, reshape(mask_mid), toret_mid)
             return toret
 
         dsigdz = finite_difference(lambda z: self._np.log(self.sigma_rz(r, z, **kwargs)))
@@ -911,7 +963,11 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         interp : PowerSpectrumInterpolator1D
         """
         if self.is_from_callable:
-            return PowerSpectrumInterpolator1D.from_callable(self.k, pk_callable=lambda k: self.interp(k, z=z))
+
+            def pk_callable(k, **kwargs):
+                return self._interp(k, z=z, **kwargs) * self._rsigma8sq
+
+            return PowerSpectrumInterpolator1D.from_callable(self.k, pk_callable=pk_callable, extrap_kmin=self.extrap_kmin, extrap_kmax=self.extrap_kmax)
         default_params = dict(extrap_pk=self.extrap_pk, extrap_kmin=self.extrap_kmin, extrap_kmax=self.extrap_kmax, interp_order_k=self.interp_order_k)
         default_params.update(kwargs)
         return PowerSpectrumInterpolator1D(self.k, self(self.k, z=z), **default_params)
@@ -933,10 +989,10 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         -------
         xi : CorrelationFunctionInterpolator2D
         """
-        k = np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
+        k = self._np.geomspace(self.extrap_kmin, self.extrap_kmax, nk)
         s, xi = PowerToCorrelation(k, complex=False, **(fftlog_kwargs or {}))(self(k, z=self.z, ignore_growth=True).T)
         default_params = dict(interp_s='log', interp_order_s=self.interp_order_k,
-                              interp_order_z=self.interp_order_z, extrap_z=self.extrap_z, growth_factor_sq=self.growth_factor_sq)
+                              interp_order_z=self.interp_order_z, growth_factor_sq=self.growth_factor_sq)
         default_params.update(kwargs)
         return CorrelationFunctionInterpolator2D(s, z=self.z, xi=xi.T, **default_params)
 
@@ -945,11 +1001,19 @@ class _BaseCorrelationFunctionInterpolator(BaseClass):
 
     """Base class for correlation function interpolators."""
 
-    def _prepare(self, s, xi, interp_s='log'):
+    def _prepare(self, s, xi, z=None, interp_s='log'):
         self._np = numpy_jax(s, xi)
         self.s = self._np.asarray(s, dtype='f8').ravel()
         self._xi = self._np.asarray(xi, dtype='f8')
+        if self._xi.ndim > 1: self._xi = self._xi.reshape(self.s.shape + (-1,))
+        ix = self._np.argsort(self.s)
+        self.s, self._xi = (xx[ix] for xx in (self.s, self._xi))
+        if z is not None:
+            self.z = self._np.asarray(z, dtype='f8').ravel()
+            ix = self._np.argsort(self.z)
+            self.z, self._xi = self.z[ix], self._xi[:, ix]
         self.interp_s = str(interp_s)
+        return self.s, self._xi
 
     def params(self):
         """Return interpolator parameter dictionary."""
@@ -960,6 +1024,8 @@ class _BaseCorrelationFunctionInterpolator(BaseClass):
         state = self.params()
         for name in ['s', 'xi']:
             state[name] = getattr(self, name)
+        if hasattr(self, 'z'):
+            state['z'] = self.z
         return state
 
     def clone(self, **kwargs):
@@ -1025,9 +1091,10 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
             Interpolation order, i.e. degree of smoothing spline along ``s``.
         """
         self._rsigma8sq = 1.
-        self._prepare(s, xi, interp_s=interp_s)
+        s, xi = self._prepare(s, xi, interp_s=interp_s)
         self.interp_order_s = int(interp_order_s)
-        self._interp = Interpolator1D(self.s, self._xi, k=self.interp_order_s, interp_x=self.interp_s)
+        _interp = Interpolator1D(s, xi, k=self.interp_order_s, interp_x=self.interp_s)
+        self._interp = _interp
         self.is_from_callable = False
 
     default_params = _get_default_kwargs(__init__, start=3)
@@ -1062,14 +1129,20 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         self = cls.__new__(cls)
         self.__dict__.update(self.default_params)
         self._rsigma8sq = 1.
-        self._np = jnp
-        self.s = self._np.asarray(s, dtype='f8').ravel()
+        self.s = np.sort(np.asarray(s, dtype='f8').ravel())
+        self._np = numpy_jax(xi_callable(s[:1]))
 
-        def interp(s, **kwargs):
+        def interp(s, bounds_error=False, **kwargs):
             dtype = _bcast_dtype(s)
             s = self._np.asarray(s, dtype=dtype)
-            toret = xi_callable(s, **kwargs)
-            return toret.astype(dtype=dtype)
+            toret_shape = s.shape
+            s = s.ravel()
+            toret = self._np.full(s.size, self._np.nan, dtype=dtype)
+            if toret.size:
+                mask_s, = _mask_bounds([s], [(self.smin, self.smax)], bounds_error=bounds_error)
+                s = s[mask_s]
+                toret = opmask(toret, mask_s, xi_callable(s, **kwargs))
+            return toret.reshape(toret_shape).astype(dtype=dtype)
 
         self._interp = interp
         return self
@@ -1130,7 +1203,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         -------
         pk : PowerSpectrumInterpolator1D
         """
-        s = jnp.geomspace(self.extrap_smin, self.extrap_smax, ns)
+        s = self._np.geomspace(self.extrap_smin, self.extrap_smax, ns)
         k, pk = CorrelationToPower(s, complex=False, **(fftlog_kwargs or {}))(self(s))
         default_params = dict(interp_k='log', interp_order_k=self.interp_order_s)
         default_params.update(kwargs)
@@ -1178,22 +1251,20 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         """
         self._rsigma8sq = 1.
         self.growth_factor_sq = growth_factor_sq
-        self._prepare(s, xi, interp_s=interp_s)
-        self._xi = self._np.reshape(self._xi, (self._xi.shape[0], -1))
-        self.z = self._np.asarray(z, dtype='f8').ravel()
+        s, xi = self._prepare(s, xi, z=z, interp_s=interp_s)
 
         self.interp_order_s, self.interp_order_z = int(interp_order_s), int(interp_order_z)
         is2d = self._xi.shape[1] > 1
         if is2d:
-            _interp = Interpolator2D(self.s, self.z, self._xi, kx=self.interp_order_s, ky=self.interp_order_z, interp_x=self.interp_s)
+            _interp = Interpolator2D(s, self.z, xi, kx=self.interp_order_s, ky=self.interp_order_z, interp_x=self.interp_s, assume_sorted=True)
         else:
             if self.growth_factor_sq is None:
                 raise ValueError('provide either 2D pk array or growth_factor_sq')
-            _interp = Interpolator1D(self.s, self._xi[:, 0], k=self.interp_order_s, interp_x=self.interp_s)
+            _interp = Interpolator1D(s, xi[:, 0], k=self.interp_order_s, interp_x=self.interp_s, assume_sorted=True)
 
         self.is_from_callable = False
 
-        def interp(s, z, ignore_growth=False, grid=True, **kwargs):
+        def interp(s, z, grid=True, ignore_growth=False, bounds_error=False, **kwargs):
             dtype = _bcast_dtype(s, z)
             s, z = (self._np.asarray(xx, dtype=dtype) for xx in (s, z))
             if grid:
@@ -1201,25 +1272,29 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
             else:
                 toret_shape = s.shape
             s, z = (xx.ravel() for xx in (s, z))
-            if is2d:
-                toret = _interp(s, z, grid=grid, **kwargs)
-            else:
-                toret = _interp(s, **kwargs)
-                if z.size:
-                    toret = self._np.repeat(toret[:, None], z.size, axis=-1)
-            if self.growth_factor_sq is not None and not ignore_growth:
-                toret = toret * self.growth_factor_sq(z)
-            return toret.reshape(toret_shape).astype(dtype=dtype)
+            toret = self._np.full((s.size, z.size) if grid else (s.size,), self._np.nan, dtype=dtype)
+            if toret.size:
+                mask_s, mask_z = _mask_bounds([s, z], [(self.smin, self.smax), (self.zmin, self.zmax) if is2d else (-self._np.inf, self._np.inf)], bounds_error=bounds_error)
+                if grid:
+                    mask_s, mask_z = (self._np.nonzero(mask)[0] for mask in (mask_s, mask_z))  # for jnp.ix_
+                else:
+                    mask_s = mask_z = mask_s & mask_z
+                s, z = s[mask_s], z[mask_z]
+                if is2d:
+                    toret = opmask(toret, self._np.ix_(mask_s, mask_z) if grid else mask_s, _interp(s, z, grid=grid, **kwargs))
+                else:
+                    tmp = _interp(s, **kwargs)
+                    if grid:
+                        toret = opmask(toret, self._np.ix_(mask_s, mask_z), tmp[:, None])
+                    else:
+                        toret = opmask(toret, mask_s, tmp)
+                if self.growth_factor_sq is not None and not ignore_growth:
+                    toret = opmask(toret, (slice(None), mask_z) if grid else mask_z, toret[..., mask_z] * self.growth_factor_sq(z).astype(dtype))
+            return toret.reshape(toret_shape)
 
         self._interp = interp
 
     default_params = _get_default_kwargs(__init__, start=4)
-
-    def as_dict(self):
-        """Return interpolator as a dictionary."""
-        state = super(CorrelationFunctionInterpolator2D, self).as_dict()
-        state['z'] = self.z
-        return state
 
     @property
     def xi(self):
@@ -1263,7 +1338,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         ignore_growth : bool, default=False
             Whether to ignore multiplication by growth function (if provided).
         """
-        return self.interp(s, z, grid=grid, **kwargs) * self._rsigma8sq
+        return self._interp(s, z, grid=grid, **kwargs) * self._rsigma8sq
 
     @classmethod
     def from_callable(cls, s=None, z=None, xi_callable=None, growth_factor_sq=None):
@@ -1299,39 +1374,42 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         self.__dict__.update(self.default_params)
         self._rsigma8sq = 1.
         self._np = jnp
-        self.s, self.z = (self._np.array(xx, dtype='f8').ravel() for xx in (s, z))
+        self.s, self.z = (self._np.array(xx, dtype='f8').ravel().sort() for xx in (s, z))
         self.__dict__.update(self.default_params)
         self.growth_factor_sq = growth_factor_sq
         self.is_from_callable = True
 
-        if self.growth_factor_sq is not None:
-
-            def interp(s, z, grid=True, ignore_growth=False):
-                dtype = _bcast_dtype(s, z)
-                s, z = (self._np.asarray(xx, dtype=dtype) for xx in (s, z))
+        def interp(s, z, grid=True, ignore_growth=False, bounds_error=False):
+            dtype = _bcast_dtype(s, z)
+            s, z = (self._np.asarray(xx, dtype=dtype) for xx in (s, z))
+            if grid:
+                toret_shape = s.shape + z.shape
+            else:
+                toret_shape = s.shape
+            s, z = (xx.ravel() for xx in (s, z))
+            toret = self._np.full((s.size, z.size) if grid else (s.size,), self._np.nan, dtype=dtype)
+            if toret.size:
+                mask_s, mask_z = _mask_bounds([s, z], [(self.smin, self.smax), (self.zmin, self.zmax)], bounds_error=bounds_error)
                 if grid:
-                    toret_shape = s.shape + z.shape
+                    mask_s, mask_z = (self._np.nonzero(mask)[0] for mask in (mask_s, mask_z))
                 else:
-                    toret_shape = s.shape
-                toret = xi_callable(s)
-                if not ignore_growth:
-                    growth = self.growth_factor_sq(z)
-                    if grid:
-                        toret = toret[..., None] * growth.ravel()
+                    mask_s = mask_z = mask_s & mask_z
+                s, z = s[mask_s], z[mask_z]
+
+                if self.growth_factor_sq is not None:
+                    tmp = xi_callable(s).astype(dtype)
+                    if not ignore_growth:
+                        growth = self.growth_factor_sq(z).astype(dtype)
                     else:
-                        toret = toret * growth
-                elif z.size:
-                    toret = self._np.repeat(toret[..., None], z.size, axis=-1)
-                toret.shape = toret_shape
-                return toret.astype(dtype=dtype)
-
-        else:
-
-            def interp(s, z, grid=True):
-                dtype = _bcast_dtype(s)
-                s = self._np.asarray(s, dtype=dtype)
-                toret = xi_callable(s, z=z, grid=grid)
-                return toret.astype(dtype=dtype)
+                        growth = 1.
+                    if grid:
+                        toret = opmask(toret, self._np.ix_(mask_s, mask_z), tmp[..., None] * growth)
+                    else:
+                        toret = opmask(toret, mask_s, tmp * growth)
+                else:
+                    tmp = xi_callable(s, z, grid=grid)
+                    toret = opmask(toret, self._np.ix_(mask_s, mask_z) if grid else mask_s, tmp)
+            return toret.reshape(toret_shape)
 
         self._interp = interp
         return self
@@ -1391,7 +1469,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         interp : CorrelationFunctionInterpolator1D
         """
         if self.is_from_callable:
-            return CorrelationFunctionInterpolator1D.from_callable(self.s, xi_callable=lambda s: self.interp(s, z=z))
+            return CorrelationFunctionInterpolator1D.from_callable(self.s, xi_callable=lambda s: self._interp(s, z=z) * self._rsigma8sq)
         default_params = dict(interp_order_s=self.interp_order_s)
         default_params.update(kwargs)
         return CorrelationFunctionInterpolator1D(self.s, self(self.s, z=z), **default_params)
@@ -1413,9 +1491,9 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         -------
         pk : PowerSpectrumInterpolator2D
         """
-        s = np.geomspace(self.extrap_smin, self.extrap_smax, ns)
+        s = self._np.geomspace(self.extrap_smin, self.extrap_smax, ns)
         k, pk = CorrelationToPower(s, complex=False, **(fftlog_kwargs or {}))(self(s, self.z, ignore_growth=True).T)
         default_params = dict(interp_k='log', extrap_pk='log', interp_order_k=self.interp_order_s,
-                              interp_order_z=self.interp_order_z, extrap_z=self.extrap_z, growth_factor_sq=self.growth_factor_sq)
+                              interp_order_z=self.interp_order_z, growth_factor_sq=self.growth_factor_sq)
         default_params.update(kwargs)
         return PowerSpectrumInterpolator2D(k, z=self.z, pk=pk.T, **default_params)

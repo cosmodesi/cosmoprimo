@@ -6,9 +6,9 @@ from cosmoprimo import Cosmology, Transfer, Fourier, PowerSpectrumBAOFilter, Cor
 def plot_wiggles():
     from matplotlib import pyplot as plt
     cosmo = Cosmology()
-    pk_interpolator = Fourier(cosmo, engine='eisenstein_hu').pk_interpolator().to_1d()
+    pk_interpolator = Fourier(cosmo, engine='eisenstein_hu').pk_interpolator().to_1d(z=0.)
     xi_interpolator = pk_interpolator.to_xi()
-    smooth_pk_interpolator = Fourier(cosmo, engine='eisenstein_hu_nowiggle').pk_interpolator().to_1d()
+    smooth_pk_interpolator = Fourier(cosmo, engine='eisenstein_hu_nowiggle').pk_interpolator().to_1d(z=0.)
 
     k = np.geomspace(1e-4, 10., 1000)
     wiggles = pk_interpolator(k) / smooth_pk_interpolator(k)
@@ -80,7 +80,7 @@ def plot_xi(engine='class'):
     from matplotlib import pyplot as plt
     cosmo = Cosmology()
     fo = Fourier(cosmo, engine=engine)
-    pk_interpolator = fo.pk_interpolator().to_1d()
+    pk_interpolator = fo.pk_interpolator().to_1d(z=0.)
     xi_interpolator = pk_interpolator.to_xi()
     s = np.linspace(1e-2, 300, 1000)
     plt.plot(s, s ** 2 * xi_interpolator(s), label='input')
@@ -99,7 +99,7 @@ def plot_pk(engine='class'):
     from matplotlib import pyplot as plt
     cosmo = Cosmology()
     fo = Fourier(cosmo, engine=engine)
-    pk_interpolator = fo.pk_interpolator().to_1d()
+    pk_interpolator = fo.pk_interpolator().to_1d(z=0.)
     xi_interpolator = pk_interpolator.to_xi()
     k = np.logspace(-5, 2, 1000)
     plt.loglog(k, pk_interpolator(k), label='input')
@@ -131,6 +131,9 @@ def test_2d_pk(engine='class'):
             #flt_1d = PowerSpectrumBAOFilter(pk_interpolator_1d, engine=engine, cosmo=cosmo, cosmo_fid=cosmo)
             #print(np.abs(smooth_pk[:, iz] / flt_1d.smooth_pk_interpolator()(k) - 1).max())
             assert np.allclose(smooth_pk[:, iz], flt_1d.smooth_pk_interpolator()(k), atol=1e-6, rtol=1e-6)
+        flt_1d = PowerSpectrumBAOFilter(pk_interpolator.to_1d(z=z), engine=engine, cosmo=cosmo, cosmo_fid=cosmo)
+        flt_1d = flt_1d(pk_interpolator.to_1d(z=z))
+        assert np.allclose(smooth_pk, flt_1d.smooth_pk_interpolator()(k), atol=1e-6, rtol=1e-6)
 
 
 def plot_2d_pk(engine='class'):
@@ -175,6 +178,9 @@ def test_2d_xi(engine='class'):
             #flt_1d = CorrelationFunctionBAOFilter(xi_interpolator_1d, engine=engine)
             flt_1d = flt_1d(xi_interpolator_1d)
             assert np.allclose(smooth_xi[:, iz], flt_1d.smooth_xi_interpolator()(s), atol=1e-4, rtol=1e-3)
+        flt_1d = CorrelationFunctionBAOFilter(xi_interpolator.to_1d(z=z), engine=engine)
+        flt_1d = flt_1d(xi_interpolator.to_1d(z=z))
+        assert np.allclose(smooth_xi, flt_1d.smooth_xi_interpolator()(s), atol=1e-4, rtol=1e-3)
 
 
 def plot_2d_xi(engine='class'):
@@ -199,7 +205,7 @@ def plot_wallish2018(engine='class'):
     from matplotlib import pyplot as plt
     cosmo = Cosmology()
     fo = Fourier(cosmo, engine=engine)
-    pk_interpolator = fo.pk_interpolator().to_1d()
+    pk_interpolator = fo.pk_interpolator().to_1d(z=0.)
     flt = PowerSpectrumBAOFilter(pk_interpolator, engine='wallish2018')
     ind = np.arange(flt._even.size)
     mask = ind < 100
@@ -223,9 +229,9 @@ def plot_wallish2018(engine='class'):
 def plot_brieden2022(engine='class'):
     from matplotlib import pyplot as plt
     cosmo = Cosmology()
-    pk_interpolator = Fourier(cosmo, engine='eisenstein_hu').pk_interpolator(ignore_norm=True).to_1d()
+    pk_interpolator = Fourier(cosmo, engine='eisenstein_hu').pk_interpolator(ignore_norm=True).to_1d(z=0.)
     xi_interpolator = pk_interpolator.to_xi()
-    smooth_pk_interpolator = Fourier(cosmo, engine='eisenstein_hu_nowiggle').pk_interpolator(ignore_norm=True).to_1d()
+    smooth_pk_interpolator = Fourier(cosmo, engine='eisenstein_hu_nowiggle').pk_interpolator(ignore_norm=True).to_1d(z=0.)
 
     k = np.geomspace(1e-4, 10., 1000)
     wiggles = pk_interpolator(k) / smooth_pk_interpolator(k)
@@ -245,9 +251,9 @@ def plot_brieden2022(engine='class'):
 def plot_peakaverage(engine='class'):
     from matplotlib import pyplot as plt
     cosmo = Cosmology()
-    pk_interpolator = Fourier(cosmo, engine='eisenstein_hu').pk_interpolator(ignore_norm=True).to_1d()
+    pk_interpolator = Fourier(cosmo, engine='eisenstein_hu').pk_interpolator(ignore_norm=True).to_1d(z=0.)
     xi_interpolator = pk_interpolator.to_xi()
-    smooth_pk_interpolator = Fourier(cosmo, engine='eisenstein_hu_nowiggle').pk_interpolator(ignore_norm=True).to_1d()
+    smooth_pk_interpolator = Fourier(cosmo, engine='eisenstein_hu_nowiggle').pk_interpolator(ignore_norm=True).to_1d(z=0.)
 
     k = np.geomspace(1e-4, 10., 1000)
     wiggles = pk_interpolator(k) / smooth_pk_interpolator(k)
@@ -267,7 +273,7 @@ def plot_mark():
     from cosmoprimo.fiducial import DESI
 
     cosmo = DESI()
-    pk_interpolator = cosmo.get_fourier().pk_interpolator().to_1d()
+    pk_interpolator = cosmo.get_fourier().pk_interpolator().to_1d(z=0.)
 
     plt.figure(figsize=(10, 5))
     k = np.geomspace(1e-3, 10., 1000)
@@ -290,7 +296,6 @@ if __name__ == '__main__':
     plot_pk()
     test_2d_pk()
     plot_2d_pk()
-    plot_xi()
     test_2d_xi()
     plot_2d_xi()
     plot_wiggles()

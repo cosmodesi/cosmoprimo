@@ -51,7 +51,8 @@ def test_cosmosis():
         run_cosmosis(tmp_fn)
         os.remove(tmp_fn)
 
+
 if __name__ == '__main__':
 
     test_cobaya()
-    test_cosmosis()
+    #test_cosmosis()

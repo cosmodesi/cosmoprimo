@@ -60,7 +60,7 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
         self.set_pk(pk_interpolator, cosmo=cosmo)
         self._prepare()
         self._compute()
-        self.pk, self.pknow = self.pk.reshape(self.shape), self.pknow.reshape(self.shape)
+        self.pk, self.pknow = (x.reshape(self.shape) for x in (self.pk, self.pknow))
 
     def _prepare(self):
         """Anything that can be done once."""
@@ -80,7 +80,7 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
         """Set input power spectrum to remove BAO wiggles from."""
         self._cosmo = cosmo
         self.pk_interpolator = pk_interpolator
-        if isinstance(pk_interpolator, PowerSpectrumInterpolator2D):
+        if isinstance(self.pk_interpolator, PowerSpectrumInterpolator2D):
             self.pk = self.pk_interpolator(self.k, self.pk_interpolator.z, ignore_growth=True)
         else:
             self.pk = self.pk_interpolator(self.k)
@@ -91,7 +91,7 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
     def __call__(self, pk_interpolator, cosmo=None):
         self.set_pk(pk_interpolator, cosmo=cosmo)
         self._compute()
-        self.pk, self.pknow = self.pk.reshape(self.shape), self.pknow.reshape(self.shape)
+        self.pk, self.pknow = (x.reshape(self.shape) for x in (self.pk, self.pknow))
         return self
 
     @property
@@ -170,7 +170,7 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     """
     name = 'hinton2017'
 
-    def __init__(self, pk_interpolator, degree=13, sigma=0.5, weight=0.9, **kwargs):
+    def __init__(self, pk_interpolator, degree=12, sigma=0.5, weight=0.9, **kwargs):
         """
         Run BAO filter.
 
@@ -179,7 +179,7 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         pk_interpolator : PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
             Input power spectrum to remove BAO wiggles from.
 
-        degree : int, default=13
+        degree : int, default=12
             Polynomial degree.
 
         sigma : float, default=0.5
@@ -199,16 +199,17 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         logpk = np.log10(self.pk[self.kmask].T)
         maxk = logk[np.argmax(logpk[0], axis=0)]  # here we take just the first one, approximation
         meanlogk = np.mean(logk)
+        stdlogk = np.std(logk)
         gauss = np.exp(-0.5 * ((logk - maxk) / self.sigma)**2)
         w = np.ones_like(logk) - self.weight * gauss
 
-        gradient = np.array([(logk - meanlogk)**i for i in range(self.degree)])
+        gradient = np.array([((logk - meanlogk) / stdlogk)**i for i in range(self.degree + 1)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0],
                                                gradient[..., 2] - 2. * gradient[..., 1] + gradient[..., 0],
                                                gradient[..., -1], gradient[..., -2] - gradient[..., -1],
                                                gradient[..., -3] - 2. * gradient[..., -2] + gradient[..., -1]])
-        self.lss = LeastSquareSolver(gradient, precision=w**2, constraint_gradient=constraint_gradient, compute_inverse=True)
 
+        self.lss = LeastSquareSolver(gradient, precision=w**2, constraint_gradient=constraint_gradient, compute_inverse=True)
 
     def _compute(self):
         """Run filter."""
@@ -337,10 +338,12 @@ class Wallish2018PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         """Run filter."""
         from scipy import fftpack, interpolate
         k = np.linspace(self.pk_interpolator.extrap_kmin, 2., 4096)
-        if self.is2d:
+        if isinstance(self.pk_interpolator, PowerSpectrumInterpolator2D):
             pk = self.pk_interpolator(k, self.pk_interpolator.z, ignore_growth=True)
         else:
-            pk = self.pk_interpolator(k)[:, None]
+            pk = self.pk_interpolator(k)
+        pk = pk.reshape(pk.shape[0], -1)
+
         kpk = np.log(k[:, None] * pk)
         kpkffted = fftpack.dst(kpk, type=2, axis=0, norm='ortho', overwrite_x=False)
         even = kpkffted[::2]
@@ -445,12 +448,12 @@ class Brieden2022PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
 
     def _compute(self):
         rescale = self.rs_drag_ratio()
-        is2d = isinstance(pk_interpolator, PowerSpectrumInterpolator2D)
+        is2d = isinstance(self.pk_interpolator, PowerSpectrumInterpolator2D)
         if is2d:
             pk = self.pk_interpolator(self.k_fid / rescale, self.pk_interpolator.z, ignore_growth=True)
         else:
             pk = self.pk_interpolator(self.k_fid / rescale)
-        pk = pk.reshape(self.pk)
+        pk = pk.reshape(pk.shape[0], -1)
 
         pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k_fid * rescale, z=0.)[:, None]
         pknow *= self.pknow_correction
@@ -506,7 +509,7 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     def _interp(xh, xl, x, y, k=3):
         logx = np.log10(x)
         toret = 0.
-        interp = Interpolator1D(logx, y, k=k, extrapolate=True)
+        interp = Interpolator1D(logx, y, k=k, extrap=True)
         for xx in [xh, xl]:
             logxx = np.log10(xx)
             yy = interp(logxx)
@@ -516,7 +519,7 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     def _compute(self):
         rescale = self.rs_drag_ratio()
         rescale = [self._np.concatenate([self._np.linspace(1., rescale, npad[0]), self._np.full(npad[1], rescale), self._np.linspace(rescale, 1., npad[2])]) for npad in self.pad_peaks]
-        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k)[:, None]
+        pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k, z=0.)[:, None]
         self.pknow = self._interp(self.k_peaks[0] / rescale[0], self.k_peaks[1] / rescale[1], self.k, self.pk / pknow) * pknow
 
 
@@ -663,6 +666,7 @@ class BaseCorrelationFunctionBAOFilter(BaseClass, metaclass=RegisteredCorrelatio
         self.set_xi(xi_interpolator, cosmo=cosmo)
         self._prepare()
         self._compute()
+        self.xi, self.xinow = (x.reshape(self.shape) for x in (self.xi, self.xinow))
 
     def _prepare(self):
         """Anything that can be done once."""
@@ -688,11 +692,12 @@ class BaseCorrelationFunctionBAOFilter(BaseClass, metaclass=RegisteredCorrelatio
             self.xi = self.xi_interpolator(self.s)
         self.shape = self.xi.shape
         self.xi = self.xi.reshape(self.xi.shape[0], -1)
+        self._np = numpy_jax(self.xi)
 
     def __call__(self, xi_interpolator, cosmo=None):
         self.set_xi(xi_interpolator, cosmo=cosmo)
         self._compute()
-        self.xi, self.xinow = self.xi.reshape(self.shape), self.xinow.reshape(self.shape)
+        self.xi, self.xinow = (x.reshape(self.shape) for x in (self.xi, self.xinow))
         return self
 
     def smooth_xi_interpolator(self, **kwargs):
@@ -799,14 +804,13 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
     def _prepare(self):
         factor = 2.  # safety factor
         self.smask = (self.s >= self.srange_left[0] / factor) & (self.s <= self.srange_right[1] * factor)
-        s = self.s[self.smask]
-        self.model = np.array([s**(1 - i) for i in range(5)])
+        self.model = np.array([self.s**(1 - i) for i in range(5)])
         frac = 1. / 100.
         shift_center = (self.srange_right[0] - self.srange_left[1]) * frac
         self.window = (np.concatenate([[self.srange_left[0] * (1. - frac)], self.srange_left,
                                        [self.srange_left[1] + shift_center, self.srange_right[0] - shift_center],
                                        self.srange_right, [self.srange_right[1] * (1. + frac)]], axis=0),
-                      [0., 1., 1., 0., 0., 1., 1., 0.])
+                      np.array([0., 1., 1., 0., 0., 1., 1., 0.]))
 
     def _compute(self):
         """Run filter."""
@@ -818,9 +822,10 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
         # center window: 1 between (self.srange_left[1], self.srange_right[0]), 0 elsewhere
         center = self._np.interp(self.s / rescale, self.window[0][2:-2], 1. - self.window[1][2:-2], left=0., right=0.)
 
-        lss = LeastSquareSolver(self.model, precision=precision, compute_inverse=False)
-        lss(self.xi[self.smask].T)
-        self.xinow = (self.xi.T * (1. - center) + lss.model() * center).T
+        lss = LeastSquareSolver(self.model[..., self.smask], precision=precision, compute_inverse=False)
+        params = lss(self.xi[self.smask].T)
+        model = params.dot(self.model)
+        self.xinow = (self.xi.T * (1. - center) + model * center).T
 
 
 def PowerSpectrumBAOFilter(pk_interpolator, engine='wallish2018', **kwargs):

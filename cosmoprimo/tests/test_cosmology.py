@@ -588,9 +588,9 @@ def test_neutrinos():
 
     for m_ncdm in [0.06, 0.1, 0.2, 0.4]:
         # print(_compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='rho'), _compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='p'))
-        omega_ncdm = _compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='rho') / constants.rho_crit_Msunph_per_Mpcph3
+        omega_ncdm = _compute_ncdm_momenta(T_eff, m_ncdm, z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
         assert np.allclose(omega_ncdm, m_ncdm / 93.14, rtol=1e-3)
-        domega_over_dm = _compute_ncdm_momenta(T_eff, m_ncdm, out='drhodm', z=0) / constants.rho_crit_Msunph_per_Mpcph3
+        domega_over_dm = _compute_ncdm_momenta(T_eff, m_ncdm, out='drhodm', z=0) / constants.rho_crit_over_Msunph_per_Mpcph3
         assert np.allclose(domega_over_dm, 1. / 93.14, rtol=1e-3)
 
     for m_ncdm in [0.06, 0.1, 0.2, 0.4]:
@@ -789,7 +789,25 @@ def plot_z_sampling():
     plt.show()
 
 
+def test_jax():
+
+    from jax import numpy as jnp
+    from jax import jit, jacfwd
+    from cosmoprimo.fiducial import DESI
+
+    def test(**params):
+        cosmo = DESI(engine='eisenstein_hu', **params)
+        z = jnp.linspace(0., 1., 10)
+        return cosmo.sigma8_z(z)
+
+    test = jit(test)
+    print(test(Omega_m=0.3, logA=3.))
+
+
 if __name__ == '__main__':
+
+    test_jax()
+    exit()
 
     test_params()
     test_engine()

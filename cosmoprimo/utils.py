@@ -92,8 +92,7 @@ def flatarray(iargs=[0], dtype=np.float64):
 
             def reshape(toret):
                 toret = _np.asarray(toret, dtype=toret_dtype)
-                toret.shape = toret.shape[:-1] + shape
-                return toret
+                return toret.reshape(toret.shape[:-1] + shape)
 
             if isinstance(toret, dict):
                 for key, value in toret.items():
