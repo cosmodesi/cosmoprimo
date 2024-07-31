@@ -55,11 +55,13 @@ def use_jax(*arrays):
     return any(isinstance(array, array_types) for array in arrays)
 
 
-def numpy_jax(*args):
+def numpy_jax(*args, return_use_jax=False):
     """Return numpy or jax.numpy depending on whether array is jax's object."""
-    if use_jax(*args):
-        return numpy
-    return np
+    uj = use_jax(*args)
+    toret = numpy if uj else np
+    if return_use_jax:
+        return toret, uj
+    return toret
 
 
 def _interpax_convert_method(k):
@@ -104,12 +106,15 @@ class Interpolator1D(object):
         if self.interp_x == 'log': x = self._np.log10(x)
         if self.interp_fun == 'log': fun = self._np.log10(fun)
         self.extrap = bool(extrap)
+        self._mask_nan = None
+        fun = fun.reshape(x.size, -1)
         if self._use_jax:
             from interpax import Interpolator1D
             self._spline = Interpolator1D(x, fun, method=_interpax_convert_method(k), extrap=self.extrap, period=None)
         else:
             from scipy import interpolate
-            self._spline = interpolate.interp1d(x, fun, kind=_scipy_convert_method(k), axis=0, bounds_error=False, fill_value='extrapolate' if self.extrap else numpy.nan, assume_sorted=True)
+            self._mask_nan = ~np.isnan(fun).all(axis=0)  # hack: scipy returns NaN for all shape[1] if any is NaN
+            self._spline = interpolate.interp1d(x, fun[..., self._mask_nan], kind=_scipy_convert_method(k), axis=0, bounds_error=False, fill_value='extrapolate' if self.extrap else numpy.nan, assume_sorted=True)
             #from scipy.interpolate import CubicSpline#, UnivariateSpline
             #if k == 3: self._spline = CubicSpline(x, fun, axis=0, bc_type='natural', extrapolate=extrap)
             #else: self._spline = lambda t: numpy.interp(t, x, fun, period=None)
@@ -121,15 +126,14 @@ class Interpolator1D(object):
         toret_shape = x.shape + self.shape
         x = x.ravel()
         mask_x, = _mask_bounds([x], [(self.xmin, self.xmax)], bounds_error=bounds_error)
-        toret = self._np.full(x.shape + self.shape, self._np.nan, dtype=dtype)
-        if toret.size:
-            if self.extrap: mask_x = Ellipsis
-            x = x[mask_x]
-            if self.interp_x == 'log': x = self._np.log10(x)
-            tmp = self._spline(x)
-            if self.interp_fun == 'log': tmp = 10**tmp
-            toret = opmask(toret, mask_x, tmp)
-        return toret.reshape(toret_shape)
+        if self.interp_x == 'log': x = self._np.log10(x)
+        tmp = self._spline(x)
+        if self.interp_fun == 'log': tmp = 10**tmp
+        toret = tmp = tmp if self.extrap else self._np.where(mask_x, tmp.T, self._np.nan).T
+        if self._mask_nan is not None:
+            toret = self._np.full((x.size, self._mask_nan.size), self._np.nan)
+            toret[..., self._mask_nan] = tmp
+        return toret.astype(dtype).reshape(toret_shape)
 
 
 class Interpolator2D(object):
@@ -173,35 +177,28 @@ class Interpolator2D(object):
         else:
             toret_shape = x.shape
         x, y = (xx.ravel() for xx in (x, y))
-        toret = self._np.full((x.size, y.size) if grid else (x.size,), self._np.nan, dtype=dtype)
-        if toret.size:
-            mask_x, mask_y = _mask_bounds([x, y], [(self.xmin, self.xmax), (self.ymin, self.ymax)], bounds_error=bounds_error)
+        mask_x, mask_y = _mask_bounds([x, y], [(self.xmin, self.xmax), (self.ymin, self.ymax)], bounds_error=bounds_error)
+        if grid: mask_x = mask_x[:, None] & mask_y
+        else: mask_x = mask_x & mask_y
+        if self.interp_x == 'log': x = self._np.log10(x)
+        if self.interp_y == 'log': y = self._np.log10(y)
+        if self._use_jax:
+            _shape = (x.size, y.size)
             if grid:
-                mask_x, mask_y = (self._np.nonzero(mask)[0] for mask in (mask_x, mask_y))  # for jnp.ix_
+                x, y = self._np.meshgrid(x, y, indexing='ij')
+                tmp = self._spline(x.ravel(), y.ravel()).reshape(_shape)
             else:
-                mask_x = mask_y = mask_x & mask_y
-            if self.extrap:
-                mask_x, mask_y = slice(None), slice(None)
-            x, y = x[mask_x], y[mask_y]
-            if self.interp_x == 'log': x = self._np.log10(x)
-            if self.interp_y == 'log': y = self._np.log10(y)
-            if self._use_jax:
-                _shape = (x.size, y.size)
-                if grid:
-                    x, y = self._np.meshgrid(x, y, indexing='ij')
-                    tmp = self._spline(x.ravel(), y.ravel()).reshape(_shape)
-                else:
-                    tmp = self._spline(x, y)
+                tmp = self._spline(x, y)
+        else:
+            if grid:
+                i_x = self._np.argsort(x)
+                i_y = self._np.argsort(y)
+                tmp = self._spline(x[i_x], y[i_y], grid=True)[self._np.ix_(self._np.argsort(i_x), self._np.argsort(i_y))]
             else:
-                if grid:
-                    i_x = self._np.argsort(x)
-                    i_y = self._np.argsort(y)
-                    tmp = self._spline(x[i_x], y[i_y], grid=True)[self._np.ix_(self._np.argsort(i_x), self._np.argsort(i_y))]
-                else:
-                    tmp = self._spline(x, y, grid=False)
-            if self.interp_fun == 'log': tmp = 10**tmp
-            toret = opmask(toret, ((mask_x, mask_y) if self.extrap else self._np.ix_(mask_x, mask_y)) if grid else mask_x, tmp)
-        return toret.reshape(toret_shape)
+                tmp = self._spline(x, y, grid=False)
+        if self.interp_fun == 'log': tmp = 10**tmp
+        toret = tmp if self.extrap else self._np.where(mask_x, tmp, self._np.nan)
+        return toret.astype(dtype).reshape(toret_shape)
 
 
 def scan_numpy(f, init, xs, length=None):

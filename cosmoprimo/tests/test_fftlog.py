@@ -174,13 +174,15 @@ def test_jax():
     if jax is None:
         return
     print('With jax')
+    from jax import numpy as jnp
 
-    k = np.logspace(-3, 1, 10)
+    k = jnp.logspace(-3, 1, 10)
     fftlog = PowerToCorrelation(k)
 
     jac = jax.jacfwd(fftlog, argnums=0, has_aux=False, holomorphic=False)
-    pk = np.exp(-k)
+    pk = jnp.exp(-k)
     print(jac(pk))
+    fftlog(jnp.repeat(pk[None, :], 3, 0))
 
 
 def benchmark():
@@ -225,6 +227,8 @@ def plot():
 
 if __name__ == '__main__':
 
+    test_jax()
+    exit()
     test_pad()
     test_fftlog()
     test_power_to_correlation()

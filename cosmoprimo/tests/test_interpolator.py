@@ -23,6 +23,7 @@ def check_shape_2d(interp, grid=True):
         assert interp([[0.1, 0.2]] * 3, [0.1]).shape == (3, 2, 1)
         assert interp([[0.1, 0.2]] * 3, [[0.1, 0.1, 0.2]] * 3).shape == (3, 2, 3, 3)
         assert interp(np.array([[0.1, 0.2]] * 3, dtype='f4'), np.array(0.1, dtype='f4')).dtype.itemsize == 4
+        #print(interp([0.2, 0.1], [0.1, 0.]), interp([0.1, 0.2], [0., 0.1])[::-1, ::-1])
         assert np.allclose(interp([0.2, 0.1], [0.1, 0.]), interp([0.1, 0.2], [0., 0.1])[::-1, ::-1], atol=0)
     else:
         assert interp([], [], grid=False).shape == (0, )
@@ -60,6 +61,7 @@ def test_power_spectrum():
     check_shape_1d(interp.sigma_dz)
     check_shape_2d(interp.sigma_rz)
     interp = PowerSpectrumInterpolator2D(k, z=z, pk=np.array([pk * (iz + 1) / len(z) for iz in range(len(z))]).T)
+    #print(interp.sigma_rz(3., [ 0.099, -0.001]))
     check_shape_2d(interp.growth_rate_rz)
     dz = 1e-3
     #print(interp.growth_rate_rz(8., dz * 2., dz=dz), interp.growth_rate_rz(8., 0., dz=dz))
@@ -292,9 +294,35 @@ def test_extrap_2d(plot=False):
     assert np.allclose(pk_interp_tab2(k, z=0.), pk_interp_callable(k, z=0.), atol=0, rtol=1e-2)
 
 
+def test_jax():
+
+    from jax import jit
+    from jax import numpy as jnp
+
+    def test(a):
+        k = jnp.logspace(-4, 2, 1000)
+        s = jnp.linspace(1., 10., 200)
+        interp = PowerSpectrumInterpolator1D(k, a * k)
+        interp(k)
+        interp.to_xi()(s)
+        interp = PowerSpectrumInterpolator1D(k, a * k[:, None][:, [0] * 4])
+        interp(k)
+        interp.to_xi()(s)
+        z = jnp.linspace(0., 1., 10)
+        interp2 = PowerSpectrumInterpolator2D(k, z, a * k[:, None] * (1. + z))
+        interp2(k, z)
+        interp2.to_xi()(s, z)
+        return interp.sigma8(), interp2.sigma8_z(z)
+
+    test(2.)
+    test = jit(test)
+    print(test(2.))
+
+
 if __name__ == '__main__':
 
     test_power_spectrum()
     test_correlation_function(plot=False)
     test_extrap_1d(plot=False)
     test_extrap_2d(plot=False)
+    test_jax()

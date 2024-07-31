@@ -7,9 +7,23 @@ import os
 
 import numpy as np
 
-from scipy.special import gamma, loggamma
+from scipy.special import gamma as numpy_gamma
+from scipy.special import loggamma as numpy_loggamma
 
 from .jax import numpy_jax
+try:
+    import jax
+
+    def jax_gamma(x):
+        result_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+        return jax.pure_callback(numpy_gamma, result_shape, x)
+
+    def jax_loggamma(x):
+        result_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
+        return jax.pure_callback(numpy_loggamma, result_shape, x)
+except ImportError:
+    pass
+
 
 
 class FFTlog(object):
@@ -81,11 +95,12 @@ class FFTlog(object):
         if np.ndim(q) == 0:
             q = [q] * self.nparallel
         self.q = list(q)
-        self.x = np.asarray(x)
+        jnp = numpy_jax(x)
+        self.x = jnp.asarray(x)
         if not self.inparallel:
             self.x = self.x[None, :]
         elif self.x.ndim == 1:
-            self.x = np.tile(self.x[None, :], (self.nparallel, 1))
+            self.x = jnp.tile(self.x[None, :], (self.nparallel, 1))
         if np.ndim(xy) == 0:
             xy = [xy] * self.nparallel
         self.xy = list(xy)
@@ -124,8 +139,9 @@ class FFTlog(object):
 
     def setup(self):
         """Set up u funtions."""
+        jnp = numpy_jax(self.x)
         self.size = self.x.shape[-1]
-        self.delta = np.log(self.x[:, -1] / self.x[:, 0]) / (self.size - 1)
+        self.delta = jnp.log(self.x[:, -1] / self.x[:, 0]) / (self.size - 1)
 
         nfolds = (self.size * self.minfolds - 1).bit_length()
         self.padded_size = 2**nfolds
@@ -134,17 +150,17 @@ class FFTlog(object):
         self.padded_size_out_left, self.padded_size_out_right = npad - npad // 2, npad // 2
 
         if self.check_level:
-            if not np.allclose(np.log(self.x[:, 1:] / self.x[:, :-1]), self.delta, rtol=1e-3):
+            if not jnp.allclose(jnp.log(self.x[:, 1:] / self.x[:, :-1]), self.delta, rtol=1e-3):
                 raise ValueError('Input x must be log-spaced')
             if self.padded_size < self.size:
                 raise ValueError('Convolution size must be larger than input x size')
 
         if self.lowring:
-            self.lnxy = np.array([delta / np.pi * np.angle(kernel(q + 1j * np.pi / delta)) for kernel, delta, q in zip(self.kernel, self.delta, self.q)])
+            self.lnxy = jnp.array([delta / jnp.pi * jnp.angle(kernel(q + 1j * np.pi / delta)) for kernel, delta, q in zip(self.kernel, self.delta, self.q)], dtype=self.x.dtype)
         else:
-            self.lnxy = np.log(self.xy) + self.delta
+            self.lnxy = jnp.log(self.xy) + self.delta
 
-        self.y = np.exp(self.lnxy - self.delta)[:, None] / self.x[:, ::-1]
+        self.y = jnp.exp(self.lnxy - self.delta)[:, None] / self.x[:, ::-1]
 
         m = np.arange(0, self.padded_size // 2 + 1)
         self.padded_u, self.padded_prefactor, self.padded_postfactor = [], [], []
@@ -158,11 +174,11 @@ class FFTlog(object):
                 u = prev_u
             else:
                 u = prev_u = kernel(q + 2j * np.pi / self.padded_size / delta * m)
-            self.padded_u.append(u * np.exp(-2j * np.pi * lnxy / self.padded_size / delta * m))
+            self.padded_u.append(u * jnp.exp(-2j * jnp.pi * lnxy / self.padded_size / delta * m))
             prev_kernel, prev_q, prev_delta = kernel, q, delta
-        self.padded_u = np.array(self.padded_u)
-        self.padded_prefactor = np.array(self.padded_prefactor)
-        self.padded_postfactor = np.array(self.padded_postfactor)
+        self.padded_u = jnp.array(self.padded_u)
+        self.padded_prefactor = jnp.array(self.padded_prefactor)
+        self.padded_postfactor = jnp.array(self.padded_postfactor)
 
     def __call__(self, fun, extrap=0, keep_padding=False):
         """
@@ -441,23 +457,26 @@ def pad(array, pad_width, axis=-1, extrap=0):
     to_axis = [1] * array.ndim
     to_axis[axis] = -1
 
+    def index(i):
+        return jnp.full(1, i, dtype='i4')
+
     if extrap_left == 'edge':
-        end = jnp.take(array, [0], axis=axis)
+        end = jnp.take(array, index(0), axis=axis)
         pad_left = jnp.repeat(end, pad_width_left, axis=axis)
     elif extrap_left == 'log':
-        end = jnp.take(array, [0], axis=axis)
-        ratio = jnp.take(array, [1], axis=axis) / end
+        end = jnp.take(array, index(0), axis=axis)
+        ratio = jnp.take(array, index(1), axis=axis) / end
         exp = jnp.arange(-pad_width_left, 0).reshape(to_axis)
         pad_left = end * ratio ** exp
     else:
         pad_left = jnp.full(array.shape[:axis] + (pad_width_left,) + array.shape[axis + 1:], extrap_left)
 
     if extrap_right == 'edge':
-        end = jnp.take(array, [-1], axis=axis)
+        end = jnp.take(array, index(-1), axis=axis)
         pad_right = jnp.repeat(end, pad_width_right, axis=axis)
     elif extrap_right == 'log':
-        end = jnp.take(array, [-1], axis=axis)
-        ratio = jnp.take(array, [-2], axis=axis) / end
+        end = jnp.take(array, index(-1), axis=axis)
+        ratio = jnp.take(array, index(-2), axis=axis) / end
         exp = jnp.arange(1, pad_width_right + 1).reshape(to_axis)
         pad_right = end / ratio ** exp
     else:
@@ -507,6 +526,7 @@ class NumpyFFTEngine(BaseFFTEngine):
 
 def apply_along_last_axes(func, array, naxes=1, toret=None):
     """Apply callable ``func`` over the last ``naxes`` of ``array``."""
+    # Used by FFTW only so input has to be numpy (not jax)
     if toret is None:
         toret = np.empty_like(array)
     shape_bak = array.shape
@@ -650,7 +670,9 @@ class BesselJKernel(BaseBesselKernel):
     """(Mellin transform of) Bessel kernel."""
 
     def eval(self, z):
-        return np.exp(np.log(2) * (z - 1) + loggamma(0.5 * (self.nu + z)) - loggamma(0.5 * (2 + self.nu - z)))
+        jnp, use_jax = numpy_jax(z, return_use_jax=True)
+        loggamma = jax_loggamma if use_jax else numpy_loggamma
+        return jnp.exp(jnp.log(2) * (z - 1) + loggamma(0.5 * (self.nu + z)) - loggamma(0.5 * (2 + self.nu - z)))
 
 
 class SphericalBesselJKernel(BaseBesselKernel):
@@ -658,7 +680,9 @@ class SphericalBesselJKernel(BaseBesselKernel):
     """(Mellin transform of) spherical Bessel kernel."""
 
     def eval(self, z):
-        return np.exp(np.log(2) * (z - 1.5) + loggamma(0.5 * (self.nu + z)) - loggamma(0.5 * (3 + self.nu - z)))
+        jnp, use_jax = numpy_jax(z, return_use_jax=True)
+        loggamma = jax_loggamma if use_jax else numpy_loggamma
+        return jnp.exp(jnp.log(2) * (z - 1.5) + loggamma(0.5 * (self.nu + z)) - loggamma(0.5 * (3 + self.nu - z)))
 
 
 class BaseTophatKernel(BaseKernel):
@@ -677,7 +701,9 @@ class TophatKernel(BaseTophatKernel):
     """(Mellin transform of) tophat kernel."""
 
     def eval(self, z):
-        return np.exp(np.log(2) * (z - 1) + loggamma(1 + 0.5 * self.ndim) + loggamma(0.5 * z) - loggamma(0.5 * (2 + self.ndim - z)))
+        jnp, use_jax = numpy_jax(z, return_use_jax=True)
+        loggamma = jax_loggamma if use_jax else numpy_loggamma
+        return jnp.exp(jnp.log(2) * (z - 1) + loggamma(1 + 0.5 * self.ndim) + loggamma(0.5 * z) - loggamma(0.5 * (2 + self.ndim - z)))
 
 
 class TophatSqKernel(BaseTophatKernel):
@@ -686,24 +712,18 @@ class TophatSqKernel(BaseTophatKernel):
 
     def __init__(self, ndim=1):
         self.ndim = ndim
+
+    def eval(self, z):
+        jnp, use_jax = numpy_jax(z, return_use_jax=True)
+        loggamma = jax_loggamma if use_jax else numpy_loggamma
         if self.ndim == 1:
-
-            def eval(z):
-                return -0.25 * np.sqrt(np.pi) * np.exp(loggamma(0.5 * (z - 2)) - loggamma(0.5 * (3 - z)))
-
+            return -0.25 * jnp.sqrt(jnp.pi) * jnp.exp(loggamma(0.5 * (z - 2)) - loggamma(0.5 * (3 - z)))
         elif self.ndim == 3:
-
-            def eval(z):
-                return 2.25 * np.sqrt(np.pi) * (z - 2) / (z - 6) * np.exp(loggamma(0.5 * (z - 4)) - loggamma(0.5 * (5 - z)))
-
+            return 2.25 * jnp.sqrt(jnp.pi) * (z - 2) / (z - 6) * jnp.exp(loggamma(0.5 * (z - 4)) - loggamma(0.5 * (5 - z)))
         else:
-
-            def eval(z):
-                return np.exp(np.log(2) * (self.ndim - 1) + 2 * loggamma(1 + 0.5 * self.ndim)
+            return jnp.exp(jnp.log(2) * (self.ndim - 1) + 2 * loggamma(1 + 0.5 * self.ndim)
                               + loggamma(0.5 * (1 + self.ndim - z)) + loggamma(0.5 * z)
-                              - loggamma(1 + self.ndim - 0.5 * z) - loggamma(0.5 * (2 + self.ndim - z))) / np.sqrt(np.pi)
-
-        self.eval = eval
+                              - loggamma(1 + self.ndim - 0.5 * z) - loggamma(0.5 * (2 + self.ndim - z))) / jnp.sqrt(jnp.pi)
 
 
 class GaussianKernel(BaseKernel):
@@ -711,6 +731,8 @@ class GaussianKernel(BaseKernel):
     """(Mellin transform of) Gaussian kernel."""
 
     def eval(self, z):
+        jnp, use_jax = numpy_jax(z, return_use_jax=True)
+        gamma = jax_gamma if use_jax else numpy_gamma
         return 2**(0.5 * z - 1) * gamma(0.5 * z)
 
 
@@ -719,4 +741,6 @@ class GaussianSqKernel(BaseKernel):
     """(Mellin transform of) square of Gaussian kernel."""
 
     def eval(self, z):
+        jnp, use_jax = numpy_jax(z, return_use_jax=True)
+        gamma = jax_gamma if use_jax else numpy_gamma
         return 0.5 * gamma(0.5 * z)

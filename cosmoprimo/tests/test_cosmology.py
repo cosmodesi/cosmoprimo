@@ -795,20 +795,20 @@ def test_jax():
     from jax import jit, jacfwd
     from cosmoprimo.fiducial import DESI
 
-    def test(**params):
+    def test(params):
         cosmo = DESI(engine='eisenstein_hu', **params)
         z = jnp.linspace(0., 1., 10)
         return cosmo.sigma8_z(z)
 
-    test = jit(test)
-    print(test(Omega_m=0.3, logA=3.))
+    test_jit = jit(test)
+    print(test_jit(dict(Omega_m=0.3, logA=3.)))
+    test_jacfwd = jacfwd(test)
+    print(test_jacfwd(dict(Omega_m=0.3, logA=3.)))
 
 
 if __name__ == '__main__':
 
     test_jax()
-    exit()
-
     test_params()
     test_engine()
     for params in list_params:

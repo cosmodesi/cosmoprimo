@@ -65,38 +65,25 @@ def _pad_log(k, pk, extrap_kmin=_default_extrap_kmin, extrap_kmax=_default_extra
     logpk : array
         log10 of power spectrum.
     """
-    logk = np.log10(k)
-    logpk = np.log10(pk)
-    padlowk, padhighk = [], []
-    padlowpk, padhighpk = None, None
-    log_extrap_kmax = np.log10(extrap_kmax)
-    log_extrap_kmin = np.log10(extrap_kmin)
-    if log_extrap_kmax > logk[-1]:
-        dlogpkdlogk = (logpk[-1] - logpk[-2]) / (logk[-1] - logk[-2])
-        padhighk = [logk[-1] * 0.1 + log_extrap_kmax * 0.9, log_extrap_kmax]
-        delta = [dlogpkdlogk * (padhighk[0] - logk[-1]), dlogpkdlogk * (padhighk[1] - logk[-1])]
-        padhighpk = np.array([logpk[-1] + delta[0], logpk[-1] + delta[1]])
-        # if log_extrap_kmax too close to logk
-        if padhighk[1] <= padhighk[0] or padhighk[0] <= logk[-1]:
-            logk = logk[:-1]
-            logpk = logpk[:-1]
-            padhighk = padhighk[1:]
-            padhighpk = padhighpk[1:]
-    if log_extrap_kmin < logk[0]:
-        dlogpkdlogk = (logpk[1] - logpk[0]) / (logk[1] - logk[0])
-        padlowk = [log_extrap_kmin, logk[0] * 0.1 + log_extrap_kmin * 0.9]
-        delta = [dlogpkdlogk * (padlowk[0] - logk[0]), dlogpkdlogk * (padlowk[1] - logk[0])]
-        padlowpk = np.array([logpk[0] + delta[0], logpk[0] + delta[1]])
-        if padlowk[1] <= padlowk[0] or padlowk[1] >= logk[0]:
-            logk = logk[1:]
-            logpk = logpk[1:]
-            padlowk = padlowk[:-1]
-            padlowpk = padlowpk[:-1]
-    logk = np.concatenate([padlowk, logk, padhighk], axis=0)
-    s = [logpk]
-    if padlowpk is not None: s = [padlowpk] + s
-    if padhighpk is not None: s = s + [padhighpk]
-    logpk = np.concatenate(s, axis=0)
+    jnp = numpy_jax(k, pk)
+    logk = jnp.log10(k)
+    logpk = jnp.log10(pk)
+    log_extrap_kmin = jnp.log10(jnp.minimum(extrap_kmin, k[0] * (1 - 1e-9)))
+    log_extrap_kmax = jnp.log10(jnp.maximum(extrap_kmax, k[-1] * (1 + 1e-9)))
+    dtype = logpk.dtype
+
+    dlogpkdlogk = (logpk[-1] - logpk[-2]) / (logk[-1] - logk[-2])
+    padhighk = jnp.array([logk[-1] * 0.1 + log_extrap_kmax * 0.9, log_extrap_kmax], dtype=dtype)
+    delta = [dlogpkdlogk * (padhighk[0] - logk[-1]), dlogpkdlogk * (padhighk[1] - logk[-1])]
+    padhighpk = jnp.array([logpk[-1] + delta[0], logpk[-1] + delta[1]], dtype=dtype)
+
+    dlogpkdlogk = (logpk[1] - logpk[0]) / (logk[1] - logk[0])
+    padlowk = jnp.array([log_extrap_kmin, logk[0] * 0.1 + log_extrap_kmin * 0.9], dtype=dtype)
+    delta = [dlogpkdlogk * (padlowk[0] - logk[0]), dlogpkdlogk * (padlowk[1] - logk[0])]
+    padlowpk = jnp.array([logpk[0] + delta[0], logpk[0] + delta[1]], dtype=dtype)
+
+    logk = jnp.concatenate([padlowk, logk, padhighk], axis=0)
+    logpk = jnp.concatenate([padlowpk, logpk, padhighpk], axis=0)
     return logk, logpk
 
 
@@ -121,12 +108,13 @@ def _kernel_tophat_highx(x):
 def kernel_tophat2(x):
     """Non-vectorized tophat function."""
     jnp = numpy_jax(x)
-    x = jnp.array(x)
+    x = jnp.asarray(x)
     mask = x < 0.1
     if x.size:
-        x = x.copy()
-        x = opmask(x, mask, _kernel_tophat_lowx(x[mask]**2)**2)
-        x = opmask(x, ~mask, _kernel_tophat_highx(x[~mask])**2)
+        #x = x.copy()
+        #x = opmask(x, mask, _kernel_tophat_lowx(x[mask]**2)**2)
+        #x = opmask(x, ~mask, _kernel_tophat_highx(x[~mask])**2)
+        x = jnp.where(mask, _kernel_tophat_lowx(x**2), _kernel_tophat_highx(x))**2
         return x
     if mask: return _kernel_tophat_lowx(x**2)**2
     return _kernel_tophat_highx(x)**2
@@ -160,7 +148,7 @@ def integrate_sigma_d2(pk, kmin=1e-7, kmax=1e2, method='simpson', epsabs=1e-5, e
         r.m.s. of the displacement field.
 
     """
-    p = pk(float(kmin))
+    p = pk(kmin)
     pshape = p.shape
     jnp = numpy_jax(p)
 
@@ -242,7 +230,7 @@ def integrate_sigma_r2(r, pk, kmin=1e-7, kmax=1e2, method='fftlog', epsabs=1e-5,
     sigmar2 : float
         Variance of perturbations.
     """
-    p = pk(float(kmin))
+    p = pk(kmin)
     pshape = p.shape
     jnp = numpy_jax(p)
 
@@ -298,7 +286,7 @@ def integrate_sigma_r2(r, pk, kmin=1e-7, kmax=1e2, method='fftlog', epsabs=1e-5,
         if nk is None: nk = 1024
         k = jnp.geomspace(kmin, kmax, nk)
         s, var = TophatVariance(k)(pk(k).reshape(k.shape + (-1,)).T)
-        tmp = (2. * np.pi**2) * Interpolator1D(s, var.T)(r)
+        tmp = (2. * np.pi**2) * Interpolator1D(s, var.T, assume_sorted=True)(r)
     tmp = jnp.asarray(tmp).reshape(rshape + pshape)
     sigmar2 = 1. / (2. * jnp.pi**2) * tmp
     return sigmar2.astype(dtype)
@@ -353,15 +341,13 @@ class _BasePowerSpectrumInterpolator(BaseClass):
         self.interp_k = str(interp_k)
         self.extrap_pk = str(extrap_pk)
         k, pk = self.k, self._pk
+        self.extrap_kmin, self.extrap_kmax = k[0], k[-1]
         if self.extrap_pk == 'log':
             if self.interp_k != 'log':
                 raise ValueError('log-log extrapolation requires log-x interpolation')
-            extrap_kmin = min(extrap_kmin, self.k[0] * (1 - 1e-9))
-            extrap_kmax = max(extrap_kmax, self.k[-1] * (1 + 1e-9))
+            self.extrap_kmin, self.extrap_kmax = extrap_kmin, extrap_kmax
             k, pk = _pad_log(k, pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
             k, pk = 10**k, 10**pk
-        self.extrap_kmin = k[0]
-        self.extrap_kmax = k[-1]
         return k, pk
 
     def params(self):
@@ -483,9 +469,10 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         self = cls.__new__(cls)
         self.__dict__.update(self.default_params)
         self._rsigma8sq = 1.
-        self.k = np.sort(np.asarray(k, dtype='f8').ravel())
+        jnp = numpy_jax(k)
+        self.k = jnp.sort(jnp.asarray(k, dtype='f8').ravel())
         self._np = numpy_jax(pk_callable(k[:1]))
-        self.extrap_kmin, self.extrap_kmax = min(extrap_kmin, self.k[0]), max(extrap_kmax, self.k[-1])
+        self.extrap_kmin, self.extrap_kmax = self._np.minimum(extrap_kmin, self.k[0]), self._np.maximum(extrap_kmax, self.k[-1])
         #self.extrap_kmin, self.extrap_kmax = self.kmin, self.kmax
         self.is_from_callable = True
 
@@ -494,12 +481,9 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
             k = self._np.asarray(k, dtype=dtype)
             toret_shape = k.shape
             k = k.ravel()
-            toret = self._np.full(k.size, self._np.nan, dtype=dtype)
-            if toret.size:
-                mask_k, = _mask_bounds([k], [(self.extrap_kmin, self.extrap_kmax)], bounds_error=bounds_error)
-                k = k[mask_k]
-                toret = opmask(toret, mask_k, pk_callable(k, **kwargs))
-            return toret.reshape(toret_shape)
+            mask_k, = _mask_bounds([k], [(self.extrap_kmin, self.extrap_kmax)], bounds_error=bounds_error)
+            toret = self._np.where(mask_k, pk_callable(k, **kwargs), self._np.nan)
+            return toret.astype(dtype).reshape(toret_shape)
 
         self._interp = interp
 
@@ -540,7 +524,8 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         -------
         sigmad : array_like
         """
-        return integrate_sigma_d2(self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, **kwargs)**0.5
+        toret = integrate_sigma_d2(self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, **kwargs)**0.5
+        return toret
 
     def sigma_r(self, r, **kwargs):
         r"""
@@ -567,7 +552,8 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         sigmar : array_like
             Array of shape ``(r.size,)``.
         """
-        return integrate_sigma_r2(r, self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, **kwargs)**0.5
+        toret = integrate_sigma_r2(r, self, kmin=self.extrap_kmin, kmax=self.extrap_kmax, **kwargs)**0.5
+        return toret.astype(_bcast_dtype(r))
 
     def sigma8(self, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""
@@ -615,7 +601,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         Initialize :class:`PowerSpectrumInterpolator2D`.
 
         ``growth_factor_sq`` is a callable that can be prodided to rescale the output of the base spline interpolation.
-        Indeed, variations of :math:`z \rightarrow P(k,z)` are (mostly) :math:`k` scale independent, such that more accurate interpolation in ``z``
+        Indeed, variations of :math:`z \rightarrow P(k, z)` are (mostly) :math:`k` scale independent, such that more accurate interpolation in ``z``
         can be achieved by providing the `z` variations separately in a well-sampled ``growth_factor_sq``.
 
         Parameters
@@ -676,25 +662,20 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             else:
                 toret_shape = k.shape
             k, z = (xx.ravel() for xx in (k, z))
-            toret = self._np.full((k.size, z.size) if grid else (k.size,), self._np.nan, dtype=dtype)
-            if toret.size:
-                mask_k, mask_z = _mask_bounds([k, z], [(self.extrap_kmin, self.extrap_kmax), (self.zmin, self.zmax) if is2d else (-self._np.inf, self._np.inf)], bounds_error=bounds_error)
+            mask_k, mask_z = _mask_bounds([k, z], [(self.extrap_kmin, self.extrap_kmax), (self.zmin, self.zmax)], bounds_error=bounds_error)
+            if not is2d: mask_z |= True  # ignore input z
+            if grid: mask_k = mask_k[:, None] & mask_z
+            else: mask_k = mask_k & mask_z
+            if is2d:
+                tmp = _interp(k, z, grid=grid, **kwargs)
+            else:
+                tmp = _interp(k, **kwargs)
                 if grid:
-                    mask_k, mask_z = (self._np.nonzero(mask)[0] for mask in (mask_k, mask_z))  # for jnp.ix_
-                else:
-                    mask_k = mask_z = mask_k & mask_z
-                k, z = k[mask_k], z[mask_z]
-                if is2d:
-                    toret = opmask(toret, self._np.ix_(mask_k, mask_z) if grid else mask_k, _interp(k, z, grid=grid, **kwargs))
-                else:
-                    tmp = _interp(k, **kwargs)
-                    if grid:
-                        toret = opmask(toret, self._np.ix_(mask_k, mask_z), tmp[:, None])
-                    else:
-                        toret = opmask(toret, mask_k, tmp)
-                if self.growth_factor_sq is not None and not ignore_growth:
-                    toret = opmask(toret, (slice(None), mask_z) if grid else mask_z, toret[..., mask_z] * self.growth_factor_sq(z).astype(dtype))
-            return toret.reshape(toret_shape)
+                    tmp = self._np.repeat(tmp[:, None], z.size, axis=-1)
+            if self.growth_factor_sq is not None and not ignore_growth:
+                tmp = tmp * self.growth_factor_sq(z).astype(dtype)
+            toret = self._np.where(mask_k, tmp, self._np.nan)
+            return toret.astype(dtype).reshape(toret_shape)
 
         self._interp = interp
 
@@ -767,29 +748,23 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             else:
                 toret_shape = k.shape
             k, z = (xx.ravel() for xx in (k, z))
-            toret = self._np.full((k.size, z.size) if grid else (k.size,), self._np.nan, dtype=dtype)
-            if toret.size:
-                mask_k, mask_z = _mask_bounds([k, z], [(self.extrap_kmin, self.extrap_kmax), (self.zmin, self.zmax)], bounds_error=bounds_error)
+            mask_k, mask_z = _mask_bounds([k, z], [(self.extrap_kmin, self.extrap_kmax), (self.zmin, self.zmax)], bounds_error=bounds_error)
+            if grid: mask_k = mask_k[:, None] & mask_z
+            else: mask_k = mask_k & mask_z
+            if self.growth_factor_sq is not None:
+                tmp = pk_callable(k).astype(dtype)
+                if not ignore_growth:
+                    growth = self.growth_factor_sq(z).astype(dtype)
+                else:
+                    growth = 1.
                 if grid:
-                    mask_k, mask_z = (self._np.nonzero(mask)[0] for mask in (mask_k, mask_z))
+                    tmp = tmp[..., None] * growth
                 else:
-                    mask_k = mask_z = mask_k & mask_z
-                k, z = k[mask_k], z[mask_z]
-
-                if self.growth_factor_sq is not None:
-                    tmp = pk_callable(k).astype(dtype)
-                    if not ignore_growth:
-                        growth = self.growth_factor_sq(z).astype(dtype)
-                    else:
-                        growth = 1.
-                    if grid:
-                        toret = opmask(toret, self._np.ix_(mask_k, mask_z), tmp[..., None] * growth)
-                    else:
-                        toret = opmask(toret, mask_k, tmp * growth)
-                else:
-                    tmp = pk_callable(k, z, grid=grid)
-                    toret = opmask(toret, self._np.ix_(mask_k, mask_z) if grid else mask_k, tmp)
-            return toret.reshape(toret_shape)
+                    tmp = tmp * growth
+            else:
+                tmp = pk_callable(k, z, grid=grid)
+            toret = self._np.where(mask_k, tmp, self._np.nan)
+            return toret.astype(dtype).reshape(toret_shape)
 
         self._interp = interp
         return self
@@ -841,7 +816,8 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         -------
         sigmadz : array_like
         """
-        return integrate_sigma_d2(lambda k: self(k, z), kmin=self.extrap_kmin, kmax=self.extrap_kmax, **kwargs)**0.5
+        toret = integrate_sigma_d2(lambda k: self(k, z), kmin=self.extrap_kmin, kmax=self.extrap_kmax, **kwargs)**0.5
+        return toret.astype(_bcast_dtype(z))
 
     def sigma_rz(self, r, z, **kwargs):
         r"""
@@ -871,7 +847,8 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         sigmarz : array_like
             Array of shape ``(r.size, z.size)``.
         """
-        return integrate_sigma_r2(r, lambda k: self(k, z), kmin=self.extrap_kmin, kmax=self.extrap_kmax, **kwargs)**0.5
+        toret = integrate_sigma_r2(r, lambda k: self(k, z), kmin=self.extrap_kmin, kmax=self.extrap_kmax, **kwargs)**0.5
+        return toret.astype(_bcast_dtype(r, z))
 
     def sigma8_z(self, z=0, **kwargs):
         """Return the r.m.s. of perturbations in a sphere of 8."""
@@ -924,26 +901,15 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         z = z.ravel()
 
         def finite_difference(fun):
-            mask_min = z < self.zmin + hdz
-            mask_max = z > self.zmax - hdz
-            mask_mid = ~(mask_min | mask_max)
-            toret_min = (-fun(z[mask_min] + dz) + 4 * fun(z[mask_min] + hdz) - 3 * fun(z[mask_min])) / dz
-            toret_max = -(-fun(z[mask_max] - dz) + 4 * fun(z[mask_max] - hdz) - 3 * fun(z[mask_max])) / dz
-            toret_mid = (fun(z[mask_mid] + hdz) - fun(z[mask_mid] - hdz)) / dz
-            toret = self._np.empty(r.shape + z.shape, dtype=dtype)
-
-            def reshape(mask):
-                return (slice(None),) * r.ndim + self._np.nonzero(mask)
-
-            toret = opmask(toret, reshape(mask_min), toret_min)
-            toret = opmask(toret, reshape(mask_max), toret_max)
-            toret = opmask(toret, reshape(mask_mid), toret_mid)
-            return toret
+            feval = [feval.reshape(-1, z.size) for feval in [fun(z - dz), fun(z - hdz), fun(z), fun(z + hdz), fun(z + dz)]]
+            toret = self._np.where(z < self.zmin + hdz, -feval[4] + 4 * feval[3] - 3 * feval[2], feval[3] - feval[1])
+            toret = self._np.where(z > self.zmax - hdz, -(-feval[0] + 4 * feval[1] - 3 * feval[2]), toret)
+            return toret / dz
 
         dsigdz = finite_difference(lambda z: self._np.log(self.sigma_rz(r, z, **kwargs)))
         # a = 1/(1 + z) => da = -1/(1+z)^2 dz => dln(a) = -1/(1 + z) dz
         dsigdlna = -dsigdz * (1 + z)
-        return dsigdlna.reshape(toret_shape).astype(dtype=dtype)
+        return dsigdlna.astype(dtype).reshape(toret_shape)
 
     def to_1d(self, z, **kwargs):
         """
@@ -1137,12 +1103,9 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
             s = self._np.asarray(s, dtype=dtype)
             toret_shape = s.shape
             s = s.ravel()
-            toret = self._np.full(s.size, self._np.nan, dtype=dtype)
-            if toret.size:
-                mask_s, = _mask_bounds([s], [(self.smin, self.smax)], bounds_error=bounds_error)
-                s = s[mask_s]
-                toret = opmask(toret, mask_s, xi_callable(s, **kwargs))
-            return toret.reshape(toret_shape).astype(dtype=dtype)
+            mask_s, = _mask_bounds([s], [(self.smin, self.smax)], bounds_error=bounds_error)
+            toret = self._np.where(mask_s, xi_callable(s, **kwargs), self._np.nan)
+            return toret.astype(dtype).reshape(toret_shape)
 
         self._interp = interp
         return self
@@ -1272,25 +1235,20 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
             else:
                 toret_shape = s.shape
             s, z = (xx.ravel() for xx in (s, z))
-            toret = self._np.full((s.size, z.size) if grid else (s.size,), self._np.nan, dtype=dtype)
-            if toret.size:
-                mask_s, mask_z = _mask_bounds([s, z], [(self.smin, self.smax), (self.zmin, self.zmax) if is2d else (-self._np.inf, self._np.inf)], bounds_error=bounds_error)
+            mask_s, mask_z = _mask_bounds([s, z], [(self.smin, self.smax), (self.zmin, self.zmax)], bounds_error=bounds_error)
+            if not is2d: mask_z |= True  # ignore input z
+            if grid: mask_s = mask_s[:, None] & mask_z
+            else: mask_s = mask_s & mask_z
+            if is2d:
+                tmp = _interp(s, z, grid=grid, **kwargs)
+            else:
+                tmp = _interp(s, **kwargs)
                 if grid:
-                    mask_s, mask_z = (self._np.nonzero(mask)[0] for mask in (mask_s, mask_z))  # for jnp.ix_
-                else:
-                    mask_s = mask_z = mask_s & mask_z
-                s, z = s[mask_s], z[mask_z]
-                if is2d:
-                    toret = opmask(toret, self._np.ix_(mask_s, mask_z) if grid else mask_s, _interp(s, z, grid=grid, **kwargs))
-                else:
-                    tmp = _interp(s, **kwargs)
-                    if grid:
-                        toret = opmask(toret, self._np.ix_(mask_s, mask_z), tmp[:, None])
-                    else:
-                        toret = opmask(toret, mask_s, tmp)
-                if self.growth_factor_sq is not None and not ignore_growth:
-                    toret = opmask(toret, (slice(None), mask_z) if grid else mask_z, toret[..., mask_z] * self.growth_factor_sq(z).astype(dtype))
-            return toret.reshape(toret_shape)
+                    tmp = self._np.repeat(tmp[:, None], z.size, axis=-1)
+            if self.growth_factor_sq is not None and not ignore_growth:
+                tmp = tmp * self.growth_factor_sq(z).astype(dtype)
+            toret = self._np.where(mask_s, tmp, self._np.nan)
+            return toret.astype(dtype).reshape(toret_shape)
 
         self._interp = interp
 
@@ -1387,29 +1345,24 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
             else:
                 toret_shape = s.shape
             s, z = (xx.ravel() for xx in (s, z))
-            toret = self._np.full((s.size, z.size) if grid else (s.size,), self._np.nan, dtype=dtype)
-            if toret.size:
-                mask_s, mask_z = _mask_bounds([s, z], [(self.smin, self.smax), (self.zmin, self.zmax)], bounds_error=bounds_error)
-                if grid:
-                    mask_s, mask_z = (self._np.nonzero(mask)[0] for mask in (mask_s, mask_z))
-                else:
-                    mask_s = mask_z = mask_s & mask_z
-                s, z = s[mask_s], z[mask_z]
+            mask_s, mask_z = _mask_bounds([s, z], [(self.smin, self.smax), (self.zmin, self.zmax)], bounds_error=bounds_error)
+            if grid: mask_s = mask_s[:, None] & mask_z
+            else: mask_s = mask_s & mask_z
 
-                if self.growth_factor_sq is not None:
-                    tmp = xi_callable(s).astype(dtype)
-                    if not ignore_growth:
-                        growth = self.growth_factor_sq(z).astype(dtype)
-                    else:
-                        growth = 1.
-                    if grid:
-                        toret = opmask(toret, self._np.ix_(mask_s, mask_z), tmp[..., None] * growth)
-                    else:
-                        toret = opmask(toret, mask_s, tmp * growth)
+            if self.growth_factor_sq is not None:
+                tmp = xi_callable(s).astype(dtype)
+                if not ignore_growth:
+                    growth = self.growth_factor_sq(z).astype(dtype)
                 else:
-                    tmp = xi_callable(s, z, grid=grid)
-                    toret = opmask(toret, self._np.ix_(mask_s, mask_z) if grid else mask_s, tmp)
-            return toret.reshape(toret_shape)
+                    growth = 1.
+                if grid:
+                    tmp = tmp[..., None] * growth
+                else:
+                    tmp = tmp * growth
+            else:
+                tmp = xi_callable(s, z, grid=grid)
+            toret = self._np.where(mask_s, tmp, self._np.nan)
+            return toret.astype(dtype).reshape(toret_shape)
 
         self._interp = interp
         return self

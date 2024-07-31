@@ -4,7 +4,7 @@ For the power spectrum, the most "good-looking" ones are :class:`Wallish2018Powe
 :class:`PeakAveragePowerSpectrumBAOFilter`.
 For the correlation function: :class:`Kirkby2013CorrelationFunctionBAOFilter`.
 jax-differentiable are:
-- :class:`Hinton2017PowerSpectrumBAOFilter`
+- :class:`Hinton2017PowerSpectrumBAOFilter`, only after initialization (to set peak maxima; should be fixable).
 - :class:`EHNoWigglePolyPowerSpectrumBAOFilter`
 - :class:`PeakAveragePowerSpectrumBAOFilter`, only after initialization (to set peak maxima; should be fixable).
 - :class:`Kirkby2013CorrelationFunctionBAOFilter`
@@ -213,11 +213,11 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
 
     def _compute(self):
         """Run filter."""
-        logpk = np.log10(self.pk[self.kmask].T)
-        self.lss(logpk, constraint=np.column_stack([logpk[..., 0], logpk[..., 1] - logpk[..., 0],
-                                                    logpk[..., 2] - 2. * logpk[..., 1] + logpk[..., 0],
-                                                    logpk[..., -1], logpk[..., -2] - logpk[..., -1],
-                                                    logpk[..., -3] - 2. * logpk[..., -2] + logpk[..., -1]]))
+        logpk = self._np.log10(self.pk[self.kmask].T)
+        self.lss(logpk, constraint=self._np.column_stack([logpk[..., 0], logpk[..., 1] - logpk[..., 0],
+                                                          logpk[..., 2] - 2. * logpk[..., 1] + logpk[..., 0],
+                                                          logpk[..., -1], logpk[..., -2] - logpk[..., -1],
+                                                          logpk[..., -3] - 2. * logpk[..., -2] + logpk[..., -1]]))
 
         self.pknow = self.pk.copy()
         self.pknow[self.kmask] = 10 ** self.lss.model().T
@@ -505,13 +505,12 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
             k = self.k[np.concatenate([np.arange(npadlow), ik, np.arange(ikmax, self.k.size)], axis=0)]
             self.k_peaks.append(k)
 
-    @staticmethod
-    def _interp(xh, xl, x, y, k=3):
-        logx = np.log10(x)
+    def _interp(self, xh, xl, x, y, k=3):
+        logx = self._np.log10(x)
         toret = 0.
         interp = Interpolator1D(logx, y, k=k, extrap=True)
         for xx in [xh, xl]:
-            logxx = np.log10(xx)
+            logxx = self._np.log10(xx)
             yy = interp(logxx)
             toret += Interpolator1D(logxx, yy, k=k)(logx)
         return toret / 2.
