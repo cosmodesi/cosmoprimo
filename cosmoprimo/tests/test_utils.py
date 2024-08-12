@@ -75,7 +75,25 @@ def test_redshift_array():
     assert np.allclose(redshift(distance(z)), z, atol=1e-6)
 
 
+def test_jax():
+    from jax import numpy as jnp
+    from cosmoprimo.jax import romberg
+
+    def fun(x):
+        return x
+
+    assert jnp.allclose(romberg(fun, 0., 1.), 1. / 2.)
+    assert jnp.allclose(romberg(fun, jnp.array(0.), jnp.array(1.)), 1. / 2.)
+
+    def fun(x):
+        toret = jnp.column_stack([x, x**2]).reshape(x.shape + (2,))
+        return toret
+
+    assert jnp.allclose(romberg(fun, jnp.array(0.), jnp.array(1.)), jnp.array([1. / 2., 1. / 3.]))
+
+
 if __name__ == '__main__':
 
     test_least_squares()
     test_redshift_array()
+    test_jax()

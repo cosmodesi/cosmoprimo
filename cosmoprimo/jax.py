@@ -563,7 +563,7 @@ def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return
         ordsum += _difftrap(vfunc, interval, n)
         x = intrange * ordsum / n
         _, row = scan(scan_fun, (x, 0), last_row[:i])
-        row = numpy.concatenate([numpy.atleast_1d(x), row])
+        row = numpy.concatenate([x[None, :], row])
         err = numpy.abs(last_row[i - 1] - row[i])
         last_row = row
 
