@@ -5,8 +5,8 @@ from typing import Any
 import numpy as np
 from numpy.core.numeric import normalize_axis_index
 
-from .jax import jit, vmap
-from .jax import numpy as jnp
+from cosmoprimo.jax import jit, vmap
+from cosmoprimo.jax import numpy as jnp
 from . import mpi
 from .samples import Samples
 from .utils import BaseClass

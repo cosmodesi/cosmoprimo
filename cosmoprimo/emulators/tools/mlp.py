@@ -1,6 +1,5 @@
 import numpy as np
 
-from .jax import numpy as jnp
 from .base import BaseEmulatorEngine, Operation, NormOperation, ScaleOperation
 from . import mpi
 
@@ -428,7 +427,7 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
         mpi.barrier_idle(self.mpicomm)  # we rely on keras parallelisation; here we make MPI processes idle
 
         self.model_operations = self.mpicomm.bcast(self.model_operations, root=0)
-        
+
     def _predict_no_operation(self, X):
         x = X
         for operation in self.model_operations:

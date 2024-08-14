@@ -1,7 +1,7 @@
 import itertools
 
 import numpy as np
-from .jax import numpy as jnp
+from cosmoprimo.jax import numpy as jnp
 from .base import BaseEmulatorEngine
 from . import mpi
 
