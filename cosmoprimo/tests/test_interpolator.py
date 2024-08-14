@@ -40,7 +40,7 @@ def test_power_spectrum():
     pk = tr.transfer_k(k)**2 * k ** cosmo['n_s']
     interp = PowerSpectrumInterpolator1D(k, pk)
     check_shape_1d(interp)
-    interp2d = PowerSpectrumInterpolator2D(k, z=[0.], pk=pk[..., None])
+    interp2d = PowerSpectrumInterpolator2D(k, z=[0., 0.5, 1., 1.5], pk=np.repeat(pk[:, None], 4, axis=-1))
     interp2d(k, z=0.)
 
     interp = PowerSpectrumInterpolator1D(k, pk)

@@ -62,8 +62,8 @@ class CambEngine(BaseEngine):
 
             for key, value in self._extra_params.items():
                 if key not in self._params:
-                    if key == 'accuracy':
-                        self._camb_params.set_accuracy(self._extra_params['accuracy'])
+                    if key in ['lSampleBoost', 'AccuracyBoost', 'lAccuracyBoost']:
+                        setattr(self._camb_params.Accuracy, key, value)
                     else:
                         setattr(self._camb_params, key, value)
 

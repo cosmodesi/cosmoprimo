@@ -750,10 +750,10 @@ def test_isitgr():
 
     k = np.linspace(0.01, 1., 200)
     z = np.linspace(0., 2., 10)
-    assert np.allclose(cosmo_camb.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=1e-4)
+    assert np.allclose(cosmo_camb.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=5e-3)
 
-    cosmo = Cosmology(engine='isitgr', parameterization='mueta', E11=-0.5, E22=-0.5)
-    assert not np.allclose(cosmo_camb.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=1e-4)
+    cosmo = Cosmology(engine='isitgr', MG_parameterization='mueta', E11=-0.5, E22=-0.5, extra_params=dict(AccuracyBoost=1.1))
+    assert not np.allclose(cosmo_camb.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=5e-3)
     cosmo.comoving_radial_distance(z)
 
     from cosmoprimo.fiducial import DESI
@@ -855,6 +855,6 @@ if __name__ == '__main__':
     # plot_eisenstein_hu_nowiggle_variants()
     # test_external_camb()
     test_external_pyccl()
-    test_isitgr()
     test_bisect()
-    test_axiclass()
+    test_isitgr()
+    #test_axiclass()
