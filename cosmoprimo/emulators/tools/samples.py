@@ -105,13 +105,14 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
         """Load samples."""
         filename = str(filename)
         cls.log_info('Loading {}.'.format(filename))
-        state = np.load(filename, allow_pickle=True)
         if filename.endswith('.npz'):
-            state = dict(state)
-            data = {name: state.pop('data.{:d}'.format(iarray)) for iarray, name in enumerate(state.pop('columns')[()])}
-            state = {**{name: value[()] for name, value in state.items()}, 'data': data}
+            with np.load(filename, allow_pickle=True) as data:
+                columns = data['columns']
+                scolumns = _select_columns(columns, include=include, exclude=exclude)
+                state = {'attrs': data['attrs'][()]}
+                state['data'] = {name: data['data.{:d}'.format(iarray)] for iarray, name in enumerate(columns) if name in scolumns}
         else:
-            state = state[()]
+            state = np.load(filename, allow_pickle=True)[()]
         new = cls.from_state(state).select(include=include, exclude=exclude)
         return new
 
@@ -250,7 +251,6 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
     def __eq__(self, other):
         """Is ``self`` equal to ``other``, i.e. same type and attributes?"""
         return type(other) == type(self) and set(other.columns()) == set(self.columns()) and all(np.all(other[name] == self[name]) for name in self.columns())
-
 
 
 class RQuasiRandomSequence(qmc.QMCEngine):

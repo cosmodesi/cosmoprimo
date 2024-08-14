@@ -25,7 +25,7 @@ def get_default_k_callable():
 
 def get_default_z_callable(key='fourier', non_linear=False):
     if 'background' in key:
-        return np.insert(np.logspace(-8, 2, 2048), 0, 0.)
+        return 1. / np.logspace(-3, 0., 256)[::-1] - 1.
     z = np.linspace(0., 10.**0.5, 30)**2  # approximates default class z
     if non_linear:
         return z[z < 2.]
