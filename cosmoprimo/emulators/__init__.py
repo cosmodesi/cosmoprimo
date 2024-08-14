@@ -102,7 +102,17 @@ def mask_subsample(size, factor=1., seed=42):
     return mask
 
 
-def plot_residual_background(ref_samples, emulated_samples, quantities=None, subsample=1., fn=None):
+def pale_colors(color, nlevels, pale_factor=0.6):
+    """Make color paler. Same as GetDist."""
+    from matplotlib.colors import colorConverter
+    color = colorConverter.to_rgb(color)
+    colors = [color]
+    for _ in range(1, nlevels):
+        colors.append([c * (1 - pale_factor) + pale_factor for c in colors[-1]])
+    return colors
+
+
+def plot_residual_background(ref_samples, emulated_samples, quantities=None, subsample=1., q=(0.68, 0.95, 0.99), color='C0', fn=None):
     """
     Plot residual of emulated background quantities against reference.
 
@@ -132,7 +142,7 @@ def plot_residual_background(ref_samples, emulated_samples, quantities=None, sub
     if isinstance(emulated_samples, Samples):
         emulated_samples = emulated_samples[mask]
     else:
-        sampler = InputSampler(get_calculator(emulated_samples, section='background'), samples=ref_samples)
+        sampler = InputSampler(get_calculator(emulated_samples, section='background'), params=[name[2:] for name in ref_samples.columns('X.*')], samples=ref_samples)
         emulated_samples = sampler.run()
 
     namespace = 'Y.background.'
@@ -145,14 +155,19 @@ def plot_residual_background(ref_samples, emulated_samples, quantities=None, sub
     lax = lax.ravel()
     if namespace + 'z' in ref_samples: z = ref_samples[namespace + 'z'][0]
     else: z = ref_samples.attrs['fixed']['background.z']
+    colors = pale_colors(color, len(q))
     for ax, name in zip(lax, quantities):
-        for ref, emulated in zip(ref_samples[namespace + name], emulated_samples[namespace + name]):
-            mask = z > 0.
-            tmp = np.abs(emulated.T[mask] / ref.T[mask] - 1.)
-            ax.plot(z[mask], np.abs(emulated.T[mask] / ref.T[mask] - 1.), color='k')
+        mask = z > 0
+        if not np.flatnonzero(emulated_samples[namespace + name]).any(): continue
+        diff = np.abs(emulated_samples[namespace + name][..., mask] / ref_samples[namespace + name][..., mask] - 1.)
+        diff = diff[np.isfinite(diff).all(axis=-1)]
+        lims = np.quantile(diff, [0.] + list(q) + [1.], axis=0)
+        for lim, color in list(zip(zip(lims[:-1], lims[1:]), colors))[::-1]:
+            ax.fill_between(z[mask], lim[0], lim[1], color=color, linewidth=0.)
         ax.set_ylabel('|emulated/ref - 1|')
-        ax.set_xscale('log')
+        #ax.set_xscale('log')
         ax.set_yscale('log')
+        ax.set_ylim(1e-4, 1.)
         ax.set_title(name)
         ax.grid(True)
     ax.set_xlabel('$z$')
@@ -162,7 +177,7 @@ def plot_residual_background(ref_samples, emulated_samples, quantities=None, sub
     return fig
 
 
-def plot_residual_thermodynamics(ref_samples, emulated_samples, quantities=None, subsample=1., fn=None):
+def plot_residual_thermodynamics(ref_samples, emulated_samples, quantities=None, subsample=1., q=(0.68, 0.95, 0.99), color='C0', fn=None):
     """
     Plot residual of emulated thermodynamics quantities against reference.
 
@@ -202,13 +217,19 @@ def plot_residual_thermodynamics(ref_samples, emulated_samples, quantities=None,
     fig, ax = plt.subplots(sharex=True, sharey=False, squeeze=True)
     fig.subplots_adjust(hspace=0.1)
     idx = np.linspace(0., 1., len(quantities))
+    colors = pale_colors(color, len(q))
     for iname, name in enumerate(quantities):
-        for ref, emulated in zip(ref_samples[namespace + name], emulated_samples[namespace + name]):
-            ax.plot(idx[iname], np.abs(emulated / ref - 1.), color='k', marker='o')
+        diff = np.abs(emulated_samples[namespace + name] / ref_samples[namespace + name] - 1.)
+        diff = diff[np.isfinite(diff)]
+        lims = np.quantile(diff, [0.] + list(q) + [1.], axis=0)
+        for lim, color in list(zip(zip(lims[:-1], lims[1:]), colors))[::-1]:
+            mask = (diff >= lim[0]) & (diff <= lim[1])
+            ax.plot(np.full(mask.sum(), idx[iname]), diff[mask], color=color, marker='.', alpha=0.1)
     ax.set_xticks(idx)
     ax.set_xticklabels(quantities, rotation=40, ha='right')
     ax.set_ylabel('|emulated/ref - 1|')
     ax.set_yscale('log')
+    ax.set_ylim(1e-7, 1.)
     ax.grid(True)
     if fn is not None:
         utils.savefig(fn, fig=fig)

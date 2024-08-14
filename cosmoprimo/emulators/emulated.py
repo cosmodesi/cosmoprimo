@@ -597,7 +597,7 @@ class Fourier(BaseSection):
                 list_of.append(tuple(sorted((of1, of2))))
         for of in list_of:
             try: state['pk.{}.{}'.format(*of)] = self.pk_interpolator(non_linear=False, of=of)(k, z)
-            except: raise
+            except: pass
         return state
 
     def __setstate__(self, state):

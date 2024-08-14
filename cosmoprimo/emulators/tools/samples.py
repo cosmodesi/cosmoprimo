@@ -14,6 +14,32 @@ from .utils import BaseClass
 class BaseMetaClass(type(UserDict), type(BaseClass)): pass
 
 
+def _select_columns(columns, include=None, exclude=None):
+    """
+    Return selected columns.
+
+    Parameters
+    ----------
+    include : str, list, default=None
+        (List of) column names to select including wildcard, e.g. '*' to select all columns,
+        ['X.*', 'a'] to select all columns starting with 'X.' and column 'a' (if exists).
+
+    exclude : str, list, default=None
+        Same as ``include``, but to exclude columns.
+
+    Returns
+    -------
+    columns : list
+        List of selected columns.
+    """
+    columns = list(columns)
+    if include is not None:
+        columns = utils.find_names(columns, include)
+    if exclude is not None:
+        columns = [column for column in columns if column not in utils.find_names(columns, exclude)]
+    return columns
+
+
 class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
 
     """
@@ -75,18 +101,19 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
             np.save(filename, state, allow_pickle=True)
 
     @classmethod
-    def load(cls, filename):
+    def load(cls, filename, include=None, exclude=None):
         """Load samples."""
         filename = str(filename)
         cls.log_info('Loading {}.'.format(filename))
-        state = np.load(filename, allow_pickle=True)
         if filename.endswith('.npz'):
-            state = dict(state)
-            data = {name: state.pop('data.{:d}'.format(iarray)) for iarray, name in enumerate(state.pop('columns')[()])}
-            state = {**{name: value[()] for name, value in state.items()}, 'data': data}
+            with np.load(filename, allow_pickle=True) as data:
+                columns = data['columns']
+                scolumns = _select_columns(columns, include=include, exclude=exclude)
+                state = {'attrs': data['attrs'][()]}
+                state['data'] = {name: data['data.{:d}'.format(iarray)] for iarray, name in enumerate(columns) if name in scolumns}
         else:
-            state = state[()]
-        new = cls.from_state(state)
+            state = np.load(filename, allow_pickle=True)[()]
+        new = cls.from_state(state).select(include=include, exclude=exclude)
         return new
 
     def __copy__(self):
@@ -173,6 +200,12 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
             return s
         return 0
 
+    def isfinite(self):
+        mask = True
+        for name, value in self.items():
+            mask &= np.isfinite(value).all(axis=tuple(range(1, value.ndim)))
+        return mask
+    
     def columns(self, include=None, exclude=None):
         """
         Return selected columns.
@@ -191,12 +224,7 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
         columns : list
             List of selected columns.
         """
-        columns = list(self.keys())
-        if include is not None:
-            columns = utils.find_names(columns, include)
-        if exclude is not None:
-            columns = [column for column in columns if column not in utils.find_names(columns, exclude)]
-        return columns
+        return _select_columns(list(self.keys()), include=include, exclude=exclude)
 
     def select(self, include=None, exclude=None):
         """
@@ -223,7 +251,6 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
     def __eq__(self, other):
         """Is ``self`` equal to ``other``, i.e. same type and attributes?"""
         return type(other) == type(self) and set(other.columns()) == set(self.columns()) and all(np.all(other[name] == self[name]) for name in self.columns())
-
 
 
 class RQuasiRandomSequence(qmc.QMCEngine):
@@ -314,7 +341,7 @@ class BaseSampler(BaseClass):
         self.calculator = calculator
         self.params = dict(params)
 
-    def run(self, save_every=20, **kwargs):
+    def run(self, save_every=20, timeout=np.inf, **kwargs):
         """
         Run sampling. Sampling can be interrupted anytime, and resumed by providing
         the path to the saved samples in ``samples`` argument of :meth:`__init__`.
@@ -632,13 +659,14 @@ class QMCSampler(BaseSampler):
         super(QMCSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=samples)
         self.engine = get_qmc_engine(engine)(d=len(self.params), **kwargs)
 
-    def points(self, niterations=300):
+    def points(self, niterations=300, nstart=None):
         lower, upper = [], []
         for limits in self.params.values():
             lower.append(limits[0])
             upper.append(limits[1])
         self.engine.reset()
-        nsamples = len(self.samples) if self.samples is not None else 0
-        self.engine.fast_forward(nsamples)
+        if nstart is None:
+            nstart = len(self.samples) if self.samples is not None else 0
+        self.engine.fast_forward(nstart)
         samples = qmc.scale(self.engine.random(n=niterations), lower, upper).T
         return Samples({param: value for param, value in zip(self.params, samples)})

@@ -543,6 +543,9 @@ def get_engine(engine):
         engine = engine.lower()
         if engine == 'class':
             from . import classy
+        #NEW: adding the engine here too (Rafaela)
+        if engine == 'axiclass':
+            from . import axiclassy
         elif engine == 'camb':
             from . import camb
         elif engine == 'isitgr':
@@ -1005,7 +1008,8 @@ class Cosmology(BaseCosmology):
         m_ncdm = _make_float(m_ncdm)
         T_ncdm_over_cmb = _make_float(T_ncdm_over_cmb)
         # Check which of the neutrino species are non-relativistic today
-        m_massive = 0.00017  # Lesgourges et al. 2012
+        #m_massive = 0.00017  # Lesgourges et al. 2012
+        m_massive = 0.  # best to keep same N_ncdm for sampling / emulating
         mask_m = m_ncdm > m_massive
         if not jax_array_types:
             # Fill an array with the non-relativistic neutrino masses

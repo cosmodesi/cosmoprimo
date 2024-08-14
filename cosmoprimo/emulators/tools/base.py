@@ -156,7 +156,7 @@ class Emulator(BaseClass):
         self.xoperations = [get_operation(operation) for operation in make_list(xoperation)]
         self.yoperations = [get_operation(operation) for operation in make_list(yoperation)]
 
-        self.engines, self.samples, self.defaults, self.fixed = {}, {}, {}, {}
+        self.engines, self.defaults, self.fixed = {}, {}, {}
         if engine is not None:
             self.set_engine(engine)
         if calculator is not None:
@@ -177,13 +177,17 @@ class Emulator(BaseClass):
         except AttributeError:
             pass
 
-    def set_engine(self, engine):
-        """Set input (str, dict, BaseEmulatorEngine) engine. Not called directly (use :meth:`__init__` or :meth:`set_samples` instead)."""
+    def set_engine(self, engine, update=True):
+        """Set input (str, dict, BaseEmulatorEngine) engine. Not called directly (use :meth:`__init__` or :meth:`set_samples` instead). ``update=True`` to add to existing engines."""
         if not hasattr(engine, 'items'):
             engine = {'*': engine}
-        self._iengines = engine
-        for key, engine in self._iengines.items():
-            self._iengines[key] = get_engine(engine)
+        engines = {key: get_engine(engine) for key, engine in engine.items()}
+        if not hasattr(self, '_input_engines'): self._input_engines = {}
+        if not hasattr(self, '_init_engines'): self._init_engines = {}
+        if update:
+            self._input_engines.update(engines)
+        else:
+            self._input_engines = engines
 
     def set_calculator(self, calculator, params):
         """Set calculator and parameter limits for sampling. Not called directly (use :meth:`__init__` or :meth:`set_samples` instead)."""
@@ -269,7 +273,7 @@ class Emulator(BaseClass):
             self.set_engine(engine)
 
         def initialize_engines(params, varied):
-            engines = utils.expand_dict(self._iengines, list(varied))
+            engines = utils.expand_dict(self._input_engines, list(varied))
             for name, engine in engines.items():
                 if engine is None:
                     raise ValueError('Engine not specified for varying attribute {}'.format(name))
@@ -314,17 +318,16 @@ class Emulator(BaseClass):
             for name in fixed: Y.pop(name)
             varied, _fixed = sort_varied_fixed(Y, subsample=min(samples.size, 10))
             fixed.update(_fixed)
-            self.fixed = fixed
             params = list(X)
 
-        params, varied, self.fixed = self.mpicomm.bcast((params, varied, self.fixed) if self.mpicomm.rank == 0 else None, root=0)
+        params, varied, fixed = self.mpicomm.bcast((params, varied, fixed) if self.mpicomm.rank == 0 else None, root=0)
+        self.fixed.update(fixed)
+        if not hasattr(self, 'samples'): self.samples = {}
 
         this_engines = initialize_engines(params, varied)
-        self.engines.update(this_engines)
-
-        for name, engine in self.engines.items():
-            if engine in this_engines.values():
-                self.samples[name] = samples
+        for name, engine in this_engines.items():
+            self.samples[name] = samples
+            self._init_engines[name] = engine
 
     def update(self, other=None, **kwargs):
         """
@@ -359,10 +362,10 @@ class Emulator(BaseClass):
         **kwargs : dict
             Optional arguments for :meth:`BaseEmulatorEngine.fit`.
         """
-        def _get_X_Y(samples, yname):
+        def _get_X_Y(samples, yname, params):
             X, Y, attrs = None, None, None
             if self.mpicomm.rank == 0:
-                X, Y = self._get_engine_X_Y(samples, fixed=self.fixed)
+                X, Y = self._get_engine_X_Y(samples, params=params, fixed=self.fixed)
                 X = np.column_stack([X[name] for name in self.engines[yname].params])
                 Y = Y[yname]
                 attrs = dict(samples.attrs)
@@ -373,16 +376,16 @@ class Emulator(BaseClass):
             return X, Y, attrs  # operations may yield jax arrays
 
         if name is None:
-            name = list(self.engines.keys())
+            name = list(self.samples.keys())
         if not utils.is_sequence(name):
             name = [name]
-        names = utils.find_names(list(self.engines.keys()), name)
+        names = utils.find_names(list(self.samples.keys()), name)
 
         for name in names:
-            self.engines[name] = engine = self.engines[name].copy()
+            self.engines[name] = engine = self._init_engines[name].copy()
             if self.mpicomm.rank == 0:
                 self.log_info('Fitting {}.'.format(name))
-            engine.fit(*_get_X_Y(self.samples[name], name), **kwargs)
+            engine.fit(*_get_X_Y(self.samples[name], name, params=engine.params), **kwargs)
 
     def predict(self, params):
         """Return emulated calculator output 'y' given input params."""
@@ -406,8 +409,8 @@ class Emulator(BaseClass):
     def __getstate__(self):
         state = {'engines': {}, 'xoperations': [], 'yoperations': []}
         for name, engine in self.engines.items():
-            if hasattr(engine, 'yshape'):  # else, not fit yet
-                state['engines'][name] = engine.__getstate__()
+            #if hasattr(engine, 'yshape'):  # else, not fit yet
+            state['engines'][name] = engine.__getstate__()
         for operation in self.xoperations:
             state['xoperations'].append(operation.__getstate__())
         for operation in self.yoperations:
@@ -694,13 +697,14 @@ class ScaleOperation(Operation):
         self.limits = list(limits) if limits else [None] * 2
 
     def initialize(self, values):
+        values = np.asarray(values)
         if self.limits[0] is None:
             self.limits[0] = np.min(values, axis=0)
         if self.limits[1] is None:
             self.limits[1] = np.max(values, axis=0)
         mask = self.limits[1] == self.limits[0]
-        self.limits[0][mask] = 0.
-        self.limits[1][mask] = 1.
+        self.limits[0] = np.where(mask, 0., self.limits[0])
+        self.limits[1] = np.where(mask, 1., self.limits[1])
         super().__init__('(v - limits[0]) / (limits[1] - limits[0])',
                          inverse='v * (limits[1] - limits[0]) + limits[0]',
                          locals={'limits': self.limits})
@@ -718,7 +722,7 @@ class NormOperation(Operation):
     def initialize(self, v):
         v = np.asarray(v)
         mean, sigma = np.mean(v, axis=0), np.std(v, ddof=1, axis=0)
-        sigma[sigma == 0.] = 1.
+        sigma = np.where(sigma == 0., 1., sigma)
         super().__init__('(v - mean) / sigma',
                          inverse='v * sigma + mean',
                          locals={'mean': mean, 'sigma': sigma})
@@ -773,7 +777,7 @@ class ChebyshevOperation(Operation):
         shape.insert(self.axis, size)
         if self.order > size // 2:
             import warnings
-            raise warnings.warn('order = {:d} for size = {:d} is unstable.'.format(self.order, size))
+            warnings.warn('order = {:d} for size = {:d} is unstable.'.format(self.order, size))
         for n in range(self.order + 1):
             x = np.linspace(-1., 1., size).reshape(shape)
             poly.append(special.chebyt(n)(x))
