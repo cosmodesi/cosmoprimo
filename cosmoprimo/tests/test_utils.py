@@ -77,7 +77,7 @@ def test_redshift_array():
 
 def test_jax():
     from jax import numpy as jnp
-    from cosmoprimo.jax import romberg
+    from cosmoprimo.jax import romberg, odeint
 
     def fun(x):
         return x
@@ -90,6 +90,11 @@ def test_jax():
         return toret
 
     assert jnp.allclose(romberg(fun, jnp.array(0.), jnp.array(1.)), jnp.array([1. / 2., 1. / 3.]))
+
+    def integrand(y, z):
+        return z
+
+    print(odeint(integrand, 0., jnp.linspace(0., 1., 100)))
 
 
 if __name__ == '__main__':

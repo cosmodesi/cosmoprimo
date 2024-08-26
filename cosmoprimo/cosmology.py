@@ -1655,30 +1655,6 @@ class BaseBackground(BaseSection):
         return self.rho_de(z) / self.rho_crit(z)
 
     @utils.flatarray()
-    def time(self, z):
-        r"""Proper time (age of universe), in :math:`\mathrm{Gy}`."""
-        def integrand(y, z):
-            return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
-
-        from .jax import odeint
-        z = self._np.append(z, 1e10)
-        tmp = odeint(integrand, 0., z)
-        return (tmp[0] - tmp[:-1]) * self.h / constants.gigayear_over_megaparsec
-
-    @utils.flatarray()
-    def comoving_radial_distance(self, z):
-        r"""
-        Comoving radial distance, in :math:`mathrm{Mpc}/h`.
-
-        See eq. 15 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_C(z)`.
-        """
-        def integrand(y, z):
-            return constants.c / 1e3 / (100. * self.efunc(z))
-
-        from .jax import odeint
-        return odeint(integrand, 0., z)
-
-    @utils.flatarray()
     def angular_diameter_distance(self, z):
         r"""
         Proper angular diameter distance, in :math:`\mathrm{Mpc}/h`.
@@ -1736,51 +1712,78 @@ class BaseBackground(BaseSection):
         return self.angular_diameter_distance(z) * (1. + z)**2
 
 
+from .jax import Interpolator1D, odeint
+
+
 class DefaultBackground(BaseBackground):
 
     def __init__(self, engine):
         super().__init__(engine)
         self._cache = {'z': 1. / np.logspace(-3, 0., 256)[::-1] - 1.}
 
-
-import functools
-from .jax import Interpolator1D
-
-
-def _cache(func):
-
-    name = func.__name__
-    @functools.wraps(func)
-    def wrapper(self, z):
-        zc = self._cache['z']
-        if name not in self._cache:
-            self._cache[name] = Interpolator1D(zc, func(zc))
-        return self._cache[name](z)
-
-    return wrapper
-
-
-def _cache_with_species(func):
-
-    name = func.__name__
-    @functools.wraps(func)
-    def wrapper(self, z, species=None):
-        zc = self._cache['z']
-        if name not in self._cache:
-            self._cache[name] = Interpolator1D(zc, func(zc).T)  # interpolation along axis = 0
+    @utils.flatarray()
+    def rho_ncdm(self, z, species=None):
+        r"""
+        Comoving density of non-relativistic part of massive neutrinos for each species, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
+        If ``species`` is ``None`` returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
+        Else if ``species`` is between 0 and N_ncdm, return density for this species.
+        """
+        name = 'rho_ncdm'
+        func = getattr(BaseBackground, name)
         if species is None:
             species = list(range(self.N_ncdm))
 
+        if name not in self._cache:
+            zc = self._cache['z']
+            self._cache[name] = Interpolator1D(zc, func(self, zc).T)  # interpolation along axis = 0
+
         return self._cache[name](z).T[species]
 
-    return wrapper
+    @utils.flatarray()
+    def p_ncdm(self, z, species=None):
+        r"""
+        Pressure of non-relativistic part of massive neutrinos for each species, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
+        If ``species`` is ``None`` returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
+        Else if ``species`` is between 0 and N_ncdm, return pressure for this species.
+        """
+        name = 'p_ncdm'
+        func = getattr(BaseBackground, name)
+        if species is None:
+            species = list(range(self.N_ncdm))
 
+        if name not in self._cache:
+            zc = self._cache['z']
+            self._cache[name] = Interpolator1D(zc, func(self, zc).T)  # interpolation along axis = 0
 
-for name in ['time', 'comoving_radial_distance']:
+        return self._cache[name](z).T[species]
 
-    setattr(DefaultBackground, name, _cache(getattr(BaseBackground, name)))
+    @utils.flatarray()
+    def time(self, z):
+        r"""Proper time (age of universe), in :math:`\mathrm{Gy}`."""
+        name = 'time'
+        if name not in self._cache:
+            def integrand(y, z):
+                return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
 
+            zc = self._np.append(self._cache['z'], 1e10)
+            tmp = odeint(integrand, 0., zc)
+            self._cache[name] = Interpolator1D(zc, (tmp[0] - tmp[:-1]) * self.h / constants.gigayear_over_megaparsec)
+        return self._cache[name](z)
 
-for name in ['rho_ncdm', 'p_ncdm']:
+    @utils.flatarray()
+    def comoving_radial_distance(self, z):
+        r"""
+        Comoving radial distance, in :math:`mathrm{Mpc}/h`.
 
-    setattr(DefaultBackground, name, _cache_with_species(getattr(BaseBackground, name)))
+        See eq. 15 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_C(z)`.
+        """
+        name = 'comoving_radial_distance'
+        if name not in self._cache:
+            def integrand(y, z):
+                return constants.c / 1e3 / (100. * self.efunc(z))
+
+            zc = self._cache['z']
+            tmp = odeint(integrand, 0., zc)
+
+            self._cache[name] = Interpolator1D(zc, tmp)
+        return self._cache[name](z)

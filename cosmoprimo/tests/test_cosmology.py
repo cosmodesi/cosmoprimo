@@ -829,6 +829,20 @@ def test_jax():
     print(test_jacfwd(dict(Omega_m=0.3, logA=3.)))
 
 
+def test_default_background():
+    from cosmoprimo.cosmology import DefaultBackground
+    from cosmoprimo.fiducial import DESI
+    cosmo = DESI(m_ncdm=[0.2], w0_fld=-0.8, wa_fld=-0.3)
+    background = DefaultBackground(cosmo)
+    z = np.linspace(0., 10., 100)
+    for name in ['time', 'comoving_radial_distance', 'Omega_ncdm']:
+        d = getattr(background, name)(z)
+        dref = getattr(cosmo, name)(z)
+        assert np.allclose(d, dref, rtol=1e-7, atol=1e-4)
+
+
+
+
 if __name__ == '__main__':
 
     test_jax()
@@ -858,3 +872,4 @@ if __name__ == '__main__':
     test_bisect()
     test_isitgr()
     #test_axiclass()
+    test_default_background()

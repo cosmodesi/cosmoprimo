@@ -250,6 +250,7 @@ if False:
 
         def __setstate__(self, state):
             self._state = dict(state)
+            use_jax = self._np is not np
             tables = {}
             for keyname, value in state.items():
                 name, key = keyname.split('.')
@@ -257,7 +258,11 @@ if False:
                 tables[name][key] = value
             for name, value in tables.items():
                 names = list(value.keys())
-                self._state[name] = table = np.empty(value[names[0]].shape[0], dtype=[(name, np.float64) for name in names])
+                if use_jax:
+                    table = fake_nparray({name: value[name] for name in names})
+                else:
+                    table = np.empty(value[names[0]].shape[0], dtype=[(name, np.float64) for name in names])
+                self._state[name] = table
                 for name in names: table[name] = value[name]
 
 
@@ -504,8 +509,8 @@ class Fourier(BaseSection):
                     raise NotImplementedError('grid must be True')
                 pk = []
                 dtype = _bcast_dtype(k, z)
-                k = np.asarray(k, dtype=dtype)
-                z = np.asarray(z, dtype=dtype)
+                k = self._np.asarray(k, dtype=dtype)
+                z = self._np.asarray(z, dtype=dtype)
                 zflat = z.ravel()
                 if not zflat.size:
                     return np.empty(shape=k.shape + z.shape, dtype=dtype)
@@ -515,7 +520,7 @@ class Fourier(BaseSection):
                     state = self._state
                     pk.append(state['pk' + suffix][of] * self._rsigma8**2)
                 del self._state
-                return interpolate.interp1d(state['k'], np.column_stack(pk), kind='cubic', bounds_error=True, assume_sorted=True, axis=0)(k).astype(dtype=dtype)
+                return interpolate.interp1d(state['k'], self._np.column_stack(pk), kind='cubic', bounds_error=True, assume_sorted=True, axis=0)(k).astype(dtype=dtype)
 
             return PowerSpectrumInterpolator2D.from_callable(k=get_default_k_callable(), z=get_default_z_callable(non_linear=non_linear), pk_callable=pk_callable)
 

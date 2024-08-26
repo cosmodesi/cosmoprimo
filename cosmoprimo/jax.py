@@ -579,13 +579,13 @@ def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return
     return result
 
 
-def odeint(func, y0, t, args=(), method='rk4'):
+def odeint(fun, y0, t, args=(), method='rk4'):
 
     t = numpy.asarray(t)
     shape = t.shape
     t = t.ravel()
 
-    func = lambda y, t: func(y, t, *args)
+    func = lambda y, t: fun(y, t, *args)
 
     if method == 'rk1':
 
@@ -618,6 +618,7 @@ def odeint(func, y0, t, args=(), method='rk4'):
             y = y + h / 6. * (k1 + 2 * k2 + 2 * k3 + k4)
             return (y, t), y
 
-    toret = scan(integrator, (y0, t[0]), t)[1]
+    s = scan if use_jax(func(y0, t[0])) else scan_numpy
+    toret = s(integrator, (y0, t[0]), t)[1]
     if not shape: toret = toret[0]
     return toret.reshape(shape)
