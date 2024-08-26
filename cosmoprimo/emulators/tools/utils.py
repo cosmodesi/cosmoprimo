@@ -328,8 +328,8 @@ def evaluate(value, type=None, locals=None, verbose=True):
     import numpy as np
     import scipy as sp
     if isinstance(value, str):
-        from .jax import numpy as jnp
-        from .jax import scipy as jsp
+        from cosmoprimo.jax import numpy as jnp
+        from cosmoprimo.jax import scipy as jsp
         locals = dict(locals or {})
         globals = {'np': np, 'sp': sp, 'jnp': jnp, 'jsp': jsp}
         tree = ast.parse(value)

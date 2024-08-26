@@ -167,7 +167,7 @@ def plot_residual_background(ref_samples, emulated_samples, quantities=None, sub
         ax.set_ylabel('|emulated/ref - 1|')
         #ax.set_xscale('log')
         ax.set_yscale('log')
-        ax.set_ylim(1e-4, 1.)
+        ax.set_ylim(1e-6, 1e-1)
         ax.set_title(name)
         ax.grid(True)
     ax.set_xlabel('$z$')
@@ -417,7 +417,8 @@ def plot_residual_fourier(ref_samples, emulated_samples, quantities=None, iz=0, 
             basename, of = namespace + '.'.join(of[:-2]) + '.', of[-2:]
             pk1 = ref_samples[basename + '.'.join([of[0]] * 2)][isample, :, iz]
             pk2 = ref_samples[basename + '.'.join([of[1]] * 2)][isample, :, iz]
-            prefac = 1. / np.sqrt(k**2 * kstep * volume)
+            if volume is None: prefac = 1. / np.sqrt(2.)
+            else: prefac = 1. / np.sqrt(k**2 * kstep * volume)
             sigma = prefac * np.sqrt(ref[:, iz]**2 + pk1 * pk2)
             ax.plot(k, np.abs(emulated - ref)[:, iz] / sigma, color='k')
         ax.set_ylabel(r'$|\mathrm{emulated} - \mathrm{ref}| / \sigma$')

@@ -6,6 +6,7 @@ from scipy import interpolate
 
 from cosmoprimo.interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 from cosmoprimo.cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyInputError, CosmologyComputationError, find_conflicts
+from cosmoprimo.jax import Interpolator1D
 from cosmoprimo.interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 from cosmoprimo import utils, Cosmology, CosmologyError
 
@@ -155,26 +156,26 @@ class Background(BaseBackground):
     """Tabulated background quantities."""
 
     def __init__(self, engine):
-        super(Background, self).__init__(engine=engine)
+        super().__init__(engine)
         self.__setstate__(engine._predict(section='background'))
 
     @utils.flatarray()
     def rho_ncdm(self, z, species=None):
-        return self._state['rho_ncdm'](z)[species if species is not None else slice(None)]
+        return self._state['rho_ncdm'](z).T[species if species is not None else slice(None)]
 
     @utils.flatarray()
     def p_ncdm(self, z, species=None):
-        return self._state['p_ncdm'](z)[species if species is not None else slice(None)]
+        return self._state['p_ncdm'](z).T[species if species is not None else slice(None)]
 
     @utils.flatarray()
     def rho_fld(self, z):
         r"""Comoving density of dark energy fluid :math:`\rho_{\mathrm{fld}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         return self._state['rho_fld'](z)
 
-    @utils.flatarray()
-    def rho_tot(self, z):
-        r"""Comoving total density :math:`\rho_{\mathrm{tot}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self._state['rho_tot'](z)
+    #@utils.flatarray()
+    #def rho_tot(self, z):
+    #    r"""Comoving total density :math:`\rho_{\mathrm{tot}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
+    #    return self._state['rho_tot'](z)
 
     @utils.flatarray()
     def time(self, z):
@@ -190,63 +191,10 @@ class Background(BaseBackground):
         """
         return self._state['comoving_radial_distance'](z)
 
-    @utils.flatarray()
-    def angular_diameter_distance(self, z):
-        r"""
-        Proper angular diameter distance, in :math:`\mathrm{Mpc}/h`.
-
-        See eq. 18 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{A}(z)`.
-        """
-        chi = self.comoving_radial_distance(z)
-        K = self.K  # in (h/Mpc)^2
-        if K == 0:
-            return chi / (1 + z)
-        if K > 0:
-            return np.sin(np.sqrt(K) * chi) / np.sqrt(K) / (1 + z)
-        return np.sinh(np.sqrt(-K) * chi) / np.sqrt(-K) / (1 + z)
-
-    @utils.flatarray(iargs=[0, 1], )
-    def angular_diameter_distance_2(self, z1, z2):
-        r"""
-        Angular diameter distance of object at :math:`z_{2}` as seen by observer at :math:`z_{1}`,
-        that is, :math:`S_{K}((\chi(z_{2}) - \chi(z_{1})) \sqrt{|K|}) / \sqrt{|K|} / (1 + z_{2})`,
-        where :math:`S_{K}` is the identity if :math:`K = 0`, :math:`\sin` if :math:`K < 0`
-        and :math:`\sinh` if :math:`K > 0`.
-        camb's ``angular_diameter_distance2(z1, z2)`` is not used as it returns 0 when z2 < z1.
-        """
-        if np.any(z2 < z1):
-            import warnings
-            warnings.warn(f"Second redshift(s) z2 ({z2}) is less than first redshift(s) z1 ({z1}).")
-        chi1, chi2 = self.comoving_radial_distance(z1), self.comoving_radial_distance(z2)
-        K = self.K  # in (h/Mpc)^2
-        if K == 0:
-            return (chi2 - chi1) / (1 + z2)
-        elif K > 0:
-            return np.sin(np.sqrt(K) * (chi2 - chi1)) / np.sqrt(K) / (1 + z2)
-        return np.sinh(np.sqrt(-K) * (chi2 - chi1)) / np.sqrt(-K) / (1 + z2)
-
-    @utils.flatarray()
-    def comoving_angular_distance(self, z):
-        r"""
-        Comoving angular distance, in :math:`\mathrm{Mpc}/h`.
-
-        See eq. 16 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{M}(z)`.
-        """
-        return self.angular_diameter_distance(z) * (1. + z)
-
-    @utils.flatarray()
-    def luminosity_distance(self, z):
-        r"""
-        Luminosity distance, in :math:`\mathrm{Mpc}/h`.
-
-        See eq. 21 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{L}(z)`.
-        """
-        return self.angular_diameter_distance(z) * (1. + z)**2
-
     def __getstate__(self):
         state = {}
         state['z'] = z = get_default_z_callable('background')
-        for name in ['rho_ncdm', 'p_ncdm', 'rho_fld', 'rho_tot', 'time', 'comoving_radial_distance', 'angular_diameter_distance']:
+        for name in ['rho_ncdm', 'p_ncdm', 'rho_fld', 'time', 'comoving_radial_distance']:
             state[name] = getattr(self, name)(z)
         return state
 
@@ -254,7 +202,8 @@ class Background(BaseBackground):
         state = dict(state)
         z = state.pop('z')
         for name, value in state.items():
-            state[name] = interpolate.interp1d(z, value, kind='cubic', bounds_error=True, assume_sorted=True, axis=-1)
+            #state[name] = interpolate.interp1d(z, value, kind='cubic', bounds_error=True, assume_sorted=True, axis=-1)
+            state[name] = Interpolator1D(z, value.T, k=3, interp_x='lin', interp_fun='lin', extrap=False, assume_sorted=True)
         self._state = state
 
 
@@ -262,8 +211,8 @@ class Background(BaseBackground):
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
+        super().__init__(engine)
         self.__setstate__(engine._predict(section='thermodynamics'))
-        self._engine = engine
 
     #def table(self):
     #    r"""Return thermodynamics table."""
@@ -317,7 +266,7 @@ class Primordial(BaseSection):
 
     def __init__(self, engine):
         """Initialize :class:`Primordial`."""
-        self._engine = engine
+        super().__init__(engine)
         self.__setstate__(engine._predict(section='primordial'))
         self._h = self._engine['h']
         self._n_s = self._engine['n_s']
@@ -392,10 +341,24 @@ class Primordial(BaseSection):
         self._state = dict(state)
 
 
+class fake_nparray(dict):
+
+    @property
+    def size(self):
+        for value in self.values():
+            return value.size
+        return 0
+
+    def __getitem__(self, name):
+        if isinstance(name, str):
+            return super().__getitem__(name)
+        return self.__class__({key: self[key][name] for key in self})
+
+
 class Harmonic(BaseSection):
 
     def __init__(self, engine):
-        self._engine = engine
+        super().__init__(engine)
         self._rsigma8 = self._engine._rescale_sigma8()
         self.__setstate__(engine._predict(section='harmonic'))
 
@@ -431,6 +394,7 @@ class Harmonic(BaseSection):
     def __setstate__(self, state):
         """Set this class' state dictionary."""
         self._state = dict(state)
+        use_jax = self._np is not np
         tables = {}
         for keyname, value in state.items():
             name, key = keyname.split('.')
@@ -438,9 +402,14 @@ class Harmonic(BaseSection):
             tables[name][key] = value
         for name, value in tables.items():
             names = [key for key in value if key != 'ell']
-            self._state[name] = table = np.empty(value[names[0]].shape[0], dtype=[('ell', np.int64)] + [(name, np.float64) for name in names])
-            for name in names: table[name] = value[name] * self._rsigma8**2
-            table['ell'] = np.arange(table.shape[0])
+            if use_jax:
+                table = fake_nparray({name: value[name] for name in ['ell'] + names})
+            else:
+                table = np.empty(value[names[0]].shape[0], dtype=[('ell', np.int64)] + [(name, np.float64) for name in names])
+            self._state[name] = table
+            for name in names:
+                table[name] = value[name] * self._rsigma8**2
+            table['ell'] = np.arange(table[names[0]].shape[0])
 
 
 def _make_tuple(of, size=2):
@@ -454,13 +423,13 @@ def _make_tuple(of, size=2):
 class Fourier(BaseSection):
 
     def __init__(self, engine):
+        super().__init__(engine)
         self._callable = False
         state = engine._predict(section='fourier')
         if callable(state):
             self._callable = state
         else:
             self.__setstate__(state)
-        self._engine = engine
         self._h = self._engine['h']
         self._rsigma8 = self._engine._rescale_sigma8()
         self._sigma8_m = self.sigma8_z(0., of='delta_m')

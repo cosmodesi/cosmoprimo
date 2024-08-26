@@ -42,7 +42,7 @@ class CosmologyError(Exception):
 
 class CosmologyInputError(CosmologyError):
 
-    """Exception raised when error in input parameters."""
+    """Exception raised when error in the value of input parameters."""
 
 
 class CosmologyComputationError(CosmologyError):
@@ -166,7 +166,10 @@ def _compute_rs_cosmomc(omega_b, omega_m, hubble_function, epsabs=1e-7, epsrel=1
         return dtauda(a) * cs
 
     limits = (astart, astar)
-    return romberg(dsoundda_approx, *limits, epsabs=epsabs, epsrel=epsrel), zstar
+    try:
+        return romberg(dsoundda_approx, *limits, divmax=15, epsabs=epsabs, epsrel=epsrel), zstar
+    except ValueError as exc:
+        raise CosmologyComputationError from exc
 
 
 class BaseCosmology(BaseClass):
@@ -969,7 +972,7 @@ class Cosmology(BaseCosmology):
 
                     def raise_error(sum_ncdm, deltam21sq, deltam31sq):
                         if sum_ncdm**2 < deltam21sq + deltam31sq:
-                            raise ValueError('If neutrino_hierarchy is normal, we are using the normal hierarchy and so m_nu must be greater than (~)0.0592')
+                            raise CosmologyInputError('If neutrino_hierarchy is normal, we are using the normal hierarchy and so m_nu must be greater than (~)0.0592')
 
                     exception(raise_error, sum_ncdm, deltam21sq, deltam31sq)
                     # Split the sum into 3 masses under normal hierarchy, m3 > m2 > m1
@@ -983,7 +986,7 @@ class Cosmology(BaseCosmology):
 
                     def raise_error(sum_ncdm, deltam31sq, deltam32sq):
                         if sum_ncdm**2 < -deltam31sq - deltam32sq:
-                            raise ValueError('If neutrino_hierarchy is inverted, we are using the inverted hierarchy and so m_nu must be greater than (~)0.0978')
+                            raise CosmologyInputError('If neutrino_hierarchy is inverted, we are using the inverted hierarchy and so m_nu must be greater than (~)0.0978')
 
                     exception(raise_error, sum_ncdm, deltam31sq, deltam32sq)
                     # Split the sum into 3 masses under inverted hierarchy, m2 > m1 > m3, here ordered as m1, m2, m3

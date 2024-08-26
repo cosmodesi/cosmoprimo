@@ -571,7 +571,7 @@ def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return
 
     def raise_error(err, result):
         if not (numpy.all(err < epsabs) or numpy.all(err < numpy.abs(result) * epsrel)):
-            raise ValueError('precision not achieved')
+            raise ValueError('precision not achieved: abs={:.3e} (vs {:.3e}), rel={:.3e} (vs {:.3e})', err.max(), epsabs, (err / numpy.abs(result)).max(), epsrel)
 
     exception(raise_error, err, result)
     if return_error:
