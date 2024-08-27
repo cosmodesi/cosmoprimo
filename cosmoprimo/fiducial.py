@@ -172,7 +172,7 @@ def AbacusSummit(name=0, engine='class', precision=None, extra_params=None, **pa
     default_params.update(AbacusSummit_params(name=name))
     engine = get_engine(engine)
     default_extra_params = {}
-    if engine.name == 'class':
+    if engine is not None and engine.name == 'class':
         default_extra_params = {'recombination': 'HyRec'}
         if precision == 'base':
             prec = dict(tol_ncdm_bg=1.e-10, recfast_Nz0=100000, tol_thermo_integration=1.e-5, recfast_x_He0_trigger_delta=0.01, recfast_x_H0_trigger_delta=0.01, evolver=0, k_min_tau0=0.002, k_max_tau0_over_l_max=3.,

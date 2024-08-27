@@ -830,20 +830,41 @@ def test_jax():
 
 
 def test_default_background():
-    from cosmoprimo.cosmology import DefaultBackground
+    import time
+    import jax
+    from cosmoprimo.cosmology import BaseBackground, DefaultBackground
     from cosmoprimo.fiducial import DESI
-    cosmo = DESI(m_ncdm=[0.2], w0_fld=-0.8, wa_fld=-0.3)
-    background = DefaultBackground(cosmo)
+
     z = np.linspace(0., 10., 100)
+
     for name in ['time', 'comoving_radial_distance', 'Omega_ncdm']:
-        d = getattr(background, name)(z)
-        dref = getattr(cosmo, name)(z)
-        assert np.allclose(d, dref, rtol=1e-7, atol=1e-4)
 
+        def ref(**params):
+            cosmo = DESI(**params)
+            return getattr(cosmo.get_background(), name)(z)
 
+        def test(**params):
+            cosmo = DESI(**params, engine=None)
+            background = DefaultBackground(cosmo)
+            #background = BaseBackground(cosmo)
+            return getattr(background, name)(z)
+
+        test_jax = jax.jit(test)
+        list_params = [{'m_ncdm': 0.4, 'w0_fld': -0.6, 'wa_fld': -1.}, {'m_ncdm': 5., 'w0_fld': -0.8, 'wa_fld': -0.5}]
+        for params in list_params:
+            assert np.allclose(test(**params), ref(**params), rtol=1e-6, atol=1e-4)
+            assert np.allclose(test_jax(**params), ref(**params), rtol=1e-6, atol=1e-4)
+        t0 = time.time()
+        for params in list_params: test_jax(**params)
+        dt_test = time.time() - t0
+        t0 = time.time()
+        for params in list_params: ref(**params)
+        dt_ref = time.time() - t0
+        print(dt_test, dt_ref)
 
 
 if __name__ == '__main__':
+
 
     test_jax()
     test_params()

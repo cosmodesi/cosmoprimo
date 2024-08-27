@@ -581,7 +581,8 @@ def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return
 
 def odeint(fun, y0, t, args=(), method='rk4'):
 
-    t = numpy.asarray(t)
+    jnp = numpy_jax(t)
+    t = jnp.asarray(t)
     shape = t.shape
     t = t.ravel()
 

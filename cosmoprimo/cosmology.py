@@ -1719,7 +1719,8 @@ class DefaultBackground(BaseBackground):
 
     def __init__(self, engine):
         super().__init__(engine)
-        self._cache = {'z': 1. / np.logspace(-3, 0., 256)[::-1] - 1.}
+        #self._cache = {'z': 1. / np.logspace(-3, 0., 256)[::-1] - 1.}
+        self._cache = {'z': 1. / np.logspace(-4, 0., 256)[::-1] - 1.}
 
     @utils.flatarray()
     def rho_ncdm(self, z, species=None):
@@ -1731,7 +1732,7 @@ class DefaultBackground(BaseBackground):
         name = 'rho_ncdm'
         func = getattr(BaseBackground, name)
         if species is None:
-            species = list(range(self.N_ncdm))
+            species = np.arange(self.N_ncdm)
 
         if name not in self._cache:
             zc = self._cache['z']
@@ -1749,7 +1750,7 @@ class DefaultBackground(BaseBackground):
         name = 'p_ncdm'
         func = getattr(BaseBackground, name)
         if species is None:
-            species = list(range(self.N_ncdm))
+            species = np.arange(self.N_ncdm)
 
         if name not in self._cache:
             zc = self._cache['z']
@@ -1765,9 +1766,9 @@ class DefaultBackground(BaseBackground):
             def integrand(y, z):
                 return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
 
-            zc = self._np.append(self._cache['z'], 1e10)
+            zc = self._cache['z']
             tmp = odeint(integrand, 0., zc)
-            self._cache[name] = Interpolator1D(zc, (tmp[0] - tmp[:-1]) * self.h / constants.gigayear_over_megaparsec)
+            self._cache[name] = Interpolator1D(zc, (tmp[-1] - tmp) / self.h / constants.gigayear_over_megaparsec)
         return self._cache[name](z)
 
     @utils.flatarray()
