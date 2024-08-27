@@ -62,7 +62,7 @@ class CambEngine(BaseEngine):
 
             for key, value in self._extra_params.items():
                 if key not in self._params:
-                    if key in ['lSampleBoost', 'AccuracyBoost', 'lAccuracyBoost']:
+                    if key in ['lSampleBoost', 'AccuracyBoost', 'lAccuracyBoost', 'DoLateRadTruncation']:
                         setattr(self._camb_params.Accuracy, key, value)
                     else:
                         setattr(self._camb_params, key, value)
@@ -116,7 +116,7 @@ class CambEngine(BaseEngine):
             self._camb_params.Want_CMB_lensing = self['lensing']
             self._camb_params.set_for_lmax(lmax=self['ellmax_cl'])
             non_linear = self['non_linear']
-            self._camb_params.set_matter_power(redshifts=self['z_pk'], kmax=self['kmax_pk'] * self['h'], silent=True)
+            self._camb_params.set_matter_power(redshifts=self['z_pk'], kmax=self['kmax_pk'] * self['h'], silent=True) #, k_per_logint=10, accurate_massive_neutrino_transfers=True
 
             if non_linear:
                 self._camb_params.NonLinear = self.camb.model.NonLinear_both

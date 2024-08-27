@@ -227,8 +227,8 @@ class Emulator(BaseClass):
         Y.update({name: samples['Y.' + name].copy() for name in varied})
         for operation in self.yoperations:
             try:
-                operation.initialize(Y)
-                Y = operation(Y)
+                operation.initialize(Y, X=X)
+                Y = operation(Y, X=X)
             except KeyError:
                 pass
         for operation in self.xoperations:
@@ -389,13 +389,13 @@ class Emulator(BaseClass):
 
     def predict(self, params):
         """Return emulated calculator output 'y' given input params."""
-        params = {**self.defaults, **params}
+        params = X = {**self.defaults, **params}
         for operation in self.xoperations:
             params = operation(params)
         predict = dict(self.fixed)
         predict.update({name: engine.predict(params) for name, engine in self.engines.items()})
         for operation in self.yoperations[::-1]:
-            predict = operation.inverse(predict)
+            predict = operation.inverse(predict, X=X)
         return predict
 
     def to_calculator(self):
@@ -514,14 +514,14 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
     def _fit_no_operation(self, X, Y, attrs):
         raise NotImplementedError
 
-    @jit(static_argnums=[0])
+    #@jit(static_argnums=[0])
     def predict(self, params):
         X = jnp.column_stack([params[name] for name in self.params])
         for operation in self.xoperations:
             X = operation(X)
         Y = self._predict_no_operation(X.reshape(-1)).reshape(self.yshape)
         for operation in self.yoperations[::-1]:
-            Y = operation.inverse(Y)
+            Y = operation.inverse(Y, X=params)
         return Y
 
     def _predict_no_operation(self, X):
@@ -648,7 +648,7 @@ class Operation(BaseClass, metaclass=RegisteredOperation):
 
     def inverse(self, v, **kwargs):
         """From emulated quantities to calculator output 'y'."""
-        return utils.evaluate(self._inverse, locals={**self._locals, 'v': v}, verbose=self.verbose)
+        return utils.evaluate(self._inverse, locals={**self._locals, 'v': v, **kwargs}, verbose=self.verbose)
 
     def __getstate__(self):
         return {name: getattr(self, name) for name in ['name', '_direct', '_inverse', '_locals']}
