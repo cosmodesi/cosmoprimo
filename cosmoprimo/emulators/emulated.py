@@ -366,24 +366,25 @@ class Harmonic(BaseSection):
         super().__init__(engine)
         self._rsigma8 = self._engine._rescale_sigma8()
         self.__setstate__(engine._predict(section='harmonic'))
+        self.ellmax_cl = self._engine['ellmax_cl']
 
     def unlensed_cl(self, ellmax=-1):
         r"""Return unlensed :math:`C_{\ell}` ['tt', 'ee', 'bb', 'te'], unitless."""
         if ellmax < 0:
-            ellmax = self._state['unlensed_cl'].size + 1 + ellmax
-        return self._state['unlensed_cl'][:ellmax]
+            ellmax = self.ellmax_cl + 1 + ellmax
+        return self._state['unlensed_cl'][:ellmax + 1]
 
     def lens_potential_cl(self, ellmax=-1):
         r"""Return potential :math:`C_{\ell}` ['pp', 'tp', 'ep'], unitless."""
         if ellmax < 0:
-            ellmax = self._state['lens_potential_cl'].size + 1 + ellmax
-        return self._state['lens_potential_cl'][:ellmax]
+            ellmax = self.ellmax_cl + 1 + ellmax
+        return self._state['lens_potential_cl'][:ellmax + 1]
 
     def lensed_cl(self, ellmax=-1):
         r"""Return lensed :math:`C_{\ell}` ['tt', 'ee', 'bb', 'te'], unitless."""
         if ellmax < 0:
-            ellmax = self._state['lensed_cl'].size + 1 + ellmax
-        return self._state['lensed_cl'][:ellmax]
+            ellmax = self.ellmax_cl + 1 + ellmax
+        return self._state['lensed_cl'][:ellmax + 1]
 
     def __getstate__(self):
         """Return this class' state dictionary."""

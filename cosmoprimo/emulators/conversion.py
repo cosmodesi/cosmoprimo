@@ -98,11 +98,11 @@ if __name__ == '__main__':
             def to_dict(array):
                 return {name: array[name] for name in array.dtype.names}
 
-            cosmo = DESI(engine=EmulatedEngine.load(emulator_fn))
+            cosmo = DESI(m_ncdm=0.06, ellmax_cl=4000, kmax_pk=10., engine=EmulatedEngine.load(emulator_fn))
             test = to_dict(cosmo.get_harmonic().lensed_cl())
             test.update(to_dict(cosmo.get_harmonic().lens_potential_cl()))
 
-            cosmo = DESI(lensing=True, m_ncdm=0.06, ellmax_cl=5000, kmax_pk=10., engine='camb',
+            cosmo = DESI(lensing=True, m_ncdm=0.06, ellmax_cl=4000, kmax_pk=10., engine='camb',
                          extra_params=dict(AccuracyBoost=2, lSampleBoost=2, lAccuracyBoost=2, DoLateRadTruncation=False), non_linear='hmcode')
             ref = to_dict(cosmo.get_harmonic().lensed_cl())
             ref.update(to_dict(cosmo.get_harmonic().lens_potential_cl()))
@@ -120,7 +120,7 @@ if __name__ == '__main__':
                 ax = plt.gca()
                 ax.set_title(name)
                 ax.plot(ell, factor * test[name], label='cosmoprimo - jaxcapse')
-                ax.plot(ell, test2, label='jaxcapse')
+                ax.plot(ell, test2[:ell[-1] + 1], label='jaxcapse')
                 ax.plot(ell, factor * ref[name], label='camb')
                 if name == 'pp':
                     ax.set_xscale('log')

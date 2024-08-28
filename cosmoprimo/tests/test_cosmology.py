@@ -865,7 +865,6 @@ def test_default_background():
 
 if __name__ == '__main__':
 
-
     test_jax()
     test_params()
     test_engine()

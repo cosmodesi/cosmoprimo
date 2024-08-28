@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 this_dir = Path(__file__).parent
-train_dir = Path(os.getenv('SCRATCH')) / 'emulators/train/classy/'
+train_dir = Path(os.getenv('SCRATCH', '')) / 'emulators/train/classy/'
 samples_fn = {'bg': train_dir / 'samples_bg', 'mpk': train_dir / 'samples_mpk', 'cmb': train_dir / 'samples_cmb'}
 emulator_dir = this_dir / 'classy'
 emulator_fn = emulator_dir / 'emulator.npy'
@@ -154,7 +154,7 @@ def plot(samples_fn, toplot=('background', 'thermodynamics', 'primordial', 'four
 
     logger = logging.getLogger('Plot')
     setup_logging()
-    
+
     def load_samples(**kwargs):
         samples = Samples.concatenate([Samples.load(fn, **kwargs) for fn in glob.glob(str(samples_fn) + '*')])
         mask = samples.isfinite()
@@ -205,7 +205,7 @@ def plot_compression(samples_fn, toplot=('background', 'thermodynamics', 'primor
 
     logger = logging.getLogger('Plot')
     setup_logging()
-    
+
     def load_samples(**kwargs):
         samples = Samples.concatenate([Samples.load(fn, **kwargs) for fn in glob.glob(str(samples_fn) + '*')])
         mask = samples.isfinite()
@@ -250,7 +250,7 @@ def test():
     X = np.column_stack([samples['X.' + param] for param in samples])
     Y = samples['Y.thermodynamics.rs_drag']
     from cosmoprimo.emulators import MLPEmulatorEngine
-    
+
     fn = 'tmp.npy'
     if True:
         engine = MLPEmulatorEngine(nhidden=(10,) * 3)
@@ -265,6 +265,26 @@ def test():
         print(diff.mean(), diff.max())
 
 
+def test_pk():
+    import numpy as np
+    from cosmoprimo.fiducial import DESI
+    from matplotlib import pyplot as plt
+    cosmo = DESI()
+
+    k = np.logspace(-3., 2, 1000)
+    ax = plt.gca()
+
+    list_params = [{'w0_fld': -1., 'wa_fld': 0., 'h': 0.6}, {'w0_fld': -2., 'wa_fld': -1., 'h': 0.8}]
+
+    for params in list_params:
+        cosmo = DESI(**params)
+        pk = cosmo.get_fourier().pk_interpolator(of='delta_cb').to_1d(z=1.)
+        s = cosmo['h']
+        ax.loglog(k, pk(k / s) / pk(k[0] / s))
+
+    plt.show()
+
+
 if __name__ == '__main__':
 
     """Uncomment to run."""
@@ -272,6 +292,7 @@ if __name__ == '__main__':
     #todo = ['sample']
     todo = ['fit', 'plot']
     #todo = ['plot_compression']
+    todo = ['test']
 
     if todo:
         from desipipe import Queue, Environment, TaskManager, spawn, setup_logging
@@ -307,7 +328,7 @@ if __name__ == '__main__':
                 for start, stop in zip(steps[:-1], steps[1:]):
                     compute(samples_fn[observable], observable=observable, start=start, stop=stop)
                     #break
-        
+
         if 'fit' in todo:
             import tensorflow as tf
             gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -318,7 +339,7 @@ if __name__ == '__main__':
                 if observable == 'cmb': tofit = ['harmonic']
                 for tofit in tofit:
                     fit(samples_fn[observable], tofit=tofit)
-        
+
         if 'plot' in todo:
             for observable in ['bg', 'mpk', 'cmb'][1:2]:
                 toplot = ['background', 'thermodynamics'][:1]
@@ -334,3 +355,6 @@ if __name__ == '__main__':
                 if observable == 'cmb': toplot = ['harmonic']
                 for toplot in toplot:
                     plot_compression(samples_fn[observable], toplot=toplot)
+
+        if 'test' in todo:
+            test_pk()
