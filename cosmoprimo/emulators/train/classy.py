@@ -271,16 +271,57 @@ def test_pk():
     from matplotlib import pyplot as plt
     cosmo = DESI()
 
-    k = np.logspace(-3., 2, 1000)
+    k = np.logspace(-2., 1., 1000)
     ax = plt.gca()
 
-    list_params = [{'w0_fld': -1., 'wa_fld': 0., 'h': 0.6}, {'w0_fld': -2., 'wa_fld': -1., 'h': 0.8}]
+    list_params = [{'w0_fld': -1., 'wa_fld': 0., 'h': 0.6, 'Omega_k': -0.3}, {'w0_fld': -2., 'wa_fld': -1., 'h': 0.8, 'Omega_k': 0.3}]
 
-    for params in list_params:
+    for ip, params in enumerate(list_params):
         cosmo = DESI(**params)
         pk = cosmo.get_fourier().pk_interpolator(of='delta_cb').to_1d(z=1.)
         s = cosmo['h']
-        ax.loglog(k, pk(k / s) / pk(k[0] / s))
+        tmp = pk(k / s) / pk(0.1 / s)
+        if ip == 0:
+            ref = tmp
+        else:
+            ax.plot(k, tmp / ref)
+            ax.set_xscale('log')
+            #ax.set_yscale('log')
+
+    plt.show()
+
+
+def test_cl():
+    import numpy as np
+    from cosmoprimo.fiducial import DESI
+    from matplotlib import pyplot as plt
+    cosmo = DESI()
+
+    k = np.logspace(-2., 1., 1000)
+    ax = plt.gca()
+
+    list_params = [{'w0_fld': -1., 'wa_fld': 0., 'h': 0.6, 'Omega_k': -0.3}, {'w0_fld': -2., 'wa_fld': -1., 'h': 0.8, 'Omega_k': 0.3}]
+    ref = DESI()
+
+    if 0:
+        for ip, params in enumerate(list_params):
+            cosmo = DESI(**params)
+            cl = cosmo.get_harmonic().unlensed_cl()
+            ell = cl['ell']
+            factor = (ell + 1) * ell
+            s = (ref.comoving_angular_distance(cosmo.z_star) / ref.rs_star) / (cosmo.comoving_angular_distance(cosmo.z_star) / cosmo.rs_star)
+            ax.plot(ell * s, factor * cl['tt'])
+            ax.set_xscale('log')
+    if 1:
+        from cosmoprimo.jax import Interpolator1D
+        for ip, params in enumerate(list_params):
+            cosmo = DESI(**params)
+            cl = cosmo.get_harmonic().unlensed_cl()
+            ell = cl['ell']
+            factor = (ell + 1) * ell
+            s = (ref.comoving_angular_distance(cosmo.z_star) / ref.rs_star) / (cosmo.comoving_angular_distance(cosmo.z_star) / cosmo.rs_star)
+            ax.plot(ell, Interpolator1D(ell, Interpolator1D(ell, cl['tt'])(ell / s))(ell * s))
+            ax.set_xscale('log')
 
     plt.show()
 
@@ -357,4 +398,5 @@ if __name__ == '__main__':
                     plot_compression(samples_fn[observable], toplot=toplot)
 
         if 'test' in todo:
-            test_pk()
+            #test_pk()
+            test_cl()

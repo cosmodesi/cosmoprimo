@@ -116,7 +116,7 @@ def test_background(params, seed=42):
             assert_allclose(ba, name, atol=0, rtol=2e-4)
         names = []
         rtol = 2e-4
-        if engine in ['class', 'camb', 'astropy']:
+        if engine in ['class', 'camb', 'astropy', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
             names += ['time', 'comoving_radial_distance', 'luminosity_distance', 'angular_diameter_distance', 'comoving_angular_distance']
         if engine in ['class']:
             names += ['growth_factor', 'growth_rate']

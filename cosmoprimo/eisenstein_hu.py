@@ -2,7 +2,7 @@ import warnings
 
 import numpy as np
 
-from .cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyError
+from .cosmology import BaseEngine, BaseSection, DefaultBackground, CosmologyError
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 from . import constants, utils
 from .jax import exception
@@ -103,7 +103,7 @@ class EisensteinHuEngine(BaseEngine):
         return self._rsigma8
 
 
-class Background(BaseBackground):
+class Background(DefaultBackground):
     """
     Background quantities.
 

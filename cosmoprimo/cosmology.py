@@ -797,11 +797,13 @@ class Cosmology(BaseCosmology):
         if use_jax(*params.values()):
             from jax import numpy as jnp
             from .jax import array_types as jax_array_types
-            from .jax import for_cond_loop, cond, exception
+            from .jax import for_cond_loop_jax as for_cond_loop
+            from .jax import exception_jax as exception
+            from jax.lax import cond
         else:
             from .jax import for_cond_loop_numpy as for_cond_loop
-            from .jax import cond_numpy as cond
             from .jax import exception_numpy as exception
+            from .jax import cond_numpy as cond
             jnp = np
             jax_array_types = ()
 

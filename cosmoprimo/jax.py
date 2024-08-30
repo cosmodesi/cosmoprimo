@@ -220,13 +220,33 @@ def for_cond_loop_numpy(lower, upper, cond_fun, body_fun, init_val):
     return val
 
 
+def for_cond_loop_jax(lower, upper, cond_fun, body_fun, init_val, **kwargs):
+
+    def body(i, val):
+        return jax.lax.cond(cond_fun(i, val), body_fun, lambda i, val: val, i, val)
+
+    return jax.lax.fori_loop(lower, upper, body, init_val, **kwargs)
+
+
 def switch_numpy(index, branches, *operands):
     return branches[index](*operands)
+
+
+def switch(index, branches, *operands):
+    if use_jax(index):
+        return jax.lax.switch(index, branches, *operands)
+    return switch_numpy(index, branches, *operands)
 
 
 def select_numpy(pred, on_true, on_false):
     if pred: return on_true
     return on_false
+
+
+def select(pred, on_true, on_false):
+    if use_jax(pred):
+        return jax.lax.select(pred, on_true, on_false)
+    return select_numpy(pred, on_true, on_false)
 
 
 def cond_numpy(pred, true_fun, false_fun, *operands):
@@ -235,8 +255,10 @@ def cond_numpy(pred, true_fun, false_fun, *operands):
     return false_fun(*operands)
 
 
-def exception_numpy(fun, *args):
-    return fun(*args)
+def cond(pred, true_fun, false_fun, *operands):
+    if use_jax(pred):
+        return jax.lax.cond(pred, true_fun, false_fun, *operands)
+    return cond_numpy(pred, true_fun, false_fun, *operands)
 
 
 def opmask(array, mask, value, op='set'):
@@ -254,30 +276,18 @@ def opmask(array, mask, value, op='set'):
             return array
 
 
-if jax is None:
+def exception_numpy(fun, *args):
+    return fun(*args)
 
-    scan = scan_numpy
-    switch = switch_numpy
-    select = select_numpy
-    cond = cond_numpy
-    exception = exception_numpy
-    for_cond_loop = for_cond_loop_numpy
 
+def exception_jax(fun, *args):
+    return jax.debug.callback(fun, *args)
+
+
+if jax:
+    exception = exception_jax
 else:
-
-    scan = jax.lax.scan
-    switch = jax.lax.switch
-    select = jax.lax.select
-    cond = jax.lax.cond
-    exception = jax.debug.callback
-    select = jax.lax.select
-
-    def for_cond_loop(lower, upper, cond_fun, body_fun, init_val, **kwargs):
-
-        def body(i, val):
-            return jax.lax.cond(cond_fun(i, val), body_fun, lambda i, val: val, i, val)
-
-        return jax.lax.fori_loop(lower, upper, body, init_val, **kwargs)
+    exception = exception_numpy
 
 
 def simpson(y, x=None, dx=1, axis=-1, even='avg'):
@@ -619,7 +629,7 @@ def odeint(fun, y0, t, args=(), method='rk4'):
             y = y + h / 6. * (k1 + 2 * k2 + 2 * k3 + k4)
             return (y, t), y
 
-    s = scan if use_jax(func(y0, t[0])) else scan_numpy
+    s = jax.lax.scan if use_jax(func(y0, t[0])) else scan_numpy
     toret = s(integrator, (y0, t[0]), t)[1]
     if not shape: toret = toret[0]
     return toret.reshape(shape)
