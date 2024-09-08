@@ -741,6 +741,9 @@ def test_bisect():
 
 
 def test_isitgr():
+    cosmo = Cosmology(engine='isitgr')
+    cosmo['Q0']
+    exit()
 
     cosmo_camb = Cosmology(engine='camb')
     try:
@@ -837,21 +840,33 @@ def test_default_background():
 
     z = np.linspace(0., 10., 100)
 
-    for name in ['time', 'comoving_radial_distance', 'Omega_ncdm']:
+    for name in ['time', 'comoving_radial_distance', 'Omega_ncdm', 'theta_cosmomc']:
 
-        def ref(**params):
-            cosmo = DESI(**params)
-            return getattr(cosmo.get_background(), name)(z)
+        if name == 'theta_cosmomc':
+            def ref(**params):
+                cosmo = DESI(**params)
+                return cosmo[name]
 
-        def test(**params):
-            cosmo = DESI(**params, engine=None)
-            background = DefaultBackground(cosmo)
-            #background = BaseBackground(cosmo)
-            return getattr(background, name)(z)
+            def test(**params):
+                cosmo = DESI(**params, engine='bbks')
+                return cosmo[name]
+
+        else:
+            def ref(**params):
+                cosmo = DESI(**params)
+                return getattr(cosmo.get_background(), name)(z)
+
+            def test(**params):
+                cosmo = DESI(**params, engine=None)
+                background = DefaultBackground(cosmo)
+                #background = BaseBackground(cosmo)
+                return getattr(background, name)(z)
 
         test_jax = jax.jit(test)
         list_params = [{'m_ncdm': 0.4, 'w0_fld': -0.6, 'wa_fld': -1.}, {'m_ncdm': 5., 'w0_fld': -0.8, 'wa_fld': -0.5}]
         for params in list_params:
+            ref(**params)
+            test(**params)
             assert np.allclose(test(**params), ref(**params), rtol=1e-6, atol=1e-4)
             assert np.allclose(test_jax(**params), ref(**params), rtol=1e-6, atol=1e-4)
         t0 = time.time()
@@ -861,6 +876,111 @@ def test_default_background():
         for params in list_params: ref(**params)
         dt_ref = time.time() - t0
         print(dt_test, dt_ref)
+
+
+def test_fk():
+
+    def interp(k, x, y):
+        from scipy.interpolate import CubicSpline
+        inter = CubicSpline(x, y)
+        return inter(k)
+
+    def f_over_f0_EH(zev, k, OmM0, h, fnu):
+        """
+        Routine to get f(k)/f0 and f0.
+        f(k)/f0 is obtained following H&E (1998), arXiv:astro-ph/9710216
+        f0 is obtained by solving directly the differential equation for the linear growth at large scales.
+
+        Args:
+            zev: redshift
+            k: wave-number
+            OmM0: Omega_b + Omega_c + Omega_nu (dimensionless matter density parameter)
+            h = H0/100
+            fnu: Omega_nu/OmM0
+        Returns:
+            f(k)/f0 (when 'EdSkernels = True' f(k)/f0 = 1)
+            f0
+        """
+        eta = np.log(1 / (1 + zev))   #log of scale factor
+        Neff = 3.046                   # effective number of neutrinos
+        omrv = 2.469*10**(-5)/(h**2 * (1 + 7/8*(4/11)**(4/3)*Neff)) #rad: including neutrinos
+        aeq = omrv/OmM0           #matter-radiation equality
+
+        pcb = 5./4 - np.sqrt(1 + 24*(1 - fnu))/4     #neutrino supression
+        c = 0.7
+        Nnu = 3                                     #number of neutrinos
+        theta272 = (1.00)**2                        # T_{CMB} = 2.7*(theta272)
+        pf = (k * theta272)/(OmM0 * h**2)
+        DEdS = np.exp(eta)/aeq                      #growth function: EdS cosmology
+
+        fnunonzero = np.where(fnu != 0., fnu, 1.)
+        yFS = 17.2*fnu*(1 + 0.488*fnunonzero**(-7/6))*(pf*Nnu/fnunonzero)**2  #yFreeStreaming
+        # pcb = 0. and yFS = 0. when fnu = 0.
+        rf = DEdS/(1 + yFS)
+        fFit = 1 - pcb/(1 + (rf)**c)                #f(k)/f0
+
+        #Getting f0
+        def OmM(eta):
+            return 1./(1. + ((1-OmM0)/OmM0)*np.exp(3*eta) )
+
+        def f1(eta):
+            return 2. - 3./2. * OmM(eta)
+
+        def f2(eta):
+            return 3./2. * OmM(eta)
+
+        etaini = -6  #initial eta, early enough to evolve as EdS (D + \propto a)
+        zfin = -0.99
+
+        def etaofz(z):
+            return np.log(1/(1 + z))
+
+        etafin = etaofz(zfin)
+
+        from scipy.integrate import odeint
+
+        # differential eq.
+        def Deqs(Df, eta):
+            Df, Dprime = Df
+            return [Dprime, f2(eta)*Df - f1(eta)*Dprime]
+
+        # eta range and initial conditions
+        eta = np.linspace(etaini, etafin, 1001)
+        Df0 = np.exp(etaini)
+        Df_p0 = np.exp(etaini)
+
+        # solution
+        Dplus, Dplusp = odeint(Deqs, [Df0, Df_p0], eta).T
+        #print(Dplus, Dplusp)
+
+        Dplusp_ = interp(etaofz(zev), eta, Dplusp)
+        Dplus_ = interp(etaofz(zev), eta, Dplus)
+        f0 = Dplusp_/Dplus_
+
+        return (k, fFit, f0)
+
+    from matplotlib import pyplot as plt
+    from cosmoprimo.fiducial import DESI
+    k = np.linspace(0.0001, 1., 100)
+    z = 1.
+    ax = plt.gca()
+    m_ncdm = 0.1
+    cosmo = DESI(m_ncdm=m_ncdm)
+    Omega0_m, h = cosmo.Omega0_m, cosmo.h
+    fnu = cosmo.Omega0_ncdm_tot / Omega0_m
+    _, fk, f0 = f_over_f0_EH(z, k, Omega0_m, h, fnu)
+    for engine in ['class', 'camb']:
+        cosmo = DESI(engine=engine, m_ncdm=m_ncdm)
+        fo = cosmo.get_fourier()
+        pk_tt = fo.pk_interpolator(of='theta_cb')(k, z=z)
+        pk_dd = fo.pk_interpolator(of='delta_cb')(k, z=z)
+        ratio = pk_tt / pk_dd
+        print(ratio[0] / f0**2)
+        ratio /= f0**2
+        ax.plot(k, ratio, label=engine)
+    ax.plot(k, fk**2, label='EH')
+    ax.legend()
+    plt.show()
 
 
 if __name__ == '__main__':
@@ -893,3 +1013,4 @@ if __name__ == '__main__':
     test_isitgr()
     #test_axiclass()
     test_default_background()
+    #test_fk()

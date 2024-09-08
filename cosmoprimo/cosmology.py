@@ -154,7 +154,6 @@ def _compute_rs_cosmomc(omega_b, omega_m, hubble_function, epsabs=1e-7, epsrel=1
 
     astart = 1e-8
     astar = 1. / (1 + zstar)
-    atol = 1e-6
 
     def dtauda(a):
         return 1. / (a**2 * hubble_function(1 / a - 1.) / (constants.c / 1e3))
@@ -1722,7 +1721,7 @@ class DefaultBackground(BaseBackground):
     def __init__(self, engine):
         super().__init__(engine)
         #self._cache = {'z': 1. / np.logspace(-3, 0., 256)[::-1] - 1.}
-        self._cache = {'z': 1. / np.logspace(-4, 0., 256)[::-1] - 1.}
+        self._cache = {'z': 1. / np.logspace(-8, 0., 400)[::-1] - 1.}
 
     @utils.flatarray()
     def rho_ncdm(self, z, species=None):

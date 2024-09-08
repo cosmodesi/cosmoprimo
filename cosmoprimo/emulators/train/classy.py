@@ -274,13 +274,14 @@ def test_pk():
     k = np.logspace(-2., 1., 1000)
     ax = plt.gca()
 
-    list_params = [{'w0_fld': -1., 'wa_fld': 0., 'h': 0.6, 'Omega_k': -0.3}, {'w0_fld': -2., 'wa_fld': -1., 'h': 0.8, 'Omega_k': 0.3}]
+    #list_params = [{'w0_fld': -1., 'wa_fld': 0., 'h': 0.6, 'Omega_k': -0.3}, {'w0_fld': -2., 'wa_fld': -1., 'h': 0.8, 'Omega_k': 0.3}]
+    list_params = [{'h': 0.6}, {'h': 0.8}]
 
     for ip, params in enumerate(list_params):
-        cosmo = DESI(**params)
-        pk = cosmo.get_fourier().pk_interpolator(of='delta_cb').to_1d(z=1.)
+        cosmo = DESI(**params, m_ncdm=0.)
+        pk = cosmo.get_fourier().pk_interpolator(of='delta_m').to_1d(z=10.)
         s = cosmo['h']
-        tmp = pk(k / s) / pk(0.1 / s)
+        tmp = pk(k / s) / s**3 #pk(0.1 / s)
         if ip == 0:
             ref = tmp
         else:
@@ -303,7 +304,7 @@ def test_cl():
     list_params = [{'w0_fld': -1., 'wa_fld': 0., 'h': 0.6, 'Omega_k': -0.3}, {'w0_fld': -2., 'wa_fld': -1., 'h': 0.8, 'Omega_k': 0.3}]
     ref = DESI()
 
-    if 0:
+    if 1:
         for ip, params in enumerate(list_params):
             cosmo = DESI(**params)
             cl = cosmo.get_harmonic().unlensed_cl()
@@ -312,7 +313,7 @@ def test_cl():
             s = (ref.comoving_angular_distance(cosmo.z_star) / ref.rs_star) / (cosmo.comoving_angular_distance(cosmo.z_star) / cosmo.rs_star)
             ax.plot(ell * s, factor * cl['tt'])
             ax.set_xscale('log')
-    if 1:
+    if 0:
         from cosmoprimo.jax import Interpolator1D
         for ip, params in enumerate(list_params):
             cosmo = DESI(**params)
