@@ -354,7 +354,7 @@ def plot_residual_harmonic(ref_samples, emulated_samples, quantities=None, fsky=
     return fig
 
 
-def plot_residual_fourier(ref_samples, emulated_samples, quantities=None, iz=0, volume=1e9, kstep=5e-3, subsample=1., fn=None):
+def plot_residual_fourier(ref_samples, emulated_samples, quantities=None, iz=0, volume=1e9, kstep=5e-3, subsample=1., q=(0.68, 0.95, 0.99), color='C0', fn=None):
     """
     Plot ratio of emulated fourier quantities minus reference, divided by estimated error.
 
@@ -409,18 +409,23 @@ def plot_residual_fourier(ref_samples, emulated_samples, quantities=None, iz=0, 
     else:
         k = ref_samples.attrs['fixed']['fourier.k']
         if iz is not None: z = ref_samples.attrs['fixed']['fourier.z'][iz]
+    colors = pale_colors(color, len(q))
     for ax, name in zip(lax, quantities):
-        ref_samples[namespace + name]
-        emulated_samples[namespace + name]
-        for isample, (ref, emulated) in enumerate(zip(ref_samples[namespace + name], emulated_samples[namespace + name])):
-            of = name.split('.')
-            basename, of = namespace + '.'.join(of[:-2]) + '.', of[-2:]
-            pk1 = ref_samples[basename + '.'.join([of[0]] * 2)][isample, :, iz]
-            pk2 = ref_samples[basename + '.'.join([of[1]] * 2)][isample, :, iz]
-            if volume is None: prefac = 1. / np.sqrt(2.)
-            else: prefac = 1. / np.sqrt(k**2 * kstep * volume)
-            sigma = prefac * np.sqrt(ref[:, iz]**2 + pk1 * pk2)
-            ax.plot(k, np.abs(emulated - ref)[:, iz] / sigma, color='k')
+        of = name.split('.')
+        basename, of = namespace + '.'.join(of[:-2]) + '.', of[-2:]
+        pk1 = ref_samples[basename + '.'.join([of[0]] * 2)][..., iz]
+        pk2 = ref_samples[basename + '.'.join([of[1]] * 2)][..., iz]
+        if volume is None: prefac = 1. / np.sqrt(2.)
+        else: prefac = 1. / np.sqrt(k**2 * kstep * volume)
+        ref = ref_samples[namespace + name][..., iz]
+        emulated = emulated_samples[namespace + name][..., iz]
+        sigma = prefac * np.sqrt(ref**2 + pk1 * pk2)
+        diff = np.abs(emulated - ref) / sigma
+        diff = diff[np.isfinite(diff).all(axis=-1)]
+        lims = np.quantile(diff, [0.] + list(q) + [1.], axis=0)
+        mask = k > 1e-6
+        for lim, color in list(zip(zip(lims[:-1], lims[1:]), colors))[::-1]:
+            ax.fill_between(k[mask], lim[0][mask], lim[1][mask], color=color, linewidth=0.)
         ax.set_ylabel(r'$|\mathrm{emulated} - \mathrm{ref}| / \sigma$')
         ax.set_xscale('log')
         ax.set_yscale('log')
@@ -431,6 +436,72 @@ def plot_residual_fourier(ref_samples, emulated_samples, quantities=None, iz=0, 
     if fn is not None:
         utils.savefig(fn, fig=fig)
     return fig
+
+
+from cosmoprimo.cosmology import Cosmology
+from cosmoprimo.jax import Interpolator1D
+from cosmoprimo.interpolator import PowerSpectrumInterpolator1D
+
+from scipy.special import comb
+
+
+def smoothstep(x, xmin=0, xmax=1, order=1):
+    x = np.clip((x - xmin) / (xmax - xmin), 0, 1)
+    result = 0
+    for n in range(0, order + 1):
+        result += comb(order + n, n) * comb(2 * order + 1, order - n) * (-x)**n
+    result *= x**(order + 1)
+    return result
+
+
+class HarmonicNormOperation(Operation):
+
+    name = 'harmonic_norm'
+
+    def __init__(self, ref_theta_cosmomc=0.010409108133982346):  # DESI fiducial cosmology
+        self.ref_theta_cosmomc = ref_theta_cosmomc
+
+    def initialize(self, v, **kwargs):
+        names = list(v.keys())
+        cl_names = tools.utils.find_names(names, ['harmonic.*_cl.*'])
+        self.ells, self.wells, self.windows, self.norm_cl_names = {}, {}, {}, {}
+        wsize = 60
+        oversampling = 1
+        for keyname in cl_names:
+            namespace, name, key = keyname.split('.')
+            self.norm_cl_names.setdefault(name, [])
+            self.norm_cl_names[name].append(keyname)
+            size = v[keyname].shape[-1]
+            self.ells[name] = ells = np.arange(size)
+            #self.windows[name] = np.concatenate([np.logspace(-10., 0., wsize), np.ones(size - 2 * wsize, dtype='f8'), np.logspace(0., -10., wsize)], axis=0)
+            smooth = smoothstep(np.linspace(0., 1., wsize * oversampling), xmin=0.2, xmax=0.8, order=3)
+            self.windows[name] = np.concatenate([smooth, np.ones(size * oversampling - 3 * wsize * oversampling, dtype='f8'), smooth[::-1], np.zeros(wsize, dtype='f8')], axis=0)
+            self.wells[name] = np.linspace(0., size, size * oversampling)
+
+    def __call__(self, v, X=None, cosmo=None):
+        if cosmo is None: cosmo = Cosmology(**X, engine='bbks')
+        s = cosmo['theta_cosmomc'] / self.ref_theta_cosmomc
+        A_s = 10**9 * cosmo['A_s']
+        for namespace, cl_names in self.norm_cl_names.items():
+            ell = self.ells[namespace]
+            elli = self.wells[namespace] / (1. + self.windows[namespace] * s)
+            for cl_name in cl_names:
+                v[cl_name] = Interpolator1D(ell, v[cl_name] / A_s, extrap=True)(elli)
+        return v
+
+    def inverse(self, v, X=None, cosmo=None):
+        if cosmo is None: cosmo = Cosmology(**X, engine='bbks')
+        s = cosmo['theta_cosmomc'] / self.ref_theta_cosmomc
+        A_s = 10**9 * cosmo['A_s']
+        for namespace, cl_names in self.norm_cl_names.items():
+            ell = self.wells[namespace] / (1. + self.windows[namespace] * s)
+            elli = self.ells[namespace]
+            for cl_name in cl_names:
+                v[cl_name] = Interpolator1D(ell, v[cl_name] * A_s, extrap=True)(elli)
+        return v
+
+    def __getstate__(self):
+        return {name: getattr(self, name) for name in ['name', 'ells', 'windows', 'norm_cl_names', 'ref_theta_cosmomc']}
 
 
 class FourierNormOperation(Operation):
@@ -447,18 +518,38 @@ class FourierNormOperation(Operation):
         self.norm_pk_names = tools.utils.find_names(list(v.keys()), ['fourier.pk.*.*', 'fourier.pk_non_linear.*.*'])
         self.norm_pk_names = [pk_name for pk_name in self.norm_pk_names if pk_name != self.ref_pk_name]
 
-    def __call__(self, v):
+    def __call__(self, v, X=None, cosmo=None):
         #if self.ref_pk_name not in v: return v
+        k = v['fourier.k']
+        z = v['fourier.z']
+        if cosmo is None: cosmo = Cosmology(**X)
+        h = cosmo['h']
+        #prim = cosmo.get_primordial(engine='bbks').pk_k(k=k / h) / h**3
+        prim = cosmo.get_fourier(engine='bbks').pk_interpolator(extrap_kmin=k[0] / 10., extrap_kmax=k[-1] * 10.)(k=k / h, z=z[0]) / h**3
+        #h = prim = 1.
+        for pk_name in [self.ref_pk_name] + self.norm_pk_names:
+            v[pk_name] = PowerSpectrumInterpolator1D(k, v[pk_name], extrap_kmin=k[0] / 10., extrap_kmax=k[-1] * 10.)(k / h) / h**3
         pk_dd = v[self.ref_pk_name]
         for pk_name in self.norm_pk_names: v[pk_name] = v[pk_name] / pk_dd[..., :v[pk_name].shape[-1]]  # for pk_non_linear, stop before zmax
         v['fourier.pkz'] = v[self.ref_pk_name] / v[self.ref_pk_name][..., [0]]  # normalize at z = 0
-        v[self.ref_pk_name] = v[self.ref_pk_name][..., 0]
+        v[self.ref_pk_name] = v[self.ref_pk_name][..., 0] / prim
         return v
 
-    def inverse(self, v):
+    def inverse(self, v, X=None, cosmo=None):
         #if self.ref_pk_name not in v: return v
-        pk_dd = v[self.ref_pk_name] = v[self.ref_pk_name][:, None] * v['fourier.pkz']
-        for pk_name in self.norm_pk_names: v[pk_name] = v[pk_name] * pk_dd[..., :v[pk_name].shape[-1]]  # for pk_non_linear, stop before zmax
+        k = v['fourier.k']
+        z = v['fourier.z']
+        if cosmo is None: cosmo = Cosmology(**X)
+        h = cosmo['h']
+        #prim = cosmo.get_primordial(engine='bbks').pk_k(k=k / h) / h**3
+        prim = cosmo.get_fourier(engine='bbks').pk_interpolator(extrap_kmin=k[0] / 10., extrap_kmax=k[-1] * 10.)(k=k / h, z=z[0]) / h**3
+        #h = prim = 1.
+        ref = v[self.ref_pk_name] * prim
+        pk_dd = v[self.ref_pk_name] = ref[..., None] * v['fourier.pkz']
+        for pk_name in self.norm_pk_names:
+            v[pk_name] = v[pk_name] * pk_dd[..., :v[pk_name].shape[-1]]  # for pk_non_linear, stop before zmax
+        for pk_name in [self.ref_pk_name] + self.norm_pk_names:
+            v[pk_name] = PowerSpectrumInterpolator1D(k / h, v[pk_name] * h**3, extrap_kmin=k[0] / 10., extrap_kmax=k[-1] * 10.)(k)
         return v
 
     def __getstate__(self):

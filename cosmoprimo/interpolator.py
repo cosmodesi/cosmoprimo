@@ -472,7 +472,8 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         jnp = numpy_jax(k)
         self.k = jnp.sort(jnp.asarray(k, dtype='f8').ravel())
         self._np = numpy_jax(pk_callable(k[:1]))
-        self.extrap_kmin, self.extrap_kmax = self._np.minimum(extrap_kmin, self.k[0]), self._np.maximum(extrap_kmax, self.k[-1])
+        self.extrap_kmin, self.extrap_kmax = extrap_kmin, extrap_kmax
+        #self.extrap_kmin, self.extrap_kmax = self._np.minimum(extrap_kmin, self.k[0]), self._np.maximum(extrap_kmax, self.k[-1])
         #self.extrap_kmin, self.extrap_kmax = self.kmin, self.kmax
         self.is_from_callable = True
 
@@ -733,11 +734,13 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         self = cls.__new__(cls)
         self.__dict__.update(self.default_params)
         self._rsigma8sq = 1.
-        self.k, self.z = (np.sort(np.array(xx, dtype='f8').ravel()) for xx in (k, z))
-        self.extrap_kmin, self.extrap_kmax = min(extrap_kmin, self.k[0]), max(extrap_kmax, self.k[-1])
-        #self.extrap_kmin, self.extrap_kmax = self.kmin, self.kmax
+        jnp = numpy_jax(k, z)
+        self.k, self.z = (jnp.sort(jnp.asarray(xx, dtype='f8').ravel()) for xx in (k, z))
         self.growth_factor_sq = growth_factor_sq
         self._np = numpy_jax(pk_callable(k[:1], z[:1]) if self.growth_factor_sq is None else pk_callable(k[:1]) * self.growth_factor_sq(z[:1]))
+        self.extrap_kmin, self.extrap_kmax = extrap_kmin, extrap_kmax
+        #self.extrap_kmin, self.extrap_kmax = self._np.minimum(extrap_kmin, self.k[0]), self._np.maximum(extrap_kmax, self.k[-1])
+        #self.extrap_kmin, self.extrap_kmax = self.kmin, self.kmax
         self.is_from_callable = True
 
         def interp(k, z, grid=True, ignore_growth=False, bounds_error=False):
@@ -936,7 +939,10 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             return PowerSpectrumInterpolator1D.from_callable(self.k, pk_callable=pk_callable, extrap_kmin=self.extrap_kmin, extrap_kmax=self.extrap_kmax)
         default_params = dict(extrap_pk=self.extrap_pk, extrap_kmin=self.extrap_kmin, extrap_kmax=self.extrap_kmax, interp_order_k=self.interp_order_k)
         default_params.update(kwargs)
-        return PowerSpectrumInterpolator1D(self.k, self(self.k, z=z), **default_params)
+        self.extrap_kmin, self.extrap_kmax = -np.inf, np.inf  # in case self.k > self.extrap_kmax
+        pk = self(self.k, z=z)
+        self.extrap_kmin, self.extrap_kmax = default_params['extrap_kmin'], default_params['extrap_kmax']
+        return PowerSpectrumInterpolator1D(self.k, pk, **default_params)
 
     def to_xi(self, nk=1024, fftlog_kwargs=None, **kwargs):
         """
@@ -1095,7 +1101,8 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         self = cls.__new__(cls)
         self.__dict__.update(self.default_params)
         self._rsigma8sq = 1.
-        self.s = np.sort(np.asarray(s, dtype='f8').ravel())
+        jnp = numpy_jax(s) 
+        self.s = jnp.sort(jnp.asarray(s, dtype='f8').ravel())
         self._np = numpy_jax(xi_callable(s[:1]))
 
         def interp(s, bounds_error=False, **kwargs):
@@ -1331,10 +1338,10 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         self = cls.__new__(cls)
         self.__dict__.update(self.default_params)
         self._rsigma8sq = 1.
-        self._np = jnp
-        self.s, self.z = (self._np.array(xx, dtype='f8').ravel().sort() for xx in (s, z))
-        self.__dict__.update(self.default_params)
+        jnp = numpy_jax(s, z)
+        self.s, self.z = (jnp.sort(jnp.asarray(xx, dtype='f8').ravel()) for xx in (s, z))
         self.growth_factor_sq = growth_factor_sq
+        self._np = numpy_jax(xi_callable(s[:1], z[:1]) if self.growth_factor_sq is None else xi_callable(s[:1]) * self.growth_factor_sq(z[:1]))
         self.is_from_callable = True
 
         def interp(s, z, grid=True, ignore_growth=False, bounds_error=False):

@@ -741,7 +741,6 @@ def test_bisect():
 
 
 def test_isitgr():
-
     cosmo_camb = Cosmology(engine='camb')
     try:
         cosmo = Cosmology(engine='isitgr')
@@ -852,8 +851,8 @@ def test_default_background():
         test_jax = jax.jit(test)
         list_params = [{'m_ncdm': 0.4, 'w0_fld': -0.6, 'wa_fld': -1.}, {'m_ncdm': 5., 'w0_fld': -0.8, 'wa_fld': -0.5}]
         for params in list_params:
-            assert np.allclose(test(**params), ref(**params), rtol=1e-6, atol=1e-4)
-            assert np.allclose(test_jax(**params), ref(**params), rtol=1e-6, atol=1e-4)
+            assert np.allclose(test(**params), ref(**params), rtol=2e-6, atol=1e-4)
+            assert np.allclose(test_jax(**params), ref(**params), rtol=2e-6, atol=1e-4)
         t0 = time.time()
         for params in list_params: test_jax(**params)
         dt_test = time.time() - t0

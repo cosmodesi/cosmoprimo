@@ -87,8 +87,10 @@ class EmulatedEngine(BaseEngine):
 
             def finalize(predict):
                 predict = {**fixed, **predict}
+                X = dict(self._params)
+                kw_yoperation = {}  #'cosmo': self}
                 for operation in emulator.yoperations[::-1]:
-                    try: predict = operation.inverse(predict)
+                    try: predict = operation.inverse(predict, X=X, **kw_yoperation)
                     except KeyError: pass
                 return {name[len(section) + 1:]: value for name, value in predict.items()}
 
@@ -207,7 +209,7 @@ class Background(BaseBackground):
         self._state = state
 
 
-@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star', 'theta_cosmomc', 'YHe')
+@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star', 'YHe')
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
@@ -220,7 +222,7 @@ class Thermodynamics(BaseSection):
 
     def __getstate__(self):
         state = {}
-        for name in ['rs_drag', 'z_drag', 'rs_star', 'z_star', 'theta_cosmomc', 'YHe']:
+        for name in ['rs_drag', 'z_drag', 'rs_star', 'z_star', 'YHe']:
             if hasattr(self, name):
                 state[name] = getattr(self, name)
         return state
