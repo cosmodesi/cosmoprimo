@@ -741,10 +741,6 @@ def test_bisect():
 
 
 def test_isitgr():
-    cosmo = Cosmology(engine='isitgr')
-    cosmo['Q0']
-    exit()
-
     cosmo_camb = Cosmology(engine='camb')
     try:
         cosmo = Cosmology(engine='isitgr')

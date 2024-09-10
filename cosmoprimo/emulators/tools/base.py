@@ -57,6 +57,31 @@ def sort_varied_fixed(samples, subsample=None):
     return varied, fixed
 
 
+def batch_vmap(func, *args, batch_size=None, **kwargs):
+
+    vfunc = vmap(func, *args, **kwargs)
+
+    def wrapper(*args):
+        size = None
+        for arg in args:
+            for key, val in arg.items():
+                size = len(val)
+                break
+        if batch_size is None: nbatch = 1
+        else: nbatch = (size + batch_size - 1) // batch_size
+        toret = {}
+
+        for ibatch in range(nbatch):
+            sl = slice(ibatch * size // nbatch, (ibatch + 1) * size // nbatch)
+            res = vfunc(*[{key: val[sl] for key, val in arg.items()} for arg in args])
+            for key, val in res.items(): toret[key] = toret.get(key, []) + [val]
+        for key, val in toret.items():
+            toret[key] = jnp.concatenate(val, axis=0)
+        return toret
+
+    return wrapper
+
+
 class EmulatedCalculator(object):
 
     """
@@ -216,30 +241,37 @@ class Emulator(BaseClass):
             raise ValueError('Found no varying quantity in provided calculator')
         self._calculator, self._params, self._varied, self._fixed = calculator, params, varied, fixed
 
-    def _get_engine_X_Y(self, samples, params=None, varied=None, fixed=None):
+    def _get_engine_X_Y(self, samples, params=None, varied=None, fixed=None, ignore_operations=False):
         # Internal method to apply :attr:`xoperation` and attr:`yoperation` to input samples to engines
         if params is None:
             params = [name[2:] for name in samples.columns('X.*')]
         if varied is None:
             varied = [name[2:] for name in samples.columns('Y.*')]
         X = {name: samples['X.' + name].copy() for name in params}
-        Y = dict(fixed or {})
-        Y.update({name: samples['Y.' + name].copy() for name in varied})
-        for operation in self.yoperations:
-            try:
-                operation.initialize(Y, X=X)
-                Y = operation(Y, X=X)
-            except KeyError:
-                pass
-        for operation in self.xoperations:
-            try:
-                operation.initialize(X)
-                X = operation(X)
-            except KeyError:
-                pass
-        return X, Y
+        fixed = dict(fixed or {})
+        Y_varied = {name: samples['Y.' + name].copy() for name in varied}
+        Y = {**fixed, **Y_varied}
+        if not ignore_operations:
+            for operation in self.yoperations:
+                try:
+                    operation.initialize(Y, X=X)
+                    def func(Y_varied, X): return operation({**fixed, **Y_varied}, X=X)
+                    import time
+                    t0 = time.time()
+                    Y = batch_vmap(func, (0, 0), batch_size=20)(Y_varied, X)
+                    print({name: Y[name].shape for name in Y})
+                    print('dt', time.time() - t0)
+                except KeyError:
+                    pass
+            for operation in self.xoperations:
+                try:
+                    operation.initialize(X)
+                    X = vmap(operation)(X)
+                except KeyError:
+                    pass
+        return X, Y, dict(samples.attrs)
 
-    def set_samples(self, engine=None, samples=None, calculator=None, params=None, **kwargs):
+    def set_samples(self, engine=None, samples=None, calculator=None, params=None, ignore_operations=False, **kwargs):
         """
         Set samples for :meth:`fit`.
 
@@ -314,20 +346,27 @@ class Emulator(BaseClass):
             notfinite = [name for name, value in samples.items() if not np.isfinite(value).all()]
             if notfinite:
                 warnings.warn('{} are not finite'.format(notfinite))
-            X, Y = self._get_engine_X_Y(samples, params=params, varied=varied, fixed=fixed)
+            X, Y, attrs = self._get_engine_X_Y(samples, params=params, varied=varied, fixed=fixed, ignore_operations=ignore_operations)
             for name in fixed: Y.pop(name)
             varied, _fixed = sort_varied_fixed(Y, subsample=min(samples.size, 10))
             fixed.update(_fixed)
             params = list(X)
+            samples_operations = Samples({**{'X.' + name: X[name] for name in X}, **{'Y.' + name: Y[name] for name in Y}}, attrs=dict(attrs))
+        else:
+            samples_operations = None
 
         params, varied, fixed = self.mpicomm.bcast((params, varied, fixed) if self.mpicomm.rank == 0 else None, root=0)
         self.fixed.update(fixed)
-        if not hasattr(self, 'samples'): self.samples = {}
+        if not hasattr(self, '_samples'):
+            self._samples = {}
+            self._samples_operations = {}
 
         this_engines = initialize_engines(params, varied)
         for name, engine in this_engines.items():
-            self.samples[name] = samples
+            self._samples[name] = samples
+            self._samples_operations[name] = samples_operations
             self._init_engines[name] = engine
+        return samples, samples_operations
 
     def update(self, other=None, **kwargs):
         """
@@ -365,9 +404,8 @@ class Emulator(BaseClass):
         def _get_X_Y(samples, yname, params):
             X, Y, attrs = None, None, None
             if self.mpicomm.rank == 0:
-                X, Y = self._get_engine_X_Y(samples, params=params, fixed=self.fixed)
-                X = np.column_stack([X[name] for name in self.engines[yname].params])
-                Y = Y[yname]
+                X = np.column_stack([samples['X.' + name] for name in self.engines[yname].params])
+                Y = samples['Y.' + name]
                 attrs = dict(samples.attrs)
             if not self.mpicomm.bcast(np.isfinite(X).all() if self.mpicomm.rank == 0 else None, root=0):
                 raise ValueError('X is not finite')
@@ -376,26 +414,28 @@ class Emulator(BaseClass):
             return X, Y, attrs  # operations may yield jax arrays
 
         if name is None:
-            name = list(self.samples.keys())
+            name = list(self._samples_operations.keys())
         if not utils.is_sequence(name):
             name = [name]
-        names = utils.find_names(list(self.samples.keys()), name)
+        names = utils.find_names(list(self._samples_operations.keys()), name)
 
         for name in names:
             self.engines[name] = engine = self._init_engines[name].copy()
             if self.mpicomm.rank == 0:
                 self.log_info('Fitting {}.'.format(name))
-            engine.fit(*_get_X_Y(self.samples[name], name, params=engine.params), **kwargs)
+            engine.fit(*_get_X_Y(self._samples_operations[name], name, params=engine.params), **kwargs)
 
-    def predict(self, params):
+    def predict(self, params, kw_yoperation=None):
         """Return emulated calculator output 'y' given input params."""
-        params = X = {**self.defaults, **params}
+        params = {**self.defaults, **params}
+        X = dict(params)
         for operation in self.xoperations:
             params = operation(params)
         predict = dict(self.fixed)
         predict.update({name: engine.predict(params) for name, engine in self.engines.items()})
+        if kw_yoperation is None: kw_yoperation = {}
         for operation in self.yoperations[::-1]:
-            predict = operation.inverse(predict, X=X)
+            predict = operation.inverse(predict, X=X, **kw_yoperation)
         return predict
 
     def to_calculator(self):
@@ -515,13 +555,14 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
         raise NotImplementedError
 
     #@jit(static_argnums=[0])
-    def predict(self, params):
+    def predict(self, params, kw_yoperation=None):
         X = jnp.column_stack([params[name] for name in self.params])
         for operation in self.xoperations:
             X = operation(X)
         Y = self._predict_no_operation(X.reshape(-1)).reshape(self.yshape)
+        if kw_yoperation is None: kw_yoperation = {}
         for operation in self.yoperations[::-1]:
-            Y = operation.inverse(Y, X=params)
+            Y = operation.inverse(Y, X=params, **kw_yoperation)
         return Y
 
     def _predict_no_operation(self, X):

@@ -1060,6 +1060,12 @@ class Cosmology(BaseCosmology):
         defaults = {'w0_fld': -1., 'wa_fld': 0., 'cs2_fld': 1.}
         for name, default in defaults.items():
             params[name] = _make_float(params.get(name, default))
+
+        def raise_error(w):
+            if w >= 1. / 3.:
+                raise CosmologyInputError('w(a -> 0) = w0_fld + wa_fld > 1 / 3, there cannot be radiation domination at early time')
+
+        exception(raise_error, params['w0_fld'] + params['wa_fld'])
         params['use_ppf'] = bool(params.get('use_ppf', True))
 
         for basename in ['Omega_cdm', 'Omega_b', 'T_cmb', 'h', 'A_s', 'sigma8', 'm_ncdm', 'T_ncdm_over_cmb']:

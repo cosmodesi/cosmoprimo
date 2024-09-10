@@ -15,7 +15,6 @@ try:
     from jax import config
     config.update('jax_enable_x64', True)
     from jax import numpy, scipy
-    from jax.tree_util import register_pytree_node_class
     array_types = []
     for line in ['jaxlib.xla_extension.DeviceArrayBase', 'type(numpy.array(0))', 'jax.core.Tracer']:
         try:
@@ -23,14 +22,10 @@ try:
         except AttributeError:
             pass
     array_types = tuple(array_types)
-    from jax import vmap
 except ImportError:
     jax = None
     import numpy
     import scipy
-    vmap = numpy.vectorize
-    def register_pytree_node_class(cls):
-        return cls
 
 
 def jit(*args, **kwargs):
@@ -286,8 +281,13 @@ def exception_jax(fun, *args):
 
 if jax:
     exception = exception_jax
+    from jax import vmap
+    from jax.tree_util import register_pytree_node_class
 else:
     exception = exception_numpy
+    vmap = numpy.vectorize
+    def register_pytree_node_class(cls):
+        return cls
 
 
 def simpson(y, x=None, dx=1, axis=-1, even='avg'):
