@@ -885,7 +885,7 @@ def test_fk():
         inter = CubicSpline(x, y)
         return inter(k)
 
-    def f_over_f0_EH(zev, k, OmM0, h, fnu):
+    def f_over_f0_EH(zev, k, OmM0, h, fnu, Nnu=3):
         """
         Routine to get f(k)/f0 and f0.
         f(k)/f0 is obtained following H&E (1998), arXiv:astro-ph/9710216
@@ -897,6 +897,7 @@ def test_fk():
             OmM0: Omega_b + Omega_c + Omega_nu (dimensionless matter density parameter)
             h = H0/100
             fnu: Omega_nu/OmM0
+            Nnu: number of neutrinos
         Returns:
             f(k)/f0 (when 'EdSkernels = True' f(k)/f0 = 1)
             f0
@@ -908,7 +909,6 @@ def test_fk():
 
         pcb = 5./4 - np.sqrt(1 + 24*(1 - fnu))/4     #neutrino supression
         c = 0.7
-        Nnu = 3                                     #number of neutrinos
         theta272 = (1.00)**2                        # T_{CMB} = 2.7*(theta272)
         pf = (k * theta272)/(OmM0 * h**2)
         DEdS = np.exp(eta)/aeq                      #growth function: EdS cosmology
@@ -961,26 +961,82 @@ def test_fk():
 
     from matplotlib import pyplot as plt
     from cosmoprimo.fiducial import DESI
-    k = np.linspace(0.0001, 1., 100)
-    z = 1.
+    k = np.geomspace(0.0001, 2., 1000)
+    z = 0.5
     ax = plt.gca()
-    m_ncdm = 0.1
-    cosmo = DESI(m_ncdm=m_ncdm)
+    m_ncdm = 0.4
+    cosmo = DESI(m_ncdm=m_ncdm) #, neutrino_hierarchy='degenerate')
     Omega0_m, h = cosmo.Omega0_m, cosmo.h
     fnu = cosmo.Omega0_ncdm_tot / Omega0_m
-    _, fk, f0 = f_over_f0_EH(z, k, Omega0_m, h, fnu)
-    for engine in ['class', 'camb']:
+    _, fk, f0 = f_over_f0_EH(z, k, Omega0_m, h, fnu, Nnu=1)
+    pk_dd_noncdm =  DESI(m_ncdm=0.).get_fourier().pk_interpolator(of='delta_cb').to_1d(z=z)(k)
+    for i, engine in enumerate(['class', 'camb']):
         cosmo = DESI(engine=engine, m_ncdm=m_ncdm)
+        fo = cosmo.get_fourier()
+        pk_tt = fo.pk_interpolator(of=('theta_cb', 'delta_cb'))(k, z=z)
+        pk_dd = fo.pk_interpolator(of='delta_cb')(k, z=z)
+        ratio = pk_tt / pk_dd
+        print(ratio[0] / f0)
+        ratio /= f0
+        color = 'C{:d}'.format(i)
+        ax.plot(k, ratio, color=color, label=engine)
+        ratio = pk_dd / pk_dd_noncdm
+        ratio /= ratio[0]
+        #ax.plot(k, ratio, color=color, linestyle='--')
+    ax.plot(k, fk, label='EH')
+    ax.set_xlabel('$k$')
+    ax.set_ylabel(r'$P_{\theta\theta} / P_{\delta\delta}$')
+    ax.set_xscale('log')
+    ax.legend()
+    ax.grid()
+    plt.savefig('test_fk_m_ncdm_{:.1f}.png'.format(m_ncdm))
+    plt.close(plt.gcf())
+
+    ax = plt.gca()
+    _, fk, f0 = f_over_f0_EH(z, k, Omega0_m, h, fnu, Nnu=3)
+    for i, engine in enumerate(['class', 'camb']):
+        color = 'C{:d}'.format(i)
+        cosmo = DESI(engine=engine, m_ncdm=m_ncdm, neutrino_hierarchy='degenerate')
         fo = cosmo.get_fourier()
         pk_tt = fo.pk_interpolator(of='theta_cb')(k, z=z)
         pk_dd = fo.pk_interpolator(of='delta_cb')(k, z=z)
-        ratio = pk_tt / pk_dd
-        print(ratio[0] / f0**2)
-        ratio /= f0**2
-        ax.plot(k, ratio, label=engine)
-    ax.plot(k, fk**2, label='EH')
+        ratio = np.sqrt(pk_tt / pk_dd)
+        ratio /= f0
+        ax.plot(k, ratio, color=color, label=engine)
+        dz = 1e-2
+        hdz = dz / 2.
+        pk_interp = fo.pk_interpolator(of='delta_cb')
+        ratio = - np.log(pk_interp(k, z + hdz) / pk_interp(k, z - hdz)) / dz * (1. + z) / 2.
+        print(ratio[0] / f0)
+        ratio /= f0
+        #ax.plot(k, ratio, color=color, linestyle='--')
+    ax.plot(k, fk, color='C2', label='EH')
+    ax.set_xlabel('$k$')
+    ax.set_ylabel(r'$P_{\delta\theta} / P_{\delta\delta}$')
+    ax.set_xscale('log')
     ax.legend()
-    plt.show()
+    ax.grid()
+    plt.savefig('test_fk_dpdd_m_ncdm_{:.1f}.png'.format(m_ncdm))
+    plt.close(plt.gcf())
+
+    z = np.linspace(0., 1., 4)
+    ax = plt.gca()
+    cosmo = DESI(engine='class', m_ncdm=m_ncdm)
+    fo = cosmo.get_fourier()
+    pk_tt = fo.pk_interpolator(of='theta_cb')(k, z=z)
+    pk_dd = fo.pk_interpolator(of='delta_cb')(k, z=z)
+    for iz, zz in enumerate(z):
+        color = 'C{:d}'.format(iz)
+        ratio = pk_dd[..., iz] / pk_dd[..., 0]
+        ax.plot(k, ratio / ratio[0], color=color, label='$z = {:.2f}$'.format(zz))
+        ratio = pk_tt[..., iz] / pk_tt[..., 0]
+        ax.plot(k, ratio / ratio[0], color=color, linestyle='--')
+    ax.set_xlabel('$k$')
+    ax.set_ylabel(r'$P_{XX}(k, z) / P_{XX}(k, z=0)$')
+    ax.legend()
+    plt.savefig('test_pkz_m_ncdm_{:.1f}.png'.format(m_ncdm))
+    plt.close(plt.gcf())
+
 
 
 if __name__ == '__main__':

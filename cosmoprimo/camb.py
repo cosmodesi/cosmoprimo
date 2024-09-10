@@ -633,7 +633,7 @@ class Fourier(BaseSection):
         """Convert to CAMB naming conventions."""
         return {'delta_m': 'delta_tot', 'delta_cb': 'delta_nonu', 'theta_cdm': 'v_newtonian_cdm', 'theta_b': 'v_newtonian_baryon', 'phi_plus_psi': 'Weyl'}[of]
 
-    def table(self, non_linear=False, of='m'):
+    def table(self, non_linear=False, of='delta_m'):
         r"""
         Return power spectrum table, in :math:`(\mathrm{Mpc}/h)^{3}`.
 
@@ -679,6 +679,7 @@ class Fourier(BaseSection):
                 kpow -= 2
 
         var1, var2 = [self._index_pk_of(of_) for of_ in of]
+
         # Do the hubble_units, k_hunits conversion manually as it is incorrect for Weyl ~ k^2 (phi + psi) / 2
         if non_linear and self._engine._camb_params.NonLinear == self._engine.camb.model.NonLinear_none:
             raise self._engine.camb.CAMBError('You asked for non-linear P(k, z), but it has not been calculated. Please set non_linear.')
