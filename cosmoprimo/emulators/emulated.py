@@ -76,7 +76,8 @@ class EmulatedEngine(BaseEngine):
         def predict(section):
             fixed = {name: value for name, value in emulator.fixed.items() if name.startswith(section + '.')}
             base_predict = {}
-            section_requires = False
+            section_requires = False  # where this section requires extra parameters than cosmo
+            # For sections that do not require extra parameters, call predict
             for name, engine in emulator.engines.items():
                 if name.startswith(section + '.'):
                     if engine in requires:
@@ -86,6 +87,7 @@ class EmulatedEngine(BaseEngine):
                         base_predict[name] = engine.predict(params)
 
             def finalize(predict):
+                # Apply postprocessing
                 predict = {**fixed, **predict}
                 X = dict(self._params)
                 kw_yoperation = {}  #'cosmo': self}
