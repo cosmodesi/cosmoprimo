@@ -543,11 +543,13 @@ def get_engine(engine):
     """
     if isinstance(engine, str):
         engine = engine.lower()
-        if engine == 'class':
+        if engine in ['class', 'classy']:
             from . import classy
         #NEW: adding the engine here too (Rafaela)
-        if engine == 'axiclass':
+        if engine in ['axiclass', 'axiclassy']:
             from . import axiclassy
+        if engine in ['mochiclass', 'mochiclassy']:
+            from . import mochiclassy
         elif engine == 'camb':
             from . import camb
         elif engine == 'isitgr':
@@ -812,6 +814,12 @@ class Cosmology(BaseCosmology):
         if 'H0' in params:
             params['h'] = params.pop('H0') / 100.
 
+        def set_alias(params_name, args_name):
+            if args_name not in args: return
+            # pop because we copied everything
+            if params_name in params: raise CosmologyInputError('found both {} and {}, must be added to _conflict_parameters'.format(args_name, params_name))
+            params[params_name] = params.pop(args_name)
+
         h = params['h']
         for name, value in args.items():
             if name.startswith('omega'):
@@ -820,12 +828,6 @@ class Cosmology(BaseCosmology):
                 params_name = name.replace('omega', 'Omega')
                 if params_name in params: raise CosmologyInputError('found both {} and {}, must be added to _conflict_parameters'.format(name, params_name))
                 params[params_name] = Omega
-
-        def set_alias(params_name, args_name):
-            if args_name not in args: return
-            # pop because we copied everything
-            if params_name in params: raise CosmologyInputError('found both {} and {}, must be added to _conflict_parameters'.format(args_name, params_name))
-            params[params_name] = params.pop(args_name)
 
         set_alias('Omega_m', 'Omega0_m')
         set_alias('Omega_cdm', 'Omega0_cdm')

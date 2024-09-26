@@ -785,6 +785,28 @@ def test_axiclass():
     cosmo['log10_axion_ac']
 
 
+def test_mochiclass():
+    cosmo_class = Cosmology(engine='class')
+    try:
+        cosmo = Cosmology(engine='mochiclass')
+    except ImportError:
+        return
+
+    k = np.linspace(0.01, 1., 200)
+    z = np.linspace(0., 2., 10)
+    assert np.allclose(cosmo_class.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=1e-4)
+
+    params = {'Omega_Lambda': 0, 'Omega_fld': 0, 'Omega_smg': -1, 'gravity_model': 'brans dicke', 'parameters_smg': [0.7, 50, 1., 1.e-1],
+              'skip_stability_tests_smg': 'no', 'a_min_stability_test_smg': 1e-6}
+    cosmo = Cosmology(engine='mochiclass', **params)
+    assert not np.allclose(cosmo_class.get_fourier().pk_interpolator(of='theta_cb')(k=k, z=z), cosmo.get_fourier().pk_interpolator(of='theta_cb')(k=k, z=z), atol=0., rtol=1e-4)
+    cosmo.comoving_radial_distance(z)
+
+    from cosmoprimo.fiducial import DESI
+    cosmo = DESI(engine='mochiclass', **params)
+    cosmo['parameters_smg']
+
+
 def test_error():
 
     with pytest.raises(CosmologyInputError):
@@ -1063,6 +1085,7 @@ if __name__ == '__main__':
     test_external_pyccl()
     test_bisect()
     test_isitgr()
-    #test_axiclass()
+    test_axiclass()
+    test_mochiclass()
     test_default_background()
     #test_fk()
