@@ -37,6 +37,11 @@ def test_params():
     assert cosmo.engine.__class__.__name__ == 'ClassEngine'
     Fourier(cosmo)
 
+    with pytest.raises(CosmologyInputError):
+        cosmo = Cosmology(tau=0.05, tau_reio=0.06)
+    cosmo = Cosmology(ombh2=0.05, omch2=0.1)
+    assert np.allclose(cosmo['omega_b'], 0.05) and np.allclose(cosmo['omega_cdm'], 0.1)
+
 
 def test_engine():
     cosmo = Cosmology(engine='class')

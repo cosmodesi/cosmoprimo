@@ -662,17 +662,21 @@ class Cosmology(BaseCosmology):
                                             m_ncdm=None, neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
                                             tau_reio=0.06, reionization_width=0.5, A_L=1.0, w0_fld=-1., wa_fld=0., cs2_fld=1.)
     _default_calculation_parameters = dict(non_linear='', modes='s', lensing=False, z_pk=None, kmax_pk=10., ellmax_cl=2500, YHe='BBN', use_ppf=True)
-    _conflict_parameters = [('h', 'H0'),
-                            ('T_cmb', 'Omega_g', 'omega_g', 'Omega0_g'),
-                            ('Omega_b', 'omega_b', 'Omega0_b'),
-                            # ('Omega_fld', 'Omega0_fld'),
-                            # ('Omega_Lambda', 'Omega0_Lambda'),
-                            ('Omega_k', 'omega_k', 'Omega0_k'),
-                            ('N_ur', 'Omega_ur', 'omega_ur', 'Omega0_ur', 'N_eff'),
-                            ('Omega_cdm', 'omega_cdm', 'Omega0_cdm', 'Omega_c', 'omega_c', 'Omega_m', 'omega_m', 'Omega0_m'),
-                            ('m_ncdm', 'Omega_ncdm', 'omega_ncdm', 'Omega0_ncdm'),
-                            ('A_s', 'logA', 'ln10^{10}A_s', 'ln10^10A_s', 'ln_A_s_1e10', 'sigma8'),
-                            ('tau_reio', 'z_reio')]
+    _conflict_parameters_no_alias = [('h', 'H0'),
+                                    ('T_cmb', 'Omega_g', 'omega_g'),
+                                    ('Omega_b', 'omega_b'),
+                                    ('Omega_cdm', 'omega_cdm', 'Omega_c', 'omega_c', 'Omega_m', 'omega_m'),
+                                    ('Omega_k', 'omega_k'),
+                                    ('N_ur', 'Omega_ur', 'omega_ur', 'N_eff'),
+                                    ('m_ncdm', 'Omega_ncdm', 'omega_ncdm'),
+                                    ('A_s', 'logA', 'sigma8'),
+                                    ('tau_reio', 'z_reio')]
+    _alias_parameters = {'omega_b': ('ombh2',), 'omega_cdm': ('omch2',), 'Omega_k': ('omk',), 'N_eff': ('nnu',),
+                        'n_s': ('ns',), 'alpha_s': ('nrun',), 'beta_s': ('nrunrun',), 'tau_reio': ('tau',),
+                        'Omega_m': ('Omega0_m',), 'Omega_cdm': ('Omega0_cdm', 'Omega_c'),
+                        'Omega_b': ('Omega0_b',), 'Omega_k': ('Omega0_k',), 'Omega_ur': ('Omega0_ur',),
+                        'Omega_ncdm': ('Omega0_ncdm',), 'Omega_fld': ('Omega0_fld',), 'T_cmb': ('T0_cmb',),
+                        'Omega_g': ('Omega0_g',), 'logA': ('ln10^10A_s', 'ln10^{10}A_s', 'ln_A_s_1e10')}
 
     def __init__(self, engine=None, extra_params=None, **params):
         r"""
@@ -705,10 +709,10 @@ class Cosmology(BaseCosmology):
         params : dict
             Cosmological and calculation parameters which take priority over the default ones.
         """
-        check_params(params, conflicts=self._conflict_parameters)
+        check_params(params, conflicts=self.__class__._conflict_parameters)
         self._derived = {}
         self._engine = None
-        self._input_params = merge_params(self.get_default_params(include_conflicts=False), params, conflicts=self._conflict_parameters)
+        self._input_params = merge_params(self.get_default_params(include_conflicts=False), params, conflicts=self.__class__._conflict_parameters)
         self._params = self._compile_params(self._input_params)
         self._set_jax()
         self._extra_params = {}
@@ -814,11 +818,16 @@ class Cosmology(BaseCosmology):
         if 'H0' in params:
             params['h'] = params.pop('H0') / 100.
 
-        def set_alias(params_name, args_name):
-            if args_name not in args: return
-            # pop because we copied everything
-            if params_name in params: raise CosmologyInputError('found both {} and {}, must be added to _conflict_parameters'.format(args_name, params_name))
-            params[params_name] = params.pop(args_name)
+        def set_alias(params_name, aliases):
+            for alias in aliases:
+                if alias not in args: continue
+                # pop because we copied everything
+                assert params_name not in params, 'found both {} and {}, must be added to _conflict_parameters'.format(alias, params_name)
+                params[params_name] = params.pop(alias)
+
+        omegas = ['omega_b', 'omega_cdm', 'omega_m']
+        for name in omegas:
+            set_alias(name, cls._alias_parameters.get(name, ()))
 
         h = params['h']
         for name, value in args.items():
@@ -826,26 +835,12 @@ class Cosmology(BaseCosmology):
                 omega = params.pop(name)
                 Omega = _make_float(omega) / h**2  # array to cope with tuple, lists for e.g. omega_ncdm
                 params_name = name.replace('omega', 'Omega')
-                if params_name in params: raise CosmologyInputError('found both {} and {}, must be added to _conflict_parameters'.format(name, params_name))
+                assert params_name not in params, 'found both {} and {}, must be added to _conflict_parameters'.format(name, params_name)
                 params[params_name] = Omega
 
-        set_alias('Omega_m', 'Omega0_m')
-        set_alias('Omega_cdm', 'Omega0_cdm')
-        set_alias('Omega_cdm', 'Omega_c')
-        set_alias('Omega_ncdm', 'Omega0_ncdm')
-        set_alias('Omega_b', 'Omega0_b')
-        set_alias('Omega_k', 'Omega0_k')
-        set_alias('Omega_ur', 'Omega0_ur')
-        # set_alias('Omega_Lambda', 'Omega_lambda')
-        # set_alias('Omega_Lambda', 'Omega0_lambda')
-        # set_alias('Omega_Lambda', 'Omega0_Lambda')
-        set_alias('Omega_fld', 'Omega0_fld')
-        set_alias('Omega_ncdm', 'Omega0_ncdm')
-        set_alias('T_cmb', 'T0_cmb')
-        set_alias('Omega_g', 'Omega0_g')
-        set_alias('logA', 'ln10^10A_s')
-        set_alias('logA', 'ln10^{10}A_s')
-        set_alias('logA', 'ln_A_s_1e10')
+        for name, aliases in cls._alias_parameters.items():
+            if name in omegas: continue
+            set_alias(name, aliases)
 
         if 'logA' in params:
             params['A_s'] = jnp.exp(params.pop('logA')) * 10**(-10)
@@ -1357,6 +1352,21 @@ def _make_section_getter(section):
 
 for section in _Sections:
     setattr(Cosmology, 'get_{}'.format(section.lower()), _make_section_getter(section.lower()))
+
+
+def _get_all_conflicts(conflict_parameters_no_alias, alias_parameters):
+    toret = []
+    for conflicts in conflict_parameters_no_alias:
+        conflicts = list(conflicts)
+        for name in conflicts:
+            for alias in alias_parameters.get(name, []):
+                if alias not in conflicts:
+                    conflicts.append(alias)
+        toret.append(tuple(conflicts))
+    return toret
+
+
+Cosmology._conflict_parameters = _get_all_conflicts(Cosmology._conflict_parameters_no_alias, Cosmology._alias_parameters)
 
 
 def merge_params(args, moreargs, **kwargs):
