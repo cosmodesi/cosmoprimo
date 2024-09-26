@@ -13,7 +13,7 @@ def test_base():
     emulator_dir = '_tests'
     fn = os.path.join(emulator_dir, 'emu.npy')
     params = {'a': (0., 1.), 'b': (0., 1.)}
-    emulator = Emulator(calculator, params, engine='point')
+    emulator = Emulator(calculator=calculator, params=params, engine='point')
     emulator.set_samples()
     emulator.fit()
     emulator.save(fn)

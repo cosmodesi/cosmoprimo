@@ -343,10 +343,10 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
                 best_params, best_batch_stats = best_state.params, best_state.batch_stats
 
             self.model_operations = model.operations(best_params, best_batch_stats)
-            x = samples['X']
-            from cosmoprimo.jax import vmap
-            y_pred = vmap(self._predict_no_operation)(x)
-            print(samples['Y'][:3], y_pred[:3], compute_loss(samples['Y'], y_pred))
+            #x = samples['X']
+            #from cosmoprimo.jax import vmap
+            #y_pred = vmap(self._predict_no_operation)(x)
+            #print(samples['Y'][:3], y_pred[:3], compute_loss(samples['Y'], y_pred))
             #y_pred2 = best_state.apply_fn({'params': best_state.params, 'batch_stats': best_state.batch_stats}, x, train=False)
             #print(y_pred)
             #print('LOOOL', y_pred2 - y_pred)
@@ -366,7 +366,7 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
 
     def __getstate__(self):
         state = super().__getstate__()
-        for name in ['nhidden', 'sampler_options']:
+        for name in ['nhidden']:
             if hasattr(self, name):
                 state[name] = getattr(self, name)
         #try: state['tfmodel'] = self.tfmodel.__getstate__()

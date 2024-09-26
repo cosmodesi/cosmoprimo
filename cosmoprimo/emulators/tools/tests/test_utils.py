@@ -13,7 +13,7 @@ def test_utils():
 
 
     from jax import numpy as np
-    from cosmoprimo.emulators.tools.jax import exception
+    from cosmoprimo.jax import exception
 
     def warn(z1, z2):
         if np.any(z2 < z1):

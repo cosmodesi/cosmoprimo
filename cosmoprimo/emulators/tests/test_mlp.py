@@ -58,20 +58,24 @@ k2d_non_linear**2, dtype=y_true.dtype)))
     engine['fourier.pk.delta_cb.delta_cb'] = MLPEmulatorEngine(nhidden=(10,) * 3, loss=loss_pk_1d)
     engine['harmonic.*'] = MLPEmulatorEngine(nhidden=(10,) * 3, yoperation=PCAOperation(npcs=10))
 
+
     emulator = Emulator(engine=engine, yoperation=operations)
     if 'background' in tofit:
         emulator.set_samples(samples=ref_samples.select(['X.*', 'Y.background.*'], exclude='X.logA'))
-        emulator.fit(name='background.*', batch_frac=(0.2, 1.), learning_rate=(1e-2, 1e-3), epochs=40, verbose=0)
+        emulator.fit(name='background.*', batch_frac=(0.2, 1.), learning_rate=(1e-2, 1e-3), epochs=40)
+        #emulator.fit(name='background.comoving_radial_distance', batch_frac=(0.2, 1.), learning_rate=(1e-2, 1e-3), epochs=40)
         emulator.save(fn)
+    """
     if 'fourier' in tofit:
         emulator.set_samples(samples=ref_samples.select(['X.*', 'Y.fourier.*']))
-        emulator.fit(name='fourier.pk*', batch_frac=(0.2, 1.), learning_rate=(1e-2, 1e-4), epochs=1000, verbose=1)
+        emulator.fit(name='fourier.pk*', batch_frac=(0.2, 1.), learning_rate=(1e-2, 1e-4), epochs=1000)
         emulator.save(fn)
-
+    """
     emulator = Emulator.load(fn)
 
     cosmo = DESI(engine=EmulatedEngine.load(fn))
     z = np.linspace(0., 3., 100)
+    cosmo.comoving_radial_distance(z)
 
     if 'background' in tofit:
         plot_residual_background(ref_samples, emulated_samples=cosmo, subsample=10, fn='_tests/background.png')

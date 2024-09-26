@@ -34,7 +34,6 @@ def test_base():
 def test_jax():
 
     engine = EmulatedEngine.load(emulator_fn)
-    cosmo = DESI(Omega_m=jnp.array(0.2), engine=engine)
 
     def test(Omega_m=0.3):
         cosmo = DESI(Omega_m=Omega_m, engine=engine)

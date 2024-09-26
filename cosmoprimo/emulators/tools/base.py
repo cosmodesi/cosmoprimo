@@ -29,34 +29,6 @@ def make_list(li):
     return list(li)
 
 
-def sort_varied_fixed(samples, subsample=None):
-    """
-    Sort varied and fixed arrays in input samples (dictionary of arrays).
-    ``subsample`` samples can be selected randomly.
-    """
-    varied, fixed = {}, {}
-    if not samples:
-        return varied, fixed
-    index = slice(None)
-    if subsample is not None:
-        rng = np.random.RandomState(seed=42)
-        for name, values in samples.items():
-            size = values.shape[0]
-            break
-        index = rng.choice(size, subsample, replace=False)
-    for name, values in samples.items():
-        values = np.asarray(values)[index]
-        try:
-            eq = all(utils.deep_eq(value, values[0]) for value in values)
-        except Exception as exc:
-            raise ValueError('Unable to check equality of {} (type: {})'.format(name, type(values[0]))) from exc
-        if eq:
-            fixed[name] = values[0]
-        else:
-            varied[name] = values[0].shape
-    return varied, fixed
-
-
 def batch_vmap(func, *args, batch_size=None, **kwargs):
 
     vfunc = vmap(func, *args, **kwargs)
@@ -119,7 +91,7 @@ class Emulator(BaseClass):
 
     .. code-block:: python
 
-        emulator = Emulator(calculator, params={'a': (0.8, 1.2), 'b': (0.8, 1.2)}, engine=TaylorEmulatorEngine(order=3))
+        emulator = Emulator(calculator=calculator, params={'a': (0.8, 1.2), 'b': (0.8, 1.2)}, engine=TaylorEmulatorEngine(order=3))
         emulator.set_samples()  # samples computed on-the-fly
         emulator.fit()
         emulator.save(fn)
@@ -144,7 +116,7 @@ class Emulator(BaseClass):
 
     """
 
-    def __init__(self, calculator=None, params=None, samples=None, engine=None, xoperation=None, yoperation=None, mpicomm=mpi.COMM_WORLD):
+    def __init__(self, calculator=None, samples=None, engine=None, xoperation=None, yoperation=None, mpicomm=mpi.COMM_WORLD, **kwargs):
         """
         Initialize emulator.
 
@@ -185,9 +157,9 @@ class Emulator(BaseClass):
         if engine is not None:
             self.set_engine(engine)
         if calculator is not None:
-            self.set_calculator(calculator, params)
+            self._calculator, self._params, self._varied, self._fixed = self._get_calculator(calculator, **kwargs)
         if self.mpicomm.bcast(samples is not None, root=0):
-            self.set_samples(samples=samples)
+            self.set_samples(samples=samples, **kwargs)
 
     @property
     def mpicomm(self):
@@ -214,32 +186,69 @@ class Emulator(BaseClass):
         else:
             self._input_engines = engines
 
-    def set_calculator(self, calculator, params):
+    def _sort_varied_fixed(self, samples, subsample=None):
+        """
+        Sort varied and fixed arrays in input samples (dictionary of arrays).
+        ``subsample`` samples can be selected randomly.
+        """
+        varied, fixed = {}, {}
+        if not samples:
+            return varied, fixed
+        index = slice(None)
+        if subsample is not None:
+            rng = np.random.RandomState(seed=42)
+            for name, values in samples.items():
+                size = values.shape[0]
+                break
+            index = rng.choice(size, subsample, replace=False)
+        for name, values in samples.items():
+            values = np.asarray(values)[index]
+            try:
+                eq = all(utils.deep_eq(value, values[0]) for value in values)
+            except Exception as exc:
+                raise ValueError('Unable to check equality of {} (type: {})'.format(name, type(values[0]))) from exc
+            if eq:
+                fixed[name] = values[0]
+            else:
+                varied[name] = values[0].shape
+        return varied, fixed
+
+    def _get_calculator(self, calculator=None, params=None):
         """Set calculator and parameter limits for sampling. Not called directly (use :meth:`__init__` or :meth:`set_samples` instead)."""
-        params = dict(params)
-        sig = inspect.signature(calculator)
-        self.defaults = {}
-        for param in sig.parameters.values():
-            if param.kind == param.POSITIONAL_OR_KEYWORD:
-                self.defaults[param.name] = param.default
+        varied, fixed = [], {}
+        if calculator is not None:
+            params = dict(params)
+            sig = inspect.signature(calculator)
+            self.defaults = {}
+            for param in sig.parameters.values():
+                if param.kind == param.POSITIONAL_OR_KEYWORD:
+                    self.defaults[param.name] = param.default
 
-        def classify_varied(niterations=3, seed=42):
-            state = {}
-            rng = np.random.RandomState(seed=seed)
-            for i in range(niterations):
-                p = {param: rng.uniform(*limits) for param, limits in params.items()}
-                for name, value in calculator(**p).items():
-                    state[name] = state.get(name, []) + [value]
-            return sort_varied_fixed(state)
+            def classify_varied(niterations=3, seed=42):
+                state = {}
+                rng = np.random.RandomState(seed=seed)
+                for i in range(niterations):
+                    p = {param: rng.uniform(*limits) for param, limits in params.items()}
+                    for name, value in calculator(**p).items():
+                        state[name] = state.get(name, []) + [value]
+                return self._sort_varied_fixed(state)
 
-        varied, fixed = self.mpicomm.bcast(classify_varied(), root=0)
+            varied, fixed = self.mpicomm.bcast(classify_varied(), root=0)
 
-        if self.mpicomm.rank == 0:
+            if self.mpicomm.rank == 0:
+                self.log_info('Varied parameters: {}.'.format(list(params)))
+                self.log_info('Found varying {} and fixed {} outputs.'.format(list(varied), list(fixed)))
+            if not varied:
+                raise ValueError('Found no varying quantity in provided calculator')
+
+        elif params is not None:
+            params = dict(params)
+        if params is not None and self.mpicomm.rank == 0:
             self.log_info('Varied parameters: {}.'.format(list(params)))
-            self.log_info('Found varying {} and fixed {} outputs.'.format(list(varied), list(fixed)))
-        if not varied:
-            raise ValueError('Found no varying quantity in provided calculator')
-        self._calculator, self._params, self._varied, self._fixed = calculator, params, varied, fixed
+        return calculator, params, varied, fixed
+
+    def _get_samples(self, samples):
+        return samples if isinstance(samples, Samples) else Samples.load(samples)
 
     def _get_engine_X_Y(self, samples, params=None, varied=None, fixed=None, ignore_operations=False):
         # Internal method to apply :attr:`xoperation` and attr:`yoperation` to input samples to engines
@@ -252,15 +261,13 @@ class Emulator(BaseClass):
         Y_varied = {name: samples['Y.' + name].copy() for name in varied}
         Y = {**fixed, **Y_varied}
         if not ignore_operations:
+            if self.xoperations: X = {name: np.asarray(value) for name, value in X.items()}
+            if self.yoperations: Y = {name: np.asarray(value) for name, value in Y.items()}
             for operation in self.yoperations:
                 try:
                     operation.initialize(Y, X=X)
                     def func(Y_varied, X): return operation({**fixed, **Y_varied}, X=X)
-                    import time
-                    t0 = time.time()
                     Y = batch_vmap(func, (0, 0), batch_size=20)(Y_varied, X)
-                    print({name: Y[name].shape for name in Y})
-                    print('dt', time.time() - t0)
                 except KeyError:
                     pass
             for operation in self.xoperations:
@@ -271,7 +278,7 @@ class Emulator(BaseClass):
                     pass
         return X, Y, dict(samples.attrs)
 
-    def set_samples(self, engine=None, samples=None, calculator=None, params=None, ignore_operations=False, **kwargs):
+    def set_samples(self, engine=None, samples=None, params=None, calculator=None, ignore_operations=False, **kwargs):
         """
         Set samples for :meth:`fit`.
 
@@ -316,31 +323,29 @@ class Emulator(BaseClass):
 
         if self.mpicomm.bcast(samples is None, root=0):
             if calculator is not None:
-                self.set_calculator(calculator, params)
+                calculator, params, varied, fixed = self._get_calculator(calculator, params=params)
+            else:
+                calculator, params, varied, fixed = [getattr(self, name, None) for name in ['_calculator', '_params', '_varied', '_fixed']]
+            if calculator is not None:
+                this_engines = initialize_engines(params, varied)
 
-            params, varied, fixed = self._params, self._varied, self._fixed
-            this_engines = initialize_engines(params, varied)
-
-            def calculator(**params):
-                state = self._calculator(**params)
-                return {name: state[name] for name in varied}
-
-            for engine in this_engines.values():
-                samples = engine.get_default_samples(calculator, params, **kwargs)
-                if samples is not None: samples.attrs['fixed'] = dict(fixed)  # only on rank 0
-                break
+                for engine in this_engines.values():
+                    samples = self._get_samples(engine.get_default_samples(calculator, params=params, **kwargs))
+                    break
 
         else:
             if self.mpicomm.rank == 0:
-                samples = samples if isinstance(samples, Samples) else Samples.load(samples)
+                samples = self._get_samples(samples)
 
                 if params is None:
                     params = {name[2:]: None for name in samples.columns('X.*')}
                 params = dict(params)
-                varied, fixed = sort_varied_fixed({name[2:]: samples[name] for name in samples.columns('Y.*')}, subsample=min(samples.size, 10))
+                varied, fixed = self._sort_varied_fixed({name[2:]: samples[name] for name in samples.columns('Y.*')}, subsample=min(samples.size, 10))
             else:
                 samples = None
 
+        if self.mpicomm.bcast(samples is None, root=0):
+            return None, None
         import warnings
         if self.mpicomm.rank == 0:
             notfinite = [name for name, value in samples.items() if not np.isfinite(value).all()]
@@ -348,7 +353,7 @@ class Emulator(BaseClass):
                 warnings.warn('{} are not finite'.format(notfinite))
             X, Y, attrs = self._get_engine_X_Y(samples, params=params, varied=varied, fixed=fixed, ignore_operations=ignore_operations)
             for name in fixed: Y.pop(name)
-            varied, _fixed = sort_varied_fixed(Y, subsample=min(samples.size, 10))
+            _varied, _fixed = self._sort_varied_fixed(Y, subsample=min(samples.size, 10))
             fixed.update(_fixed)
             params = list(X)
             samples_operations = Samples({**{'X.' + name: X[name] for name in X}, **{'Y.' + name: Y[name] for name in Y}}, attrs=dict(attrs))
@@ -401,7 +406,7 @@ class Emulator(BaseClass):
         **kwargs : dict
             Optional arguments for :meth:`BaseEmulatorEngine.fit`.
         """
-        def _get_X_Y(samples, yname, params):
+        def _get_X_Y(samples, yname):
             X, Y, attrs = None, None, None
             if self.mpicomm.rank == 0:
                 X = np.column_stack([samples['X.' + name] for name in self.engines[yname].params])
@@ -418,12 +423,11 @@ class Emulator(BaseClass):
         if not utils.is_sequence(name):
             name = [name]
         names = utils.find_names(list(self._samples_operations.keys()), name)
-
         for name in names:
             self.engines[name] = engine = self._init_engines[name].copy()
             if self.mpicomm.rank == 0:
                 self.log_info('Fitting {}.'.format(name))
-            engine.fit(*_get_X_Y(self._samples_operations[name], name, params=engine.params), **kwargs)
+            engine.fit(*_get_X_Y(self._samples_operations[name], name), **kwargs)
 
     def predict(self, params, kw_yoperation=None):
         """Return emulated calculator output 'y' given input params."""
@@ -526,9 +530,10 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
     """
     name = 'base'
 
-    def __init__(self, xoperation=None, yoperation=None):
+    def __init__(self, xoperation=None, yoperation=None, attrs=None):
         self.xoperations = [get_operation(operation) for operation in make_list(xoperation)]
         self.yoperations = [get_operation(operation) for operation in make_list(yoperation)]
+        self.attrs = dict(attrs or {})
 
     def initialize(self, params, mpicomm=mpi.COMM_WORLD):
         self.params = list(params)
@@ -540,6 +545,7 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
     def fit(self, X, Y, attrs, **kwargs):
         # print('pre', Y.shape)
         if self.mpicomm.rank == 0:
+            X, Y = np.asarray(X), np.asarray(Y)
             for operation in self.xoperations:
                 operation.initialize(X)
                 X = vmap(operation)(X)
@@ -570,7 +576,7 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
 
     def __getstate__(self):
         state = {}
-        for name in ['name', 'params', 'xshape', 'yshape']:
+        for name in ['name', 'params', 'xshape', 'yshape', 'attrs']:
             if hasattr(self, name):
                 state[name] = getattr(self, name)
         state.update({'xoperations': [], 'yoperations': []})
@@ -694,6 +700,12 @@ class Operation(BaseClass, metaclass=RegisteredOperation):
     def __getstate__(self):
         return {name: getattr(self, name) for name in ['name', '_direct', '_inverse', '_locals']}
 
+    def __copy__(self, *args, **kwargs):
+        new = super().__copy__(*args, **kwargs)
+        import copy
+        new.__dict__.update(copy.deepcopy(self.__dict__))
+        return new
+
     @classmethod
     def from_state(cls, state):
         state = dict(state)
@@ -739,6 +751,7 @@ class ScaleOperation(Operation):
 
     def initialize(self, values):
         values = np.asarray(values)
+        self.limits = list(self.limits)
         if self.limits[0] is None:
             self.limits[0] = np.min(values, axis=0)
         if self.limits[1] is None:
@@ -788,7 +801,7 @@ class PCAOperation(Operation):
     def __call__(self, v):
         return jnp.sum(jnp.expand_dims((v - self.mean) / self.sigma, axis=0) * self.eigenvectors, axis=tuple(range(1, self.eigenvectors.ndim)))
 
-    def inverse(self, v):
+    def inverse(self, v, X=None):
         return jnp.sum(jnp.expand_dims(v, axis=tuple(range(1, self.eigenvectors.ndim))) * self.eigenvectors, axis=0) * self.sigma + self.mean
 
     def __getstate__(self):
@@ -799,7 +812,7 @@ class ChebyshevOperation(Operation):
 
     """
     Dot values with Chebyshev basis up to order ``order`` along ``axis``.
-    Some numerical unaccuracy if ``order > shape[axis] / 2``.
+    Some numerical inaccuracy if ``order > shape[axis] / 2``.
     """
 
     name = 'chebyshev'
@@ -830,7 +843,7 @@ class ChebyshevOperation(Operation):
     def __call__(self, v):
         return jnp.sum(jnp.expand_dims(v, self.axis + 1) * self.poly, axis=self.axis)  # shape is (v.shape[0], ..., self.order + 1, ..., v.shape[-1])
 
-    def inverse(self, v):
+    def inverse(self, v, X=None):
         return jnp.sum(jnp.expand_dims(v, self.axis) * self.proj, axis=self.axis + 1)
 
     def __getstate__(self):

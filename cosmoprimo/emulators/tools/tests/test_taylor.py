@@ -31,7 +31,7 @@ def test_taylor(show=True):
     emulator_dir = '_tests'
     fn = os.path.join(emulator_dir, 'emu.npy')
     params = {'a': (0., 1.), 'b': (0., 1.)}
-    emulator = Emulator(calculator, params, engine=TaylorEmulatorEngine(order={'*': 4}))
+    emulator = Emulator(calculator=calculator, params=params, engine=TaylorEmulatorEngine(order={'*': 4}))
     emulator.set_samples()
     emulator.fit()
     emulator.save(fn)

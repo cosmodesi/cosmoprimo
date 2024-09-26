@@ -55,16 +55,16 @@ class Emulator(tools.Emulator):
 
     """Subclass :class:`tools.Emulator` to be able to provide a cosmology as calculator."""
 
-    def set_calculator(self, calculator, params):
-        super(Emulator, self).set_calculator(get_calculator(calculator), params)
+    def set_calculator(self, calculator, params=None):
+        super(Emulator, self).set_calculator(get_calculator(calculator), params=params)
 
 
 class BaseSampler(tools.samples.BaseSampler):
 
     """Subclass :class:`tools.samples.BaseSampler` to be able to provide a cosmology as calculator."""
 
-    def set_calculator(self, calculator, params):
-        super(BaseSampler, self).set_calculator(get_calculator(calculator), params)
+    def set_calculator(self, calculator, params=None):
+        super(BaseSampler, self).set_calculator(get_calculator(calculator), params=params)
 
 
 class InputSampler(BaseSampler, tools.samples.InputSampler):

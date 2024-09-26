@@ -205,7 +205,7 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
         for name, value in self.items():
             mask &= np.isfinite(value).all(axis=tuple(range(1, value.ndim)))
         return mask
-    
+
     def columns(self, include=None, exclude=None):
         """
         Return selected columns.
