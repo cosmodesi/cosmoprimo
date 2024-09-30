@@ -28,7 +28,6 @@ def test_cobaya():
                           parameters_smg={'value': 'lambda cK, cB, cM, cT,: str(cK) + "," + str(cB) + "," + str(cM) + "," + str(cT) + "," + str(1)', 'derived': False})
             extra_args.update(Omega_Lambda=0, Omega_fld=0.0, Omega_smg=-1, gravity_model='propto_omega', expansion_model='wowa')
 
-
         info = {'params': params,
                 'likelihood': {'sn.pantheon': None, 'H0.riess2020': None, 'bao.sdss_dr12_consensus_final': None, 'planck_2018_highl_plik.TTTEEE': None},
                 'theory': {'cosmoprimo.bindings.cobaya.cosmoprimo': {'engine': engine, 'stop_at_error': True, 'extra_args': extra_args}}}

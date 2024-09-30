@@ -19,4 +19,4 @@ setup(name=package_basename,
       install_requires=['numpy', 'scipy'],
       extras_require={'class': ['cython', 'pyclass @ git+https://github.com/adematti/pyclass'], 'camb': ['camb'], 'isitgr': ['isitgr'], 'astropy': ['astropy'], 'extras': ['pyfftw']},
       packages=find_packages(),
-      package_data={package_basename: ['data/*.dat', 'data/*.csv']})
+      package_data={package_basename: ['data/*.dat', 'data/*.csv', 'bindings/*/*.yaml']})
