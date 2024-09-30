@@ -100,7 +100,7 @@ class cosmoprimo(BoltzmannBase):
                 if 'theta_b' in pair or 'theta_cdm' in pair:
                     import warnings
                     warnings.warn('cosmoprimo - pyclass wrappings do not expose theta_b, theta_cdm individually; will return theta_cb. It is fine if you only need theta_cb (e.g. RSD analysis), but in other cases please post an issue on the cosmoprimo github.')
-                pair = [{'theta_b': 'theta_cb', 'theta_cdm': 'theta_cb'}[of] for of in pair]
+                pair = [{'theta_b': 'theta_cb', 'theta_cdm': 'theta_cb'}.get(of, of) for of in pair]
             return tuple(pair)
 
         for k, v in self._must_provide.items():
