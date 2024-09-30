@@ -34,6 +34,11 @@ class Background(classy.BaseClassBackground, axiclass.Background):
     """Your modifications, if any."""
 
 
+class Thermodynamics(classy.BaseClassThermodynamics, axiclass.Thermodynamics):
+
+    """Your modifications, if any."""
+
+
 class Primordial(classy.BaseClassPrimordial, axiclass.Primordial):
 
      """Your modifications, if any."""

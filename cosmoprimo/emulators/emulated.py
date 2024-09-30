@@ -1,7 +1,8 @@
 """Emulated cosmological calculation."""
 
-import numpy as np
+from pathlib import Path
 
+import numpy as np
 from scipy import interpolate
 
 from cosmoprimo.interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
@@ -589,3 +590,10 @@ class Fourier(BaseSection):
                 self._state[name][tuple(keys)] = value
             else: # k, z
                 self._state[keyname] = value
+
+
+
+class CAPSEEngine(EmulatedEngine):
+
+    name = 'capse'
+    path = Path(__file__).parent / 'train/jaxcapse_mnu_w0wa/emulator.npy'

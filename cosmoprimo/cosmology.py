@@ -566,6 +566,8 @@ def get_engine(engine):
             from . import astropy
         elif engine == 'tabulated':
             from . import tabulated
+        elif engine in ['capse']:
+            from cosmoprimo import emulators
 
         try:
             engine = BaseEngine._registry[engine]
@@ -671,7 +673,7 @@ class Cosmology(BaseCosmology):
                                     ('m_ncdm', 'Omega_ncdm', 'omega_ncdm'),
                                     ('A_s', 'logA', 'sigma8'),
                                     ('tau_reio', 'z_reio')]
-    _alias_parameters = {'omega_b': ('ombh2',), 'omega_cdm': ('omch2',), 'Omega_k': ('omk',), 'N_eff': ('nnu',),
+    _alias_parameters = {'omega_b': ('ombh2',), 'omega_cdm': ('omch2',), 'Omega_k': ('omk',), 'm_ncdm': ('mnu',), 'N_eff': ('nnu',),
                         'n_s': ('ns',), 'alpha_s': ('nrun',), 'beta_s': ('nrunrun',), 'tau_reio': ('tau',),
                         'Omega_m': ('Omega0_m',), 'Omega_cdm': ('Omega0_cdm', 'Omega_c'),
                         'Omega_b': ('Omega0_b',), 'Omega_k': ('Omega0_k',), 'Omega_ur': ('Omega0_ur',),

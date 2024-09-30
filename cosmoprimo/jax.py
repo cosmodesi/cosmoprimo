@@ -83,7 +83,7 @@ def _mask_bounds(x, xlim, bounds_error=False):
 
 class Interpolator1D(object):
 
-    """Wrapper for 1D interpolation; use :mod:`interpax` if :mod:`jax` input, else :func:`scipy.interpolate.interp1d`."""
+    """Wrapper for 1D interpolation (along axis 0); use :mod:`interpax` if :mod:`jax` input, else :func:`scipy.interpolate.interp1d`."""
 
     def __init__(self, x, fun, k=3, interp_x='lin', interp_fun='lin', extrap=False, assume_sorted=False):
         self._use_jax = use_jax(x, fun)
@@ -109,12 +109,20 @@ class Interpolator1D(object):
         else:
             from scipy import interpolate
             self._mask_nan = ~np.isnan(fun).all(axis=0)  # hack: scipy returns NaN for all shape[1] if any is NaN
-            self._spline = interpolate.interp1d(x, fun[..., self._mask_nan], kind=_scipy_convert_method(k), axis=0, bounds_error=False, fill_value='extrapolate' if self.extrap else numpy.nan, assume_sorted=True)
-            #from scipy.interpolate import CubicSpline#, UnivariateSpline
-            #if k == 3: self._spline = CubicSpline(x, fun, axis=0, bc_type='natural', extrapolate=extrap)
-            #else: self._spline = lambda t: numpy.interp(t, x, fun, period=None)
 
-    def __call__(self, x, bounds_error=False):
+            from scipy.interpolate import CubicSpline  #, UnivariateSpline
+            if k == 3:
+                spline = CubicSpline(x, fun[..., self._mask_nan], axis=0, bc_type='natural', extrapolate=self.extrap)
+
+                def _spline(x, dx=0):
+                    return spline(x, nu=dx)
+
+                self._spline = _spline
+            else:
+                self._spline = interpolate.interp1d(x, fun[..., self._mask_nan], kind=_scipy_convert_method(k), axis=0, bounds_error=False, fill_value='extrapolate' if self.extrap else numpy.nan, assume_sorted=True)
+
+    def __call__(self, x, bounds_error=False, **kwargs):
+        """May provide dx != 0 for derivatives."""
         from .utils import _bcast_dtype
         dtype = _bcast_dtype(x)
         x = self._np.asarray(x, dtype=dtype)
@@ -122,7 +130,7 @@ class Interpolator1D(object):
         x = x.ravel()
         mask_x, = _mask_bounds([x], [(self.xmin, self.xmax)], bounds_error=bounds_error)
         if self.interp_x == 'log': x = self._np.log10(x)
-        tmp = self._spline(x)
+        tmp = self._spline(x, **kwargs)
         if self.interp_fun == 'log': tmp = 10**tmp
         toret = tmp = tmp if self.extrap else self._np.where(mask_x, tmp.T, self._np.nan).T
         if self._mask_nan is not None:

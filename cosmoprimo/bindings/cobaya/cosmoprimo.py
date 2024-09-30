@@ -92,7 +92,17 @@ class cosmoprimo(BoltzmannBase):
     def must_provide(self, **requirements):
         # Computed quantities required by the likelihood
         super().must_provide(**requirements)
-        conversions_of = {'delta_tot': 'delta_m', 'delta_nonu': 'delta_cb', 'Weyl': 'phi_plus_psi'}
+        conversions_of = {'delta_tot': 'delta_m', 'delta_nonu': 'delta_cb', 'v_newtonian_cdm': 'theta_cdm', 'v_newtonian_baryon': 'theta_b', 'Weyl': 'phi_plus_psi'}
+
+        def get_of(pair):
+            pair = list(conversions_of.get(of, of) for of in pair)
+            if 'class' in self.engine:
+                if 'theta_b' in pair or 'theta_cdm' in pair:
+                    import warnings
+                    warnings.warn('cosmoprimo - pyclass wrappings do not expose theta_b, theta_cdm individually; will return theta_cb. It is fine if you only need theta_cb (e.g. RSD analysis), but in other cases please post an issue on the cosmoprimo github.')
+                pair = [{'theta_b': 'theta_cb', 'theta_cdm': 'theta_cb'}[of] for of in pair]
+            return tuple(pair)
+
         for k, v in self._must_provide.items():
             # Products and other computations
             if k == "Cl":
@@ -126,7 +136,7 @@ class cosmoprimo(BoltzmannBase):
                         raise LoggedError(
                             self.log, (f"Non-linear Pk requested, but `non_linear: {self.extra_args['non_linear']}` imposed in `extra_args`"))
                 pair = k[2:]
-                v["of"] = tuple(conversions_of.get(of, of) for of in pair)
+                v["of"] = get_of(pair)
                 v['non_linear'] = v.pop('nonlinear')
                 self.collectors[k] = Collector(section="fourier", method="pk_interpolator", kwargs=v)
             elif k == "sigma8_z":
@@ -139,7 +149,7 @@ class cosmoprimo(BoltzmannBase):
                 self.add_P_k_max(v.pop("k_max"), units="1/Mpc")
                 self.add_z_for_matter_power(v["z"])
                 pair = k[1:]
-                v["of"] = tuple(conversions_of.get(of, of) for of in pair)
+                v["of"] = get_of(pair)
                 self.collectors[k] = Collector(section="fourier", method="sigma_rz", args=[v["R"], v["z"]], args_names=["R", "z"])
             elif k in [f"get_{q}" for q in ["background", "thermodynamics", "primordial", "perturbations"]]:
                 # Get direct cosmoprimo results

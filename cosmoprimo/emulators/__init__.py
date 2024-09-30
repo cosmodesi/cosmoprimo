@@ -1,6 +1,6 @@
 from .tools import *
 from . import tools, emulated
-from .emulated import EmulatedEngine
+from .emulated import EmulatedEngine, CAPSEEngine
 
 
 def get_calculator(cosmo, section=None):

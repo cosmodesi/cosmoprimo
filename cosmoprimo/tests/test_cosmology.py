@@ -810,6 +810,7 @@ def test_mochiclass():
     from cosmoprimo.fiducial import DESI
     cosmo = DESI(engine='mochiclass', **params)
     cosmo['parameters_smg']
+    cosmo_class.get_fourier().pk_interpolator(of='theta_cb')
 
 
 def test_error():
@@ -1059,7 +1060,6 @@ def test_fk():
     ax.legend()
     plt.savefig('test_pkz_m_ncdm_{:.1f}.png'.format(m_ncdm))
     plt.close(plt.gcf())
-
 
 
 if __name__ == '__main__':

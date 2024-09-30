@@ -34,6 +34,11 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
     """Your modifications, if any."""
 
 
+class Thermodynamics(classy.BaseClassThermodynamics, mochiclass.Thermodynamics):
+
+    """Your modifications, if any."""
+
+
 class Primordial(classy.BaseClassPrimordial, mochiclass.Primordial):
 
      """Your modifications, if any."""
