@@ -38,6 +38,7 @@ renames:
   omegach2: omega_cdm
   omegac: Omega_cdm
   omegam: Omega_m
+  sigma8: sigma8_m
   # Neutrino and other relativistic matter - very few direct translations here!
   # -- there are differences in the definition of the rest of the parameters,
   #    e.g. Neff (CAMB) vs N_ur (cosmoprimo: not N_eff, but only of ultra-rel dof's),

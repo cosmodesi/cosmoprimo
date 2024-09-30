@@ -822,7 +822,7 @@ class Cosmology(BaseCosmology):
 
         def set_alias(params_name, aliases):
             for alias in aliases:
-                if alias not in args: continue
+                if alias not in params: continue
                 # pop because we copied everything
                 assert params_name not in params, 'found both {} and {}, must be added to _conflict_parameters'.format(alias, params_name)
                 params[params_name] = params.pop(alias)
@@ -832,7 +832,7 @@ class Cosmology(BaseCosmology):
             set_alias(name, cls._alias_parameters.get(name, ()))
 
         h = params['h']
-        for name, value in args.items():
+        for name, value in list(params.items()):
             if name.startswith('omega'):
                 omega = params.pop(name)
                 Omega = _make_float(omega) / h**2  # array to cope with tuple, lists for e.g. omega_ncdm

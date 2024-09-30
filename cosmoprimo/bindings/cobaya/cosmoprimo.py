@@ -29,7 +29,7 @@ class Collector(NamedTuple):
 
 
 def get_from_cosmo(cosmo, name):
-    conversions = {'logA': 'ln10^10A_s', 'Omega_nu_massive': 'Omega_ncdm_tot', 'm_nu_massive': 'm_ncdm_tot'}
+    conversions = {'Omega_nu_massive': 'Omega_ncdm_tot', 'm_nu_massive': 'm_ncdm_tot'}
     name = conversions.get(name, name)
     if name.lower().startswith('omega_'):
         name = name[:5] + '0' + name[5:]
@@ -126,7 +126,8 @@ class cosmoprimo(BoltzmannBase):
                 self.set_collector_with_z_pool(k, v["z_pairs"], section="background", method="angular_diameter_distance_2", args_names=["z1", "z2"], d=2)
             elif isinstance(k, tuple) and k[0] == "Pk_grid":
                 v = deepcopy(v)
-                self.add_P_k_max(v.pop("k_max"), units="1/Mpc")
+                kmax = v.pop("k_max")
+                self.add_P_k_max(kmax, units="1/Mpc")
                 self.add_z_for_matter_power(v.pop("z"))
                 if v["nonlinear"]:
                     if "non_linear" not in self.extra_args:
@@ -138,6 +139,7 @@ class cosmoprimo(BoltzmannBase):
                 pair = k[2:]
                 v["of"] = get_of(pair)
                 v['non_linear'] = v.pop('nonlinear')
+                v['extrap_kmax'] = 10 * kmax
                 self.collectors[k] = Collector(section="fourier", method="pk_interpolator", kwargs=v)
             elif k == "sigma8_z":
                 self.add_z_for_matter_power(v["z"])
@@ -255,6 +257,7 @@ class cosmoprimo(BoltzmannBase):
     def calculate(self, state, want_derived=True, **params_values_dict):
         # Set parameters
         self.set(params_values_dict)
+        self.cosmo.get_background()
         # Gather products
         for product, collector in self.collectors.items():
             try:
@@ -281,10 +284,16 @@ class cosmoprimo(BoltzmannBase):
                 h = self.cosmo.h
                 pair = product[2:]
                 nweyl = sum(of == 'Weyl' for of in pair)
-                k = result.k * h
-                z = result.z
+                kmin, kmax = 1e-4, self.extra_args["kmax_pk"]
+                nk = 125 * int(np.log10(kmax / kmin) + 0.5)
+                k = np.geomspace(1e-4, self.extra_args["kmax_pk"], nk)
+                z = np.copy(self.z_for_matter_power)
+                pk = result(k / h, z, grid=True).T
+                #k = result.k * h
+                #z = result.z
+                #pk = result.pk.T
                 # We returned (phi + psi), but we want k^2 (phi + psi) / 2
-                pk = result.pk.T / h**3 * k**(2 * nweyl) / 2**nweyl
+                pk = pk / h**3 * k**(2 * nweyl) / 2**nweyl
                 result = (k, z, pk)
             if product[0] == "sigma_R":
                 result = (args[1], args[0], result.T)  # z, r, sigma
@@ -375,7 +384,9 @@ class cosmoprimo(BoltzmannBase):
         del self.cosmo
 
     def get_can_provide_params(self):
-        names = ['Omega_Lambda', 'Omega_cdm', 'Omega_b', 'Omega_m', 'Omega_nu_massive', 'm_nu_massive', 'Omega_k', 'rs_drag', 'z_reio', 'YHe', 'age', 'sigma8_m']
+        names = ['h', 'H0', 'Omega_Lambda', 'Omega_m', 'Omega_k',
+                 'rs_drag', 'tau_reio', 'z_reio', 'z_rec', 'tau_rec', 'm_ncdm_tot',
+                 'N_eff', 'YHe', 'age', 'sigma8_m', 'sigma8_cb', 'theta_s_100']
         for name, mapped in self.renames.items():
             if mapped in names:
                 names.append(name)
