@@ -109,6 +109,7 @@ class cosmoprimo(BoltzmannBase):
                 self.set_cl_reqs(v)
                 # For modern experiments, always lensed Cl's!
                 self.extra_args["lensing"] = True
+                self.extra_args.setdefault('non_linear', 'hmcode')
                 self.collectors[k] = Collector(section="harmonic", method="lensed_cl")
             elif k == "unlensed_Cl":
                 self.set_cl_reqs(v)

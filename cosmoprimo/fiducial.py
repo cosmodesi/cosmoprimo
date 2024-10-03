@@ -173,7 +173,7 @@ def AbacusSummit(name=0, engine='class', precision=None, extra_params=None, **pa
     engine = get_engine(engine)
     default_extra_params = {}
     if engine is not None and engine.name == 'class':
-        default_extra_params = {'recombination': 'HyRec'}
+        default_extra_params = {'recombination': 'HyRec', 'sBBN file': 'bbn/sBBN.dat'}  # TODO: change this for Y3? ~5e-5 change in rs_drag
         if precision == 'base':
             prec = dict(tol_ncdm_bg=1.e-10, recfast_Nz0=100000, tol_thermo_integration=1.e-5, recfast_x_He0_trigger_delta=0.01, recfast_x_H0_trigger_delta=0.01, evolver=0, k_min_tau0=0.002, k_max_tau0_over_l_max=3.,
                         k_step_sub=0.015, k_step_super=0.0001, k_step_super_reduction=0.1, start_small_k_at_tau_c_over_tau_h=0.0004, start_large_k_at_tau_h_over_tau_k=0.05, tight_coupling_trigger_tau_c_over_tau_h=0.005,

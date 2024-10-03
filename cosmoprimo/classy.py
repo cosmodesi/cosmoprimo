@@ -63,6 +63,9 @@ class ClassEngine(BaseEngine):
         #params.update(k_step_sub=0.015, k_step_super=0.0001, k_step_super_reduction=0.1)
         params.setdefault('k_per_decade_for_bao', 100)  # default is 70 (precisions.h)
         params.setdefault('k_per_decade_for_pk', 20)  # default is 10
+        for name, value in params.items():
+            try: params[name] = float(value)
+            except: continue
         self._set_classy(params=params)
 
     def _set_classy(self, params):
@@ -248,6 +251,7 @@ class BaseClassHarmonic(object):
             Structured array.
         """
         table = super(BaseClassHarmonic, self).lensed_table(ellmax=ellmax, of=of)
+
         for name in table.dtype.names:
             if not name.startswith('ell'):
                 table[name] *= self._rsigma8**2
