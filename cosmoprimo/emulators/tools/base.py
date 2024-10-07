@@ -330,7 +330,9 @@ class Emulator(BaseClass):
                 this_engines = initialize_engines(params, varied)
 
                 for engine in this_engines.values():
-                    samples = self._get_samples(engine.get_default_samples(calculator, params=params, **kwargs))
+                    samples = engine.get_default_samples(calculator, params=params, **kwargs)
+                    if self.mpicomm.rank == 0:
+                        samples = self._get_samples(samples)
                     break
 
         else:
