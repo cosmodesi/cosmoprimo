@@ -300,6 +300,9 @@ class cosmoprimo(BoltzmannBase):
                 result = (args[1], args[0], result.T)  # z, r, sigma
             if 'Cl' in product:
                 result = {name: result[name] for name in result.dtype.names}
+                if collector.method == 'lensed_cl':
+                    tmp = self.cosmo.get_harmonic().lens_potential_cl()
+                    result.update({name: tmp[name] for name in tmp.dtype.names})
             state[product] = result
         # Prepare derived parameters
         d, d_extra = self._get_derived_all(derived_requested=want_derived)

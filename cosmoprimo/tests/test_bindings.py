@@ -75,7 +75,7 @@ def test_cobaya2():
               #'nnu': {'latex': 'N_\\mathrm{eff}', 'value': 3.044}
                }
     info = {'params': params,
-            'likelihood': {'planck_2018_highl_plik.TTTEEE_lite_native': None},
+            'likelihood': {'planck_2018_highl_plik.TTTEEE_lite_native': None, 'act_dr6_lenslike.ACTDR6LensLike': {'lens_only': False, 'variant': 'actplanck_baseline', 'lmax': 4000, 'version': 'v1.2'}},
             'theory': {'cosmoprimo.bindings.cobaya.cosmoprimo': {'engine': 'class', 'stop_at_error': True, 'extra_args': {'N_ncdm': 0, 'non_linear': 'hmcode', 'N_ur': 3.044}}}}
     from cobaya.model import get_model
     model = get_model(info)
