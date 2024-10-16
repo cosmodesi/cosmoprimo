@@ -110,16 +110,23 @@ class Interpolator1D(object):
             from scipy import interpolate
             self._mask_nan = ~np.isnan(fun).all(axis=0)  # hack: scipy returns NaN for all shape[1] if any is NaN
 
-            from scipy.interpolate import CubicSpline  #, UnivariateSpline
-            if k == 3:
-                spline = CubicSpline(x, fun[..., self._mask_nan], axis=0, bc_type='natural', extrapolate=self.extrap)
+            fun = fun[..., self._mask_nan]
 
-                def _spline(x, dx=0):
-                    return spline(x, nu=dx)
+            def _spline(x, **kwargs):
+                return np.full(x.shape + fun.shape[1:], np.nan)
 
-                self._spline = _spline
-            else:
-                self._spline = interpolate.interp1d(x, fun[..., self._mask_nan], kind=_scipy_convert_method(k), axis=0, bounds_error=False, fill_value='extrapolate' if self.extrap else numpy.nan, assume_sorted=True)
+            if fun.size:
+                from scipy.interpolate import CubicSpline  #, UnivariateSpline
+                if k == 3:
+                    if not np.isnan(fun).any():  # else scipy raises ValueError
+                        spline = CubicSpline(x, fun, axis=0, bc_type='natural', extrapolate=self.extrap)
+
+                        def _spline(x, dx=0):
+                            return spline(x, nu=dx)
+                else:
+                    _spline = interpolate.interp1d(x, funZ, kind=_scipy_convert_method(k), axis=0, bounds_error=False, fill_value='extrapolate' if self.extrap else numpy.nan, assume_sorted=True)
+
+            self._spline = _spline
 
     def __call__(self, x, bounds_error=False, **kwargs):
         """May provide dx != 0 for derivatives."""

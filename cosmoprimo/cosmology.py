@@ -1067,15 +1067,16 @@ class Cosmology(BaseCosmology):
         exception(raise_error, params['w0_fld'] + params['wa_fld'])
         params['use_ppf'] = bool(params.get('use_ppf', True))
 
+        from functools import partial
+        def raise_error(basename, value):
+            if jnp.any(value < 0.):
+                raise CosmologyInputError('Parameter {} should be positive, found {}'.format(basename, value))
+
         for basename in ['Omega_cdm', 'Omega_b', 'T_cmb', 'h', 'A_s', 'sigma8', 'm_ncdm', 'T_ncdm_over_cmb']:
             if basename in params:
                 value = _make_float(params[basename])
 
-                def raise_error(value):
-                    if jnp.any(value < 0.):
-                        raise CosmologyInputError('Parameter {} should be positive, found {}'.format(basename, value))
-
-                exception(raise_error, value)
+                exception(partial(raise_error, basename), value)
                 params[basename] = value
 
         def is_str(name, default_string, allowed_strings):

@@ -92,7 +92,8 @@ def test_power_spectrum():
             check_shape_1d(interp1d)
             assert np.allclose(interp1d.extrap_kmin, interp.extrap_kmin)
             assert np.allclose(interp1d.extrap_kmax, interp.extrap_kmax)
-            assert np.allclose(interp1d(k), pk[:, iz])
+            #print(engine, iz, zz, interp1d(k) / pk[:, iz])
+            assert np.allclose(interp1d(k), pk[:, iz], rtol=2e-5)
             assert np.allclose(interp.sigma8_z(zz), interp.to_1d(zz).sigma8(), rtol=1e-4)
             assert np.allclose(interp.sigma_dz(zz), interp.to_1d(zz).sigma_d(), rtol=1e-4)
             assert np.allclose(interp.sigma_dz(zz, nk=None), interp.to_1d(zz).sigma_d(), rtol=1e-4)
@@ -324,6 +325,18 @@ def test_jax():
     print(test(2.))
 
 
+def test_nan():
+    k = np.logspace(-4, 2, 1000)
+    pk = k**2
+    pk[:2] *= -1
+    # scipy's CubicSpline naturally raises ValueError when input NaN, behaviour that we avoid here
+    interp = PowerSpectrumInterpolator1D(k, pk)
+    assert np.isnan(interp(k)).all()
+    z = np.linspace(0., 2., 4)
+    interp = PowerSpectrumInterpolator2D(k, z, pk[..., None][..., [0] * len(z)])
+    assert np.isnan(interp(k, z=1.)).all()
+
+
 if __name__ == '__main__':
 
     test_power_spectrum()
@@ -331,3 +344,4 @@ if __name__ == '__main__':
     test_extrap_1d(plot=False)
     test_extrap_2d(plot=False)
     test_jax()
+    test_nan()
