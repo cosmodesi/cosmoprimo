@@ -817,6 +817,16 @@ class Cosmology(BaseCosmology):
         def _make_float(value):
             return jnp.array(value, dtype='f8')
 
+        def exception_or_nan(value, cond, error):
+            if use_jax(cond, tracer_only=True):
+                value = jnp.where(cond, jnp.nan, value)
+            else:
+                def raise_error(cond, value):
+                    if cond: error(value)
+
+                exception(raise_error, cond, value)
+            return value
+
         if 'H0' in params:
             params['h'] = params.pop('H0') / 100.
 
@@ -935,11 +945,11 @@ class Cosmology(BaseCosmology):
                                             'for m_ncdm, only with a sum.'.format(neutrino_hierarchy))
                 sum_ncdm = m_ncdm[0]
 
-                def raise_error(sum_ncdm):
-                    if sum_ncdm < 0:
-                        raise CosmologyInputError('Sum of neutrino masses must be positive.')
+                def error(sum_ncdm):
+                    raise CosmologyInputError('Sum of neutrino masses must be positive.')
 
-                exception(raise_error, sum_ncdm)
+                sum_ncdm = exception_or_nan(sum_ncdm, sum_ncdm < 0., error)
+
                 # Lesgourges & Pastor 2012, arXiv:1212.6154
                 #deltam21sq = 7.62e-5
                 # https://arxiv.org/pdf/1907.12598.pdf
@@ -970,11 +980,11 @@ class Cosmology(BaseCosmology):
                     #deltam31sq = 2.55e-3
                     deltam31sq = 2.525e-3
 
-                    def raise_error(sum_ncdm, deltam21sq, deltam31sq):
-                        if sum_ncdm**2 < deltam21sq + deltam31sq:
-                            raise CosmologyInputError('If neutrino_hierarchy is normal, we are using the normal hierarchy and so m_nu must be greater than (~)0.0592')
+                    def error(value):
+                        raise CosmologyInputError('If neutrino_hierarchy is normal, we are using the normal hierarchy and so m_ncdm must be greater than (~)0.0592, found {:.2f}'.format(value))
 
-                    exception(raise_error, sum_ncdm, deltam21sq, deltam31sq)
+                    sum_ncdm = exception_or_nan(sum_ncdm, sum_ncdm**2 < deltam21sq + deltam31sq, error)
+
                     # Split the sum into 3 masses under normal hierarchy, m3 > m2 > m1
                     m_ncdm = [0., deltam21sq, deltam31sq]
                     solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
@@ -984,11 +994,10 @@ class Cosmology(BaseCosmology):
                     deltam32sq = -2.512e-3
                     deltam31sq = deltam32sq + deltam21sq
 
-                    def raise_error(sum_ncdm, deltam31sq, deltam32sq):
-                        if sum_ncdm**2 < -deltam31sq - deltam32sq:
-                            raise CosmologyInputError('If neutrino_hierarchy is inverted, we are using the inverted hierarchy and so m_nu must be greater than (~)0.0978')
+                    def error(value):
+                        raise CosmologyInputError('If neutrino_hierarchy is inverted, we are using the inverted hierarchy and so m_ncdm must be greater than (~)0.0978, found {:.2f}'.format(value))
 
-                    exception(raise_error, sum_ncdm, deltam31sq, deltam32sq)
+                    sum_ncdm = exception_or_nan(sum_ncdm, sum_ncdm**2 < -deltam31sq - deltam32sq, error)
                     # Split the sum into 3 masses under inverted hierarchy, m2 > m1 > m3, here ordered as m1, m2, m3
                     m_ncdm = [jnp.sqrt(-deltam31sq), jnp.sqrt(-deltam32sq), 1e-5]
                     solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
@@ -1060,23 +1069,22 @@ class Cosmology(BaseCosmology):
         for name, default in defaults.items():
             params[name] = _make_float(params.get(name, default))
 
-        def raise_error(w):
-            if w >= 1. / 3.:
-                raise CosmologyInputError('w(a -> 0) = w0_fld + wa_fld > 1 / 3, there cannot be radiation domination at early time')
+        def error(value):
+            raise CosmologyInputError('w(a -> 0) = w0_fld + wa_fld > 1 / 3 (found {:.2f}), there cannot be radiation domination at early time'.format(value))
 
-        exception(raise_error, params['w0_fld'] + params['wa_fld'])
+        value = params['w0_fld'] + params['wa_fld']
+        value = exception_or_nan(value, value >= 1. / 3., error)
+
         params['use_ppf'] = bool(params.get('use_ppf', True))
 
         from functools import partial
-        def raise_error(basename, value):
-            if jnp.any(value < 0.):
-                raise CosmologyInputError('Parameter {} should be positive, found {}'.format(basename, value))
+        def error(basename, value):
+            raise CosmologyInputError('Parameter {} should be positive, found {}'.format(basename, value))
 
         for basename in ['Omega_cdm', 'Omega_b', 'T_cmb', 'h', 'A_s', 'sigma8', 'm_ncdm', 'T_ncdm_over_cmb']:
             if basename in params:
                 value = _make_float(params[basename])
-
-                exception(partial(raise_error, basename), value)
+                value = exception_or_nan(value, (value < 0.).any(), partial(error, basename))
                 params[basename] = value
 
         def is_str(name, default_string, allowed_strings):

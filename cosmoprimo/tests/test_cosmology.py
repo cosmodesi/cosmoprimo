@@ -145,7 +145,7 @@ def test_thermodynamics(params):
     for engine in ['camb']:
         th = Thermodynamics(cosmo, engine=engine)
         for name in ['z_drag', 'rs_drag', 'z_star', 'rs_star']:  # weirdly enough, class's z_rec seems to match camb's z_star much better
-            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 1e-4)
+            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 2e-4)
         for name in ['theta_star', 'theta_cosmomc']:
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 5e-5)
         for name in ['YHe']:

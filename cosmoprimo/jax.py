@@ -45,8 +45,10 @@ def jit(*args, **kwargs):
     return get_wrapper(args[0])
 
 
-def use_jax(*arrays):
+def use_jax(*arrays, tracer_only=False):
     """Whether to use jax.numpy depending on whether array is jax's object."""
+    if tracer_only:
+        return any(isinstance(array, array_types[-1:]) for array in arrays)
     return any(isinstance(array, array_types) for array in arrays)
 
 
@@ -124,7 +126,7 @@ class Interpolator1D(object):
                         def _spline(x, dx=0):
                             return spline(x, nu=dx)
                 else:
-                    _spline = interpolate.interp1d(x, funZ, kind=_scipy_convert_method(k), axis=0, bounds_error=False, fill_value='extrapolate' if self.extrap else numpy.nan, assume_sorted=True)
+                    _spline = interpolate.interp1d(x, fun, kind=_scipy_convert_method(k), axis=0, bounds_error=False, fill_value='extrapolate' if self.extrap else numpy.nan, assume_sorted=True)
 
             self._spline = _spline
 
