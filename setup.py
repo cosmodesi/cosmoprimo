@@ -17,6 +17,6 @@ setup(name=package_basename,
       license='BSD3',
       url='http://github.com/cosmodesi/cosmoprimo',
       install_requires=['numpy', 'scipy'],
-      extras_require={'class': ['cython', 'pyclass @ git+https://github.com/adematti/pyclass'], 'camb': ['camb'], 'isitgr': ['isitgr'], 'astropy': ['astropy'], 'extras': ['pyfftw']},
+      extras_require={'class': ['cython', 'pyclass @ git+https://github.com/adematti/pyclass'], 'camb': ['camb'], 'isitgr': ['isitgr'], 'astropy': ['astropy'], 'extras': ['pyfftw'], 'jax': ['jax', 'interpax @ git+https://github.com/adematti/interpax']},
       packages=find_packages(),
       package_data={package_basename: ['data/*.dat', 'data/*.csv', 'bindings/*/*.yaml', 'emulators/train/*/emulator.npy']})

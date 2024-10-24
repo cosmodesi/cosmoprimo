@@ -100,7 +100,11 @@ class CambEngine(BaseEngine):
             g = np.array(self['T_ncdm_over_cmb'], dtype=np.float64)**4 * (4. / 11.)**(-4. / 3.)
             m_ncdm = np.array(self['m_ncdm'])
             self._camb_params.nu_mass_numbers = np.ones(self['N_ncdm'], dtype=np.int32)
-            self._camb_params.nu_mass_fractions = m_ncdm / m_ncdm.sum()
+            if m_ncdm.sum() == 0.:
+                f_ncdm = np.full_like(m_ncdm, 1. / 3.)
+            else:
+                f_ncdm = m_ncdm / m_ncdm.sum()
+            self._camb_params.nu_mass_fractions = f_ncdm
             self._camb_params.nu_mass_degeneracies = g
             #print('g', g, np.sum(g) + self['N_ur'], self['N_eff'], self['N_ur'])
 

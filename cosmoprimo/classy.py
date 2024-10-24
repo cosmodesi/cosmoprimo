@@ -64,6 +64,7 @@ class ClassEngine(BaseEngine):
         params.setdefault('k_per_decade_for_bao', 100)  # default is 70 (precisions.h)
         params.setdefault('k_per_decade_for_pk', 20)  # default is 10
         for name, value in params.items():
+            if name in ['N_ncdm']: continue
             try: params[name] = float(value)
             except: continue
         self._set_classy(params=params)

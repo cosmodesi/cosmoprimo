@@ -745,7 +745,7 @@ def test_bisect():
     assert np.allclose(cosmo2['h'], cosmo['h'])
 
 
-def test_isitgr():
+def test_isitgr(plot=False):
     cosmo_camb = Cosmology(engine='camb')
     try:
         cosmo = Cosmology(engine='isitgr')
@@ -765,6 +765,18 @@ def test_isitgr():
     cosmo['Q0']
     assert 'Q0' in cosmo.get_default_params()
     assert 'Q0' in cosmo.get_default_parameters()
+
+    if plot:
+        z = 1.
+        k = np.linspace(0.001, 0.2, 100)
+        from matplotlib import pyplot as plt
+        ax = plt.gca()
+        for kwargs in [{}, {'mu0': -0.5, 'Sigma0': 0.}, {'mu0': -0.5, 'Sigma0': 1.}]:
+            pk = Cosmology(engine='isitgr', MG_parameterization='muSigma', **kwargs).get_fourier().pk_interpolator(of='delta_cb').to_1d(z=z)
+            #ax.plot(k,  k * pk(k), label=str(kwargs))
+            k = pk.k; ax.loglog(k,  pk(k), label=str(kwargs))
+        ax.legend()
+        plt.show()
 
 
 def test_axiclass():
@@ -810,7 +822,42 @@ def test_mochiclass():
     from cosmoprimo.fiducial import DESI
     cosmo = DESI(engine='mochiclass', **params)
     cosmo['parameters_smg']
-    cosmo_class.get_fourier().pk_interpolator(of='theta_cb')
+    cosmo.get_fourier().pk_interpolator(of='theta_cb')
+
+
+def test_negnuclass():
+    cosmo_class = Cosmology(engine='class')
+    try:
+        cosmo = Cosmology(engine='negnuclass')
+    except ImportError:
+        return
+
+    k = np.linspace(0.01, 1., 200)
+    z = np.linspace(0., 2., 10)
+    assert np.allclose(cosmo_class.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=1e-4)
+
+    params = {'m_ncdm': -0.4}
+    cosmo = Cosmology(engine='negnuclass', **params)
+    assert not np.allclose(cosmo_class.get_fourier().pk_interpolator(of='theta_cb')(k=k, z=z), cosmo.get_fourier().pk_interpolator(of='theta_cb')(k=k, z=z), atol=0., rtol=1e-4)
+    cosmo.comoving_radial_distance(z)
+
+    from cosmoprimo.fiducial import DESI
+    from matplotlib import pyplot as plt
+    ax = plt.gca()
+    for m_ncdm in [-0.04, 0.06]:
+        params.update(m_ncdm=m_ncdm)
+        cosmo = DESI(engine='negnuclass', **params)
+        pk = cosmo.get_fourier().pk_interpolator(of='theta_cb')
+        ax.loglog(pk.k, pk(pk.k, z=1.))
+    plt.show()
+
+
+def test_neff():
+    for m_ncdm in [[], [0.] * 3]:
+        cosmo = Cosmology(engine='class', m_ncdm=m_ncdm)
+        print(cosmo.Omega0_r)
+        cosmo = Cosmology(engine='camb', m_ncdm=m_ncdm)
+        print(cosmo.Omega0_r)
 
 
 def test_error():
@@ -854,6 +901,14 @@ def test_jax():
     print(test_jit(dict(Omega_m=0.3, logA=3.)))
     test_jacfwd = jacfwd(test)
     print(test_jacfwd(dict(Omega_m=0.3, logA=3.)))
+
+    def test(params):
+        cosmo = Cosmology(engine='eisenstein_hu', **params)
+        z = jnp.linspace(0., 1., 10)
+        return cosmo.luminosity_distance(z)
+
+    test_jacfwd = jacfwd(test)
+    print(test_jacfwd(dict(Omega_m=0.3, w0_fld=-1., wa_fld=0.)))
 
 
 def test_default_background():
@@ -1092,5 +1147,6 @@ if __name__ == '__main__':
     test_isitgr()
     test_axiclass()
     test_mochiclass()
+    test_negnuclass()
     test_default_background()
     #test_fk()

@@ -462,6 +462,7 @@ class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
 
     """Base engine for cosmological calculation."""
     name = 'base'
+    _check_ignore = ()
 
     def __init__(self, extra_params=None, **params):
         """
@@ -548,8 +549,10 @@ def get_engine(engine):
         #NEW: adding the engine here too (Rafaela)
         if engine in ['axiclass', 'axiclassy']:
             from . import axiclassy
-        if engine in ['mochiclass', 'mochiclassy']:
+        elif engine in ['mochiclass', 'mochiclassy']:
             from . import mochiclassy
+        elif engine in ['negnuclass', 'negnuclassy']:
+            from . import negnuclassy
         elif engine == 'camb':
             from . import camb
         elif engine == 'isitgr':
@@ -715,7 +718,7 @@ class Cosmology(BaseCosmology):
         self._derived = {}
         self._engine = None
         self._input_params = merge_params(self.get_default_params(include_conflicts=False), params, conflicts=self.__class__._conflict_parameters)
-        self._params = self._compile_params(self._input_params)
+        self._params = self._compile_params(self._input_params, engine=engine)
         self._set_jax()
         self._extra_params = {}
         if engine is not None:
@@ -773,7 +776,7 @@ class Cosmology(BaseCosmology):
         return toret
 
     @classmethod
-    def _compile_params(cls, args):
+    def _compile_params(cls, args, engine=None):
         """
         Compile parameters ``args``:
 
@@ -798,6 +801,11 @@ class Cosmology(BaseCosmology):
         """
         params = {}
         params.update(args)
+
+        if engine is not None:
+            engine = get_engine(engine)
+        else:
+            engine = BaseEngine
 
         from .jax import use_jax
 
@@ -945,10 +953,12 @@ class Cosmology(BaseCosmology):
                                             'for m_ncdm, only with a sum.'.format(neutrino_hierarchy))
                 sum_ncdm = m_ncdm[0]
 
-                def error(sum_ncdm):
-                    raise CosmologyInputError('Sum of neutrino masses must be positive.')
+                if 'm_ncdm' not in engine._check_ignore:
 
-                sum_ncdm = exception_or_nan(sum_ncdm, sum_ncdm < 0., error)
+                    def error(value):
+                        raise CosmologyInputError('Parameter {} should be positive, found {}'.format('m_ncdm', value))
+
+                    sum_ncdm = exception_or_nan(sum_ncdm, sum_ncdm < 0., error)
 
                 # Lesgourges & Pastor 2012, arXiv:1212.6154
                 #deltam21sq = 7.62e-5
@@ -1021,7 +1031,7 @@ class Cosmology(BaseCosmology):
         T_ncdm_over_cmb = _make_float(T_ncdm_over_cmb)
         # Check which of the neutrino species are non-relativistic today
         #m_massive = 0.00017  # Lesgourges et al. 2012
-        m_massive = 0.  # best to keep same N_ncdm for sampling / emulating
+        m_massive = -np.inf  # best to keep same N_ncdm for sampling / emulating
         mask_m = m_ncdm > m_massive
         if not jax_array_types:
             # Fill an array with the non-relativistic neutrino masses
@@ -1084,7 +1094,10 @@ class Cosmology(BaseCosmology):
         for basename in ['Omega_cdm', 'Omega_b', 'T_cmb', 'h', 'A_s', 'sigma8', 'm_ncdm', 'T_ncdm_over_cmb']:
             if basename in params:
                 value = _make_float(params[basename])
-                value = exception_or_nan(value, (value < 0.).any(), partial(error, basename))
+                if basename in engine._check_ignore:
+                    pass
+                else:
+                    value = exception_or_nan(value, (value < 0.).any(), partial(error, basename))
                 params[basename] = value
 
         def is_str(name, default_string, allowed_strings):
@@ -1170,10 +1183,10 @@ class Cosmology(BaseCosmology):
         else:
             raise CosmologyInputError('Unknown parameter base {}'.format(base))
         new._input_params = merge_params(base_params, params, conflicts=new.__class__._conflict_parameters)
-        new._params = new._compile_params(new._input_params)
-        new._set_jax()
         if engine is None and self._engine is not None:
             engine = self._engine.__class__
+        new._params = new._compile_params(new._input_params, engine=engine)
+        new._set_jax()
         if engine is not None:
             if extra_params is None:
                 extra_params = getattr(self._engine, '_extra_params', {})
@@ -1552,7 +1565,8 @@ class BaseBackground(BaseSection):
     def rho_fld(self, z):
         r"""Comoving density of dark energy fluid :math:`\rho_{\mathrm{fld}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         # return self.Omega0_fld * (1 + z) ** (3. * (1 + self.w0_fld + self.wa_fld)) * np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3 / (1 + z)**3
-        return self.Omega0_fld * (1 + z) ** (3. * (self.w0_fld + self.wa_fld)) * self._np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3
+        # Omega0_de for autodiff
+        return self.Omega0_de * (1 + z) ** (3. * (self.w0_fld + self.wa_fld)) * self._np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_de(self, z):
