@@ -1057,6 +1057,10 @@ class Cosmology(BaseCosmology):
         # number of massive neutrino species
         params['m_ncdm'] = m_ncdm
         params['T_ncdm_over_cmb'] = T_ncdm_over_cmb
+        if params.get('N_ncdm', None) is not None:
+            if params['N_ncdm'] != len(params['m_ncdm']):
+                raise ValueError('provided N_ncdm = {:d} does not match len(m_ncdm) = {:d}. Do not provide N_ncdm, but rather a list of m_ncdm of the correct length, or neutrino_hierarchy.'.format(params['N_ncdm'], len(params['m_ncdm'])))
+            del params['N_ncdm']
 
         if params.get('z_pk', None) is None:
             # Same as pyccl, https://github.com/LSSTDESC/CCL/blob/d2a5630a229378f64468d050de948b91f4480d41/src/ccl_core.c

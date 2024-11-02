@@ -21,7 +21,7 @@ class IsitgrEngine(CambEngine):
                                             z_div=0, z_TGR=0, z_tw=0, k_tw=0, Q1=0, Q2=0, Q3=0, Q4=0, D1=0,
                                             D2=0, D3=0, D4=0, mu1=0, mu2=0, mu3=0, mu4=0, eta1=0, eta2=0,
                                             eta3=0, eta4=0, Sigma1=0, Sigma2=0, Sigma3=0, Sigma4=0)
-    _default_calculation_parameters = dict(MG_parameterization='muSigma') #dict(parameterization=None, binning=None)
+    _default_calculation_parameters = dict(MG_parameterization='muSigma')  #dict(parameterization=None, binning=None)
 
     def _set_camb(self):
         import isitgr

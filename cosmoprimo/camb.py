@@ -55,38 +55,85 @@ class CambEngine(BaseEngine):
         super().__init__(*args, **kwargs)
         if self._params.get('Omega_Lambda', None) is not None:
             warnings.warn('{} cannot cope with dynamic dark energy + cosmological constant'.format(self.__class__.__name__))
+
         self._set_camb()
         self._camb_params = self.camb.CAMBparams()
 
+        from inspect import getfullargspec
+
         try:
 
-            for key, value in self._extra_params.items():
-                if key not in self._params:
-                    if key in ['lSampleBoost', 'AccuracyBoost', 'lAccuracyBoost', 'DoLateRadTruncation']:
-                        setattr(self._camb_params.Accuracy, key, value)
-                    else:
-                        setattr(self._camb_params, key, value)
+            # Accuracy: ['lSampleBoost', 'AccuracyBoost', 'lAccuracyBoost', 'DoLateRadTruncation']
+            base_params = self._params.copy()
+            base_params['ombh2'] = base_params.pop('Omega_b') * base_params['h']**2
+            base_params['omch2'] = base_params.pop('Omega_cdm') * base_params['h']**2
+            base_params['H0'] = 100. * base_params.pop('h')
 
-            kwargs = {name: self.get(name, value) for name, value in self.get_default_params().items()}
-            YHe = None if self['YHe'] == 'BBN' else self['YHe']
-            self._camb_params.set_cosmology(H0=self['H0'], ombh2=self['omega_b'], omch2=self['omega_cdm'], omk=self['Omega_k'],
-                                            TCMB=self['T_cmb'], Alens=self['A_L'], YHe=YHe, **kwargs)  # + neutrinos
-            # Let's do this by hand for backward-compatibility (for isitgr)
-            tau_reio, z_reio, reionization_width = self.get('tau_reio', None), self.get('z_reio', None), self['reionization_width']
-            if tau_reio is not None:
-                self._camb_params.Reion.set_tau(tau_reio)
-            elif z_reio is not None:
-                self._camb_params.Reion.set_zrei(z_reio)
-            self._camb_params.Reion.delta_redshift = reionization_width
-            self._camb_params.InitPower.set_params(As=self._get_A_s_fid(), ns=self['n_s'], nrun=self['alpha_s'], nrunrun=self['beta_s'], pivot_scalar=self['k_pivot'],
-                                                   pivot_tensor=self['k_pivot'], parameterization='tensor_param_rpivot', r=self['r'], nt=self['n_t'], ntrun=self['alpha_t'])
+            for name, rename in {'tau_reio': 'tau', 'z_reio': 'zrei', 'Omega_k': 'omk', 'T_cmb': 'TCMB', 'A_L': 'Alens',
+                                 'n_s': 'ns', 'alpha_s': 'nrun', 'beta_s': 'nrunrun', 'r': 'r', 'n_t': 'nt', 'alpha_t': 'ntrun'}.items():
+                if name in base_params:
+                    base_params[rename] = base_params.pop(name)
+            if base_params['YHe'] == 'BBN':
+                base_params['YHe'] = None
+            base_params['nnu'] = self['N_eff']
+            base_params['As'] = base_params.pop('A_s', self._get_A_s_fid())
+            base_params['pivot_tensor'] = base_params['pivot_scalar'] = base_params.pop('k_pivot')
+            base_params['parameterization'] = 'tensor_param_rpivot'
+            base_params['standard_neutrino_neff'] = constants.NEFF
+
+            de_params = {}
+            for name, rename in {'w0_fld': 'w', 'wa_fld': 'wa', 'cs2_fld': 'cs2'}.items():
+                de_params[rename] = base_params.pop(name)
+            if self._has_fld:
+                base_params['dark_energy_model'] = self.camb.dark_energy.DarkEnergyPPF if self['use_ppf'] and self['cs2_fld'] == 1. else self.camb.dark_energy.DarkEnergyFluid
+                base_params.update(de_params)
+
+            base_params['Want_CMB_lensing'] = base_params['DoLensing'] = base_params.pop('lensing')
+            base_params['lmax'] = base_params.pop('ellmax_cl')
+
+            # Providing non-zero z_pk changes Cls at the 1e-5 level
+            base_params['redshifts'] = np.sort(base_params.pop('z_pk'))[::-1]
+            #base_params['redshifts'] = [0.]
+            # Providing kmax seems to change rdrag at the 1e-6 level, and Cls at the 1e-5 level
+            base_params['kmax'] = base_params.pop('kmax_pk') * self['h']
+            #base_params.pop('kmax')
+            # set_matter_power sets high_precision=True, changing Cls at the 1e-3 level
+
+            # Remove base_params that are treated afterwards
+            for name in ['use_ppf', 'modes', 'T_ncdm_over_cmb', 'N_ur', 'm_ncdm', 'reionization_width', 'sigma8']:
+                base_params.pop(name, None)
+
+            all_params = self._extra_params | base_params
+
+            non_linear = all_params.pop('non_linear')
+
+            if non_linear:
+                self._camb_params.NonLinear = self.camb.model.NonLinear_both
+                self._camb_params.NonLinearModel = self.camb.nonlinear.Halofit()
+
+                if non_linear in ['mead', 'hmcode']:
+                    halofit_version = 'mead'
+                elif non_linear in ['halofit']:
+                    halofit_version = 'original'
+                else:
+                    halofit_version = non_linear
+
+                # ['HMCode_A_baryon', 'HMCode_eta_baryon', 'HMCode_logT_AGN']
+                non_linear = {'halofit_version': halofit_version} | {kk: all_params.pop(kk) for kk in getfullargspec(self._camb_params.NonLinearModel.set_params).args[1:] if kk in all_params}
+                #all_params['nonlinear'] = True   # this activates a warning on halofit precision if (kmax < 5 or kmax < 20 and np.max(zs) > 4)
+                if base_params['Want_CMB_lensing']: all_params.setdefault('lens_potential_accuracy', 1)
+            self.camb.set_params(self._camb_params, **all_params)
+
+            # Parameter not included in set_params
+            self._camb_params.Reion.delta_redshift = self['reionization_width']
+            if non_linear:
+                self._camb_params.NonLinearModel.set_params(**non_linear)
 
             self._camb_params.share_delta_neff = False
             self._camb_params.omnuh2 = self['omega_ncdm'].sum()
             self._camb_params.num_nu_massless = self['N_ur']
             self._camb_params.num_nu_massive = self['N_ncdm']
             self._camb_params.nu_mass_eigenstates = self['N_ncdm']
-            delta_neff = self['N_eff'] - constants.NEFF  # used for BBN YHe comps
 
             # CAMB defines a neutrino degeneracy factor as T_i = g^(1/4) * T_nu
             # where T_nu is the standard neutrino temperature from first order computations
@@ -106,45 +153,21 @@ class CambEngine(BaseEngine):
                 f_ncdm = m_ncdm / m_ncdm.sum()
             self._camb_params.nu_mass_fractions = f_ncdm
             self._camb_params.nu_mass_degeneracies = g
-            #print('g', g, np.sum(g) + self['N_ur'], self['N_eff'], self['N_ur'])
 
-            # get YHe from BBN
-            self._camb_params.bbn_predictor = self.camb.bbn.get_predictor()
-            self._camb_params.YHe = self._camb_params.bbn_predictor.Y_He(self._camb_params.ombh2 * (self.camb.constants.COBE_CMBTemp / self._camb_params.TCMB)**3, delta_neff)
-
-            if self._has_fld:
-                self._camb_params.set_classes(dark_energy_model=self.camb.dark_energy.DarkEnergyPPF if self['use_ppf'] and self['cs2_fld'] == 1. else self.camb.dark_energy.DarkEnergyFluid)
-                self._camb_params.DarkEnergy.set_params(w=self['w0_fld'], wa=self['wa_fld'], cs2=self['cs2_fld'])
-
-            self._camb_params.DoLensing = self['lensing']
-            self._camb_params.Want_CMB_lensing = self['lensing']
-            self._camb_params.set_for_lmax(lmax=self['ellmax_cl'])
-            non_linear = self['non_linear']
-            self._camb_params.set_matter_power(redshifts=self['z_pk'], kmax=self['kmax_pk'] * self['h'], silent=True) #, k_per_logint=10, accurate_massive_neutrino_transfers=True
-
-            if non_linear:
-                self._camb_params.NonLinear = self.camb.model.NonLinear_both
-                self._camb_params.NonLinearModel = self.camb.nonlinear.Halofit()
-
-                if non_linear in ['mead', 'hmcode']:
-                    halofit_version = 'mead'
-                elif non_linear in ['halofit']:
-                    halofit_version = 'original'
-                else:
-                    halofit_version = non_linear
-
-                options = {}
-                for name in ['HMCode_A_baryon', 'HMCode_eta_baryon', 'HMCode_logT_AGN']:
-                    tmp = self.get(name, None)
-                    if tmp is not None: options[name] = tmp
-                self._camb_params.NonLinearModel.set_params(halofit_version=halofit_version, **options)
-
-            if not non_linear:
-                assert self._camb_params.NonLinear == self.camb.model.NonLinear_none
+            #if not non_linear:
+            #    assert self._camb_params.NonLinear == self.camb.model.NonLinear_none
 
             self._camb_params.WantScalars = 's' in self['modes']
             self._camb_params.WantVectors = 'v' in self['modes']
             self._camb_params.WantTensors = 't' in self['modes']
+
+            # Below are the parameters to reproduce cobaya's camb
+            ##self._camb_params.WantTransfer = False
+            ##self._camb_params.Want_cl_2D_array = False
+            ##self._camb_params.NonLinear = self.camb.model.NonLinear_lens
+            #self._camb_params.Transfer.high_precision = False
+            #self._camb_params.Transfer.kmax = 5.0
+            #self._camb_params.SourceTerms.limber_windows = False
 
         except (self.camb.baseconfig.CAMBParamRangeError, self.camb.baseconfig.CAMBValueError, self.camb.baseconfig.CAMBError, self.camb.baseconfig.CAMBUnknownArgumentError) as exc:
 
@@ -163,6 +186,7 @@ class CambEngine(BaseEngine):
             ['background', 'thermodynamics', 'transfer', 'harmonic', 'lensing', 'fourier']
         """
         tasks = _build_task_dependency(tasks)
+
         try:
 
             if 'background' in tasks and not self.ready.ba:
@@ -201,6 +225,8 @@ class CambEngine(BaseEngine):
         except self.camb.baseconfig.CAMBError as exc:
 
             raise CosmologyInputError from exc
+
+        #print('cosmoprimo', self._camb_params)
 
     def _set_camb(self):
         import camb
