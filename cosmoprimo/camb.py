@@ -417,7 +417,7 @@ class Background(BaseBackground):
         return self.ba.luminosity_distance(z) * self._h
 
 
-@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star', 'YHe')
+@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star', 'tau_reio', 'z_reio', 'YHe')
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
@@ -433,7 +433,9 @@ class Thermodynamics(BaseSection):
         self._z_drag = derived['zdrag']
         self._rs_star = derived['rstar'] * self._h
         self._z_star = derived['zstar']
-        self._YHe = self._engine._camb_params.YHe
+        self._z_reio = self.th.Params.get_zrei()
+        self._tau_reio = self.th.Params.Reion.optical_depth
+        self._YHe = self.th.Params.YHe
 
     @utils.flatarray(dtype=np.float64)
     def rs_z(self, z):

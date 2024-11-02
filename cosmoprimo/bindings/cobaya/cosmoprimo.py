@@ -389,7 +389,7 @@ class cosmoprimo(BoltzmannBase):
 
     def get_can_provide_params(self):
         names = ['h', 'H0', 'Omega_Lambda', 'Omega_m', 'Omega_k',
-                 'rs_drag', 'tau_reio', 'z_reio', 'z_rec', 'tau_rec', 'm_ncdm_tot',
+                 'rs_drag', 'z_drag', 'tau_reio', 'z_reio', 'z_rec', 'tau_rec', 'm_ncdm_tot',
                  'N_eff', 'YHe', 'age', 'sigma8_m', 'sigma8_cb', 'theta_s_100']
         for name, mapped in self.renames.items():
             if mapped in names:
