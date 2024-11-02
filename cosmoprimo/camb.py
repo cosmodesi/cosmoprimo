@@ -90,6 +90,14 @@ class CambEngine(BaseEngine):
 
             base_params['Want_CMB_lensing'] = base_params['DoLensing'] = base_params.pop('lensing')
             base_params['lmax'] = base_params.pop('ellmax_cl')
+            # Below are the parameters to reproduce cobaya's camb Pk-only
+            # Changes of the order of ~1e-3
+            #base_params.pop('lmax')
+            #base_params['WantCls'] = False
+            #base_params['Want_cl_2D_array'] = False
+            #base_params['Want_CMB'] = False
+            #base_params['Want_CMB_lensing'] = True
+            #base_params['DoLensing'] = True
 
             # Providing non-zero z_pk changes Cls at the 1e-5 level
             base_params['redshifts'] = np.sort(base_params.pop('z_pk'))[::-1]
@@ -161,7 +169,7 @@ class CambEngine(BaseEngine):
             self._camb_params.WantVectors = 'v' in self['modes']
             self._camb_params.WantTensors = 't' in self['modes']
 
-            # Below are the parameters to reproduce cobaya's camb
+            # Below are the parameters to reproduce cobaya's camb Cl-only
             ##self._camb_params.WantTransfer = False
             ##self._camb_params.Want_cl_2D_array = False
             ##self._camb_params.NonLinear = self.camb.model.NonLinear_lens
@@ -225,8 +233,6 @@ class CambEngine(BaseEngine):
         except self.camb.baseconfig.CAMBError as exc:
 
             raise CosmologyInputError from exc
-
-        #print('cosmoprimo', self._camb_params)
 
     def _set_camb(self):
         import camb
