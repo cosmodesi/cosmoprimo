@@ -120,6 +120,9 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
             If ``True``, apply batch normalization.
             See https://flax.readthedocs.io/en/latest/guides/training_techniques/batch_norm.html.
 
+        patience : int, tuple, list, default=100
+            Wait for this number of epochs without loss improvement before stopping the optimization.
+
         seed : int, default=None
             Random seed.
         """
@@ -309,9 +312,9 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
                         metrics['learning_rate'] = learning_rate_fn(state.step)
                     return state, metrics
 
+                state = best_state
                 best_loss = np.infty
                 best_metrics = {}
-                state = best_state
                 early_stopping_counter = 0
 
                 # loop over epochs

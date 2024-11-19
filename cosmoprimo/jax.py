@@ -646,7 +646,8 @@ def odeint(fun, y0, t, args=(), method='rk4'):
             y = y + h / 6. * (k1 + 2 * k2 + 2 * k3 + k4)
             return (y, t), y
 
-    s = jax.lax.scan if use_jax(func(y0, t[0])) else scan_numpy
+    tmp = func(y0, t[0])
+    s = jax.lax.scan if use_jax(tmp) else scan_numpy
     toret = s(integrator, (y0, t[0]), t)[1]
     if not shape: toret = toret[0]
-    return toret.reshape(shape)
+    return toret.reshape(shape + np.shape(tmp))

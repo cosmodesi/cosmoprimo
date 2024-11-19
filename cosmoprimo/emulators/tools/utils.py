@@ -331,11 +331,10 @@ def evaluate(value, type=None, locals=None, verbose=True):
         from cosmoprimo.jax import numpy as jnp
         from cosmoprimo.jax import scipy as jsp
         locals = dict(locals or {})
-        globals = {'np': np, 'sp': sp, 'jnp': jnp, 'jsp': jsp}
+        globals = locals | {'np': np, 'sp': sp, 'jnp': jnp, 'jsp': jsp}  # FIXME: hack for nested loops
         tree = ast.parse(value)
         eval_expr = ast.Expression(tree.body[-1].value)
         exec_expr = ast.Module(tree.body[:-1], type_ignores=[])
-        compile(exec_expr, 'file', 'exec')
         try:
             exec(compile(exec_expr, 'file', 'exec'), globals, locals)
             value = eval(compile(eval_expr, 'file', 'eval'), globals, locals)

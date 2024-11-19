@@ -919,6 +919,64 @@ def test_default_background():
 
     z = np.linspace(0., 10., 100)
 
+    params = {'m_ncdm': 0.2}
+    ba_ref = DESI(**params).get_background()
+    cosmo = DESI(**params, engine=None)
+    ba = DefaultBackground(cosmo)
+
+    def test(z, OmM0):
+
+        def interp(k, x, y):
+            from scipy.interpolate import CubicSpline
+            inter = CubicSpline(x, y)
+            return inter(k)
+
+          #Getting f0
+        def OmM(eta):
+            return 1./(1. + ((1-OmM0)/OmM0)*np.exp(3*eta) )
+
+        def f1(eta):
+            return 2. - 3./2. * OmM(eta)
+
+        def f2(eta):
+            return 3./2. * OmM(eta)
+
+        etaini = -6  #initial eta, early enough to evolve as EdS (D + \propto a)
+        zfin = -0.99
+
+        def etaofz(z):
+            return np.log(1/(1 + z))
+
+        etafin = etaofz(zfin)
+
+        from scipy.integrate import odeint
+
+        # differential eq.
+        def Deqs(Df, eta):
+            Df, Dprime = Df
+            return [Dprime, f2(eta)*Df - f1(eta)*Dprime]
+
+        # eta range and initial conditions
+        eta = np.linspace(etaini, etafin, 1001)
+        Df0 = np.exp(etaini)
+        Df_p0 = np.exp(etaini)
+
+        # solution
+        Dplus, Dplusp = odeint(Deqs, [Df0, Df_p0], eta).T
+        #print(Dplus, Dplusp)
+
+        Dplusp_ = interp(etaofz(z), eta, Dplusp)
+        Dplus_ = interp(etaofz(z), eta, Dplus)
+
+        return Dplus_, Dplusp_ / Dplus_
+
+    """
+    test = test(z, OmM0=cosmo['Omega_m'])[0]
+    print(ba.growth_factor(z, mass='m') / (test / test[0]))
+    assert np.allclose(ba.growth_factor(z, mass='m'), (test / test[0]), rtol=1e-3, atol=1e-4)
+    """
+    assert np.allclose(ba_ref.growth_factor(z), ba.growth_factor(z, mass='cb'), rtol=1e-6, atol=1e-5)
+
     for name in ['time', 'comoving_radial_distance', 'Omega_ncdm', 'theta_cosmomc']:
 
         if name == 'theta_cosmomc':
@@ -942,19 +1000,21 @@ def test_default_background():
                 return getattr(background, name)(z)
 
         test_jax = jax.jit(test)
-        list_params = [{'m_ncdm': 0.4, 'w0_fld': -0.6, 'wa_fld': -1.}, {'m_ncdm': 5., 'w0_fld': -0.8, 'wa_fld': -0.5}]
+        list_params = [{'m_ncdm': 0.4}, {'m_ncdm': 0.4, 'w0_fld': -0.6, 'wa_fld': -1.}, {'m_ncdm': 5., 'w0_fld': -0.8, 'wa_fld': -0.5}]
         for params in list_params:
             ref(**params)
             test(**params)
+            test_jax(**params)
             assert np.allclose(test(**params), ref(**params), rtol=1e-6, atol=1e-4)
             assert np.allclose(test_jax(**params), ref(**params), rtol=1e-6, atol=1e-4)
+        n = 10
         t0 = time.time()
-        for params in list_params: test_jax(**params)
+        for params in list_params * n: test_jax(**params)
         dt_test = time.time() - t0
         t0 = time.time()
-        for params in list_params: ref(**params)
+        for params in list_params * n: ref(**params)
         dt_ref = time.time() - t0
-        print(dt_test, dt_ref)
+        print(dt_test / (len(list_params) * n), dt_ref / (len(list_params) * n))
 
 
 def test_fk():

@@ -1,4 +1,5 @@
 import os
+import copy
 import inspect
 from typing import Any
 
@@ -355,7 +356,7 @@ class Emulator(BaseClass):
                 warnings.warn('{} are not finite'.format(notfinite))
             X, Y, attrs = self._get_engine_X_Y(samples, params=params, varied=varied, fixed=fixed, ignore_operations=ignore_operations)
             for name in fixed: Y.pop(name)
-            _varied, _fixed = self._sort_varied_fixed(Y, subsample=min(samples.size, 10))
+            varied, _fixed = self._sort_varied_fixed(Y, subsample=min(samples.size, 10))
             fixed.update(_fixed)
             params = list(X)
             samples_operations = Samples({**{'X.' + name: X[name] for name in X}, **{'Y.' + name: Y[name] for name in Y}}, attrs=dict(attrs))
@@ -464,6 +465,9 @@ class Emulator(BaseClass):
         for name in ['defaults', 'fixed']:
             state[name] = getattr(self, name)
         return state
+
+    def deepcopy(self):
+        return copy.deepcopy(self)
 
     def save(self, filename):
         """Save emulator to disk."""
@@ -610,6 +614,9 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
         new.yoperations = [operation.copy() for operation in self.yoperations]
         return new
 
+    def deepcopy(self):
+        return copy.deepcopy(self)
+
 
 class PointEmulatorEngine(BaseEmulatorEngine):
 
@@ -684,9 +691,7 @@ class Operation(BaseClass, metaclass=RegisteredOperation):
     verbose = False
 
     def __init__(self, direct, inverse=None, locals=None):
-        self._locals = dict(locals or {})
-        self._direct = str(direct)
-        self._inverse = str(inverse) if inverse is not None else None
+        self.update(direct=direct, inverse=inverse, locals=locals)
 
     def initialize(self, v, **kwargs):
         return
@@ -698,6 +703,19 @@ class Operation(BaseClass, metaclass=RegisteredOperation):
     def inverse(self, v, **kwargs):
         """From emulated quantities to calculator output 'y'."""
         return utils.evaluate(self._inverse, locals={**self._locals, 'v': v, **kwargs}, verbose=self.verbose)
+
+    def update(self, **kwargs):
+        if 'locals' in kwargs:
+            self._locals = dict(kwargs['locals'] or {})
+        if 'direct' in kwargs:
+            self._direct = str(kwargs['direct'])
+        if 'inverse' in kwargs:
+            self._inverse = str(kwargs['inverse']) if kwargs['inverse'] is not None else None
+
+    def clone(self, **kwargs):
+        new = self.copy()
+        new.update(**kwargs)
+        return new
 
     def __getstate__(self):
         return {name: getattr(self, name) for name in ['name', '_direct', '_inverse', '_locals']}

@@ -111,6 +111,7 @@ class Background(DefaultBackground):
     ----
     Does not treat neutrinos.
     """
+
     @utils.flatarray()
     def growth_factor(self, z, znorm=None):
         """

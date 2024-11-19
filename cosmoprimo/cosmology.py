@@ -1391,6 +1391,9 @@ def _get_all_conflicts(conflict_parameters_no_alias, alias_parameters):
                 if alias not in conflicts:
                     conflicts.append(alias)
         toret.append(tuple(conflicts))
+    for name, aliases in alias_parameters.items():
+        if not any(name in conflicts for conflicts in conflict_parameters_no_alias):
+            toret.append((name,) + tuple(aliases))
     return toret
 
 
@@ -1568,21 +1571,21 @@ class BaseBackground(BaseSection):
     @utils.flatarray()
     def rho_fld(self, z):
         r"""Comoving density of dark energy fluid :math:`\rho_{\mathrm{fld}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        # return self.Omega0_fld * (1 + z) ** (3. * (1 + self.w0_fld + self.wa_fld)) * np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3 / (1 + z)**3
-        # Omega0_de for autodiff
-        return self.Omega0_de * (1 + z) ** (3. * (self.w0_fld + self.wa_fld)) * self._np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3
+        return self.Omega0_fld * (1 + z) ** (3. * (1 + self.w0_fld + self.wa_fld)) * np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3 / (1 + z)**3
 
     @utils.flatarray()
     def rho_de(self, z):
         r"""Total comoving density of dark energy :math:`\rho_{\mathrm{de}}` (fluid + cosmological constant), in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self.rho_fld(z) + self.rho_Lambda(z)
+        # return self.rho_fld(z) + self.rho_Lambda(z)
+        # Omega0_de for autodiff
+        return self.Omega0_de * (1 + z) ** (3. * (self.w0_fld + self.wa_fld)) * self._np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3
 
     @utils.flatarray()
     def rho_tot(self, z):
         r"""Comoving total density :math:`\rho_{\mathrm{tot}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
         m = self.rho_cdm(z) + self.rho_b(z) + self.rho_ncdm_tot(z)  # - 3 * self.p_ncdm_tot(z)
         r = self.rho_g(z) + self.rho_ur(z)  # + 3 * self.p_ncdm_tot(z)
-        de = self.rho_fld(z) + self.rho_Lambda(z)
+        de = self.rho_de(z)
         return m + r + de
 
     @utils.flatarray()
@@ -1767,8 +1770,7 @@ class DefaultBackground(BaseBackground):
 
     def __init__(self, engine):
         super().__init__(engine)
-        #self._cache = {'z': 1. / np.logspace(-3, 0., 256)[::-1] - 1.}
-        self._cache = {'z': 1. / np.logspace(-8, 0., 400)[::-1] - 1.}
+        self._cache = {}
 
     @utils.flatarray()
     def rho_ncdm(self, z, species=None):
@@ -1783,7 +1785,7 @@ class DefaultBackground(BaseBackground):
             species = np.arange(self.N_ncdm)
 
         if name not in self._cache:
-            zc = self._cache['z']
+            zc = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
             self._cache[name] = Interpolator1D(zc, func(self, zc).T)  # interpolation along axis = 0
 
         return self._cache[name](z).T[species]
@@ -1801,7 +1803,7 @@ class DefaultBackground(BaseBackground):
             species = np.arange(self.N_ncdm)
 
         if name not in self._cache:
-            zc = self._cache['z']
+            zc = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
             self._cache[name] = Interpolator1D(zc, func(self, zc).T)  # interpolation along axis = 0
 
         return self._cache[name](z).T[species]
@@ -1814,7 +1816,7 @@ class DefaultBackground(BaseBackground):
             def integrand(y, z):
                 return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
 
-            zc = self._cache['z']
+            zc = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
             tmp = odeint(integrand, 0., zc)
             self._cache[name] = Interpolator1D(zc, (tmp[-1] - tmp) / self.h / constants.gigayear_over_megaparsec)
         return self._cache[name](z)
@@ -1831,8 +1833,87 @@ class DefaultBackground(BaseBackground):
             def integrand(y, z):
                 return constants.c / 1e3 / (100. * self.efunc(z))
 
-            zc = self._cache['z']
+            zc = 1. / np.logspace(-4, 0., 400)[::-1] - 1.
             tmp = odeint(integrand, 0., zc)
 
             self._cache[name] = Interpolator1D(zc, tmp)
         return self._cache[name](z)
+
+    @utils.flatarray()
+    def growth_factor(self, z, mass='m', znorm=None):
+        from .jax import odeint
+        name_factor = 'growth_factor_{}'.format(mass)
+        name_rate = 'growth_rate_{}'.format(mass)
+        if name_factor not in self._cache:
+
+            if mass == 'm':
+                Omega_mass = self.Omega_m
+            elif mass == 'cb':
+                Omega_mass = lambda z: self.Omega_cdm(z) + self.Omega_b(z)
+            else:
+                raise ValueError("mass must be one of ['m', 'cb']")
+
+            def f1(eta):
+                z = self._np.exp(- eta) - 1.
+                #return - 2. + 3. / 2. * self.Omega_m(z)
+                w_fld = self.w0_fld + z / (1. + z) * self.wa_fld
+                adotdot_over_a_over_H2 = -1. / 2. * (1. - self.Omega_k(z) + self.Omega_r(z) + 3 * w_fld * self.Omega_fld(z) - 3. * self.Omega_Lambda(z))
+                return  - 1. - adotdot_over_a_over_H2
+
+            def f2(eta):
+                z = self._np.exp(- eta) - 1.
+                return 3. / 2. * Omega_mass(z)
+
+            """
+            OmM0 = self._engine['Omega_m']
+            print('lool', OmM0)
+
+            def OmM(z):
+                return 1./(1. + ((1-OmM0)/OmM0)*(1 + z)**(-3))
+
+            def f1(eta):
+                z = self._np.exp(- eta) - 1.
+                return - (2. - 3./2. * OmM(z))
+
+            #def f2(eta):
+            #    z = self._np.exp(- eta) - 1.
+            #    return 3./2. * OmM(z)
+
+
+            """
+            """
+            def OmM(eta):
+                return 1/(1 + ((1-OmM0)/OmM0)* np.exp(3*eta) )
+
+            def f1(eta):
+                return -(2 - 3/2 * OmM(eta))
+
+            def f2(eta):
+                return 3/2 * OmM(eta)
+            """
+
+            # differential eq.
+            def Deqs(Df, eta):
+                Df, Dprime = Df
+                return self._np.array([Dprime, f2(eta) * Df + f1(eta) * Dprime])
+
+            eta = np.linspace(-6., 0., 201)
+            zc = self._np.exp(- eta) - 1.
+            Df_p0 = Df0 = self._np.exp(eta[0])
+
+            # solution
+            Dplus, Dplusp = odeint(Deqs, self._np.array([Df0, Df_p0]), eta).T
+            self._cache[name_factor] = Interpolator1D(zc[::-1], Dplus[::-1])
+            self._cache[name_rate] = Interpolator1D(zc[::-1], Dplusp[::-1] / Dplus[::-1])
+
+        growthz = self._cache[name_factor](z)
+        if znorm is not None:
+            return (1. + znorm) * growthz
+        return growthz / self._cache[name_factor](0.)
+
+    @utils.flatarray()
+    def growth_rate(self, z, mass='m'):
+        name_rate = 'growth_rate_{}'.format(mass)
+        if name_rate not in self._cache:
+            self.growth_factor(z=0., mass=mass)
+        return self._cache[name_rate](z)

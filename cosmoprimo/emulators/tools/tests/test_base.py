@@ -25,6 +25,7 @@ def test_base():
 
 
 def test_operation():
+
     fn = '_tests/operation.npy'
     operation = Operation('v + 2', inverse='v - 2')
     assert operation.inverse(operation(42.)) == 42.
@@ -38,6 +39,12 @@ def test_operation():
         operation({'b': 2})
     except KeyError:
         pass
+
+    operation = Operation("for name in v: v[name] += 2\nv")
+    assert operation({'a': 2}) == {'a': 4}
+
+    operation = Operation("{name: v[name] + 2 for name in v}")
+    assert operation({'a': 2}) == {'a': 4}
 
     operation = ScaleOperation()
     operation.initialize(x)
@@ -102,6 +109,7 @@ def test_chebyshev():
 if __name__ == '__main__':
 
     setup_logging()
+
     test_base()
     test_operation()
     test_chebyshev()
