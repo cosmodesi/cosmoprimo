@@ -27,7 +27,6 @@ renames:
   nt: n_t
   ntrun: alpha_t
   # Background/geometry/Lambda
-  rdrag: rs_drag
   omegak: Omega_k
   omegal: Omega_Lambda
   w: w0_fld
@@ -45,6 +44,8 @@ renames:
   #    or mnu (CAMB, always total mass) vs m_ncdm (cosmoprimo, mass of a single nu)
   omegan: Omega_nu
   # Thermodynamics
+  rdrag: rs_drag
+  zdrag: z_drag
   tau: tau_reio
   zrei: z_reio
   deltazrei: reionization_width
