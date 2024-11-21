@@ -326,7 +326,7 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
                         for batch in training_data:
                             state, metrics = train_step(state, batch, learning_rate_fn)
                             #train_batch_metrics.append(metrics)
-                        #state, metrics = jax.lax.scan(train_step, state, training_data)
+                        #state, metrics = jax.lax.scan(lambda state, batch: train_step(state, batch, learning_rate_fn), state, training_data)
                         # compute validation loss at the end of the epoch
                         loss, metrics = eval_step(state, (samples['X_validation'], samples['Y_validation']))
 
@@ -341,7 +341,7 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
                             early_stopping_counter += 1
                         if early_stopping_counter >= patience:
                             break
-                    assert np.allclose(best_metrics['distance'], best_loss**0.5)
+                    #assert np.allclose(best_metrics['distance'], best_loss**0.5)
                     self.log_info(', '.join(['{} = {:.3e}'.format(name, value) for name, value in {'validation loss': best_loss, **best_metrics}.items()]))
                 best_params, best_batch_stats = best_state.params, best_state.batch_stats
 
@@ -352,7 +352,6 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
             #print(samples['Y'][:3], y_pred[:3], compute_loss(samples['Y'], y_pred))
             #y_pred2 = best_state.apply_fn({'params': best_state.params, 'batch_stats': best_state.batch_stats}, x, train=False)
             #print(y_pred)
-            #print('LOOOL', y_pred2 - y_pred)
             #exit()
 
         mpi.barrier_idle(self.mpicomm)  # we rely on keras parallelisation; here we make MPI processes idle

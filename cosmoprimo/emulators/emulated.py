@@ -45,7 +45,13 @@ class EmulatedEngine(BaseEngine):
         emulator = getattr(self.__class__, '_emulator', None)
         if emulator is None:
             from . import Emulator
-            emulator = self.__class__._emulator = Emulator.load(self.path)
+            emulator = Emulator()
+            if isinstance(self.path, (tuple, list)):
+                for path in self.path:
+                    emulator.update(Emulator.load(path))
+            else:
+                emulator.update(Emulator.load(self.path))
+            self.__class__._emulator = emulator
 
         self._A_s = self._get_A_s_fid()
         self._sigma8 = self._get_sigma8_fid()
@@ -70,6 +76,8 @@ class EmulatedEngine(BaseEngine):
                         self._needs_rescale = 'sigma8'
                     else:
                         raise exc
+        if 'm_ncdm' in params:  # FIXME
+            params['m_ncdm'] = self['m_ncdm_tot']
 
         for operation in emulator.xoperations:
             params = operation(params)
@@ -158,7 +166,7 @@ class EmulatedEngine(BaseEngine):
 
 class Background(BaseBackground):
 
-    """Tabulated background quantities."""
+    """Background quantities."""
 
     def __init__(self, engine):
         super().__init__(engine)
@@ -590,10 +598,3 @@ class Fourier(BaseSection):
                 self._state[name][tuple(keys)] = value
             else: # k, z
                 self._state[keyname] = value
-
-
-
-class CAPSEEngine(EmulatedEngine):
-
-    name = 'capse'
-    path = Path(__file__).parent / 'train/jaxcapse_mnu_w0wa/emulator.npy'

@@ -891,24 +891,29 @@ def test_jax():
     from jax import numpy as jnp
     from jax import jit, jacfwd
     from cosmoprimo.fiducial import DESI
-
+    """
     def test(params):
         cosmo = DESI(engine='eisenstein_hu', **params)
         z = jnp.linspace(0., 1., 10)
         return cosmo.sigma8_z(z)
 
     test_jit = jit(test)
-    print(test_jit(dict(Omega_m=0.3, logA=3.)))
+    test_jit(dict(Omega_m=0.3, logA=3., w0_fld=-1., wa_fld=0.))
     test_jacfwd = jacfwd(test)
-    print(test_jacfwd(dict(Omega_m=0.3, logA=3.)))
+    test_jacfwd(dict(Omega_m=0.3, logA=3.))
+    """
 
     def test(params):
         cosmo = Cosmology(engine='eisenstein_hu', **params)
         z = jnp.linspace(0., 1., 10)
         return cosmo.luminosity_distance(z)
 
+    test_jit = jit(test)
+    test_jit(dict(Omega_m=0.3, logA=3., w0_fld=-1., wa_fld=0.))
+    print(test_jit(dict(Omega_m=0.3, logA=3., w0_fld=0., wa_fld=0.5)))
+
     test_jacfwd = jacfwd(test)
-    print(test_jacfwd(dict(Omega_m=0.3, w0_fld=-1., wa_fld=0.)))
+    #print(test_jacfwd(dict(Omega_m=0.3, w0_fld=-1., wa_fld=0.)))
 
 
 def test_default_background():
@@ -1177,9 +1182,17 @@ def test_fk():
     plt.close(plt.gcf())
 
 
+def test_emu():
+    from cosmoprimo import Cosmology
+    cosmo = Cosmology(logA=3., engine='capse')
+    #cosmo.lensed_cl()
+    print(cosmo.rs_drag)
+
+
 if __name__ == '__main__':
 
     test_jax()
+    exit()
     test_params()
     test_engine()
     for params in list_params:

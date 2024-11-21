@@ -1084,10 +1084,12 @@ class Cosmology(BaseCosmology):
             params[name] = _make_float(params.get(name, default))
 
         def error(value):
-            raise CosmologyInputError('w(a -> 0) = w0_fld + wa_fld > 1 / 3 (found {:.2f}), there cannot be radiation domination at early time'.format(value))
+            raise CosmologyInputError('w(a -> 0) = w0_fld + wa_fld > 1 / 3 (found {:.2f}), violates radiation domination at early time'.format(value))
 
         value = params['w0_fld'] + params['wa_fld']
         value = exception_or_nan(value, value >= 1. / 3., error)
+        for name in ['w0_fld', 'wa_fld']:
+            params[name] = jnp.where(jnp.isnan(value), jnp.nan, params[name])
 
         params['use_ppf'] = bool(params.get('use_ppf', True))
 
@@ -1252,6 +1254,7 @@ class Cosmology(BaseCosmology):
             new = self.clone(base='input', **{param: value})
             return func(new) - target
 
+        # FIXME: for JAX
         from scipy import optimize
         try:
             value = optimize.bisect(f, *limits, xtol=xtol, rtol=rtol, maxiter=maxiter, disp=True)
@@ -1820,6 +1823,11 @@ class DefaultBackground(BaseBackground):
             tmp = odeint(integrand, 0., zc)
             self._cache[name] = Interpolator1D(zc, (tmp[-1] - tmp) / self.h / constants.gigayear_over_megaparsec)
         return self._cache[name](z)
+
+    @property
+    def age(self):
+        r"""The current age of the Universe, in :math:`\mathrm{Gy}`."""
+        return self.time(0.)
 
     @utils.flatarray()
     def comoving_radial_distance(self, z):

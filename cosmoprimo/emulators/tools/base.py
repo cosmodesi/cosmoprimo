@@ -552,12 +552,13 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
         # print('pre', Y.shape)
         if self.mpicomm.rank == 0:
             X, Y = np.asarray(X), np.asarray(Y)
+            for operation in self.yoperations:
+                operation.initialize(Y)
+                def func(y, x): return operation(y, X=dict(zip(self.params, x)))
+                Y = vmap(func)(Y, X)
             for operation in self.xoperations:
                 operation.initialize(X)
                 X = vmap(operation)(X)
-            for operation in self.yoperations:
-                operation.initialize(Y)
-                Y = vmap(operation)(Y)
             xshape, yshape = X.shape[1:], Y.shape[1:]
             X, Y = np.asarray(X).reshape(len(X), -1), np.asarray(Y).reshape(len(Y), -1)
         self.xshape, self.yshape = self.mpicomm.bcast((xshape, yshape) if self.mpicomm.rank == 0 else None, root=0)
@@ -570,7 +571,7 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
     def predict(self, params, kw_yoperation=None):
         X = jnp.column_stack([params[name] for name in self.params])
         for operation in self.xoperations:
-            X = operation(X)
+            X = operation(X, X=params)
         Y = self._predict_no_operation(X.reshape(-1)).reshape(self.yshape)
         if kw_yoperation is None: kw_yoperation = {}
         for operation in self.yoperations[::-1]:
@@ -692,6 +693,18 @@ class Operation(BaseClass, metaclass=RegisteredOperation):
 
     def __init__(self, direct, inverse=None, locals=None):
         self.update(direct=direct, inverse=inverse, locals=locals)
+
+    @property
+    def locals(self):
+        return dict(self._locals)
+
+    @property
+    def direct(self):
+        return self._direct
+
+    @property
+    def inverse(self):
+        return self._inverse
 
     def initialize(self, v, **kwargs):
         return
