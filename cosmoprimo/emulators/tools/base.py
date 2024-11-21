@@ -356,7 +356,7 @@ class Emulator(BaseClass):
                 warnings.warn('{} are not finite'.format(notfinite))
             X, Y, attrs = self._get_engine_X_Y(samples, params=params, varied=varied, fixed=fixed, ignore_operations=ignore_operations)
             for name in fixed: Y.pop(name)
-            varied, _fixed = self._sort_varied_fixed(Y, subsample=min(samples.size, 10))
+            _varied, _fixed = self._sort_varied_fixed(Y, subsample=min(samples.size, 10))
             fixed.update(_fixed)
             params = list(X)
             samples_operations = Samples({**{'X.' + name: X[name] for name in X}, **{'Y.' + name: Y[name] for name in Y}}, attrs=dict(attrs))
