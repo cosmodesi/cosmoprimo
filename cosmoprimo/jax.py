@@ -221,7 +221,7 @@ def scan_numpy(f, init, xs, length=None):
     for x in xs:
         carry, y = f(carry, x)
         ys.append(y)
-    return carry, numpy.stack(ys)
+    return carry, np.stack(ys)
 
 
 def for_cond_loop_numpy(lower, upper, cond_fun, body_fun, init_val):
@@ -573,7 +573,6 @@ def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return
         import numpy
         scan = scan_numpy
 
-
     result = intrange * ordsum
     last_row = numpy.array([result] * (divmax + 1))
     err = numpy.inf
@@ -651,3 +650,35 @@ def odeint(fun, y0, t, args=(), method='rk4'):
     toret = s(integrator, (y0, t[0]), t)[1]
     if not shape: toret = toret[0]
     return toret.reshape(shape + np.shape(tmp))
+
+
+def bisect(f, a, b, xtol=1e-6, rtol=1e-6, maxiter=100, **kwargs):
+    fa = f(a)
+    if use_jax(fa):
+        # FIXME: gradients look unreliable
+        fb = f(b)
+        sign = numpy.where((fa < 0) & (fb >= 0), 1, numpy.where((fa > 0) & (fb <= 0), -1, 0))
+
+        nintervals = (b - a) / xtol
+        if rtol:
+            nintervals += (b - a) / (rtol * np.max(np.abs([a, b])))
+        niter = np.minimum(int(np.log2(nintervals + 1)), maxiter)
+
+        def solve(f, initial_guess):
+
+            def one_step(state, i):
+                low, high, sign = state
+                x = 0.5 * (low + high)
+                value = f(x)
+                too_large = sign * value > 0
+                high = numpy.where(too_large, x, high)
+                low = numpy.where(too_large, low, x)
+                return (low, high, sign), x
+
+            return jax.lax.scan(one_step, (a, b, sign), length=niter)[-1][-1] * numpy.where(sign == 0., numpy.nan, 1.)
+
+        return jax.lax.custom_root(f, 0.5 * (a + b), solve, tangent_solve=lambda g, y: y / g(1.0), has_aux=False)
+
+    else:
+        from scipy import optimize
+        return optimize.bisect(f, a, b, xtol=xtol, rtol=rtol, maxiter=maxiter, **kwargs)

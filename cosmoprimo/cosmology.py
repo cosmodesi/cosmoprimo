@@ -142,6 +142,68 @@ def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e
     return toret.reshape(shape)
 
 
+_cache = {}
+
+
+def _precompute_ncdm_momenta(**kwargs):
+    from .jax import vmap, Interpolator2D
+    zz = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
+    #mm = np.linspace(0., 5., 1000)
+    mm = np.concatenate([[0.], np.geomspace(1e-3, 5., 100)])
+    TEFF = constants.TCMB * constants.TNCDM_OVER_CMB
+    toret = {}
+
+    def get_callable(array, jax=False, out='rho'):
+
+        jnp = np
+        if jax:
+            from .jax import numpy as jnp
+        array = jnp.asarray(array)
+
+        if out == 'drhodm':
+
+            interp = Interpolator2D(mm, zz, array)
+
+            def callable(T_eff, m_ncdm, z):
+                return interp(m_ncdm * TEFF / T_eff, z) * (T_eff / TEFF)**3
+
+        else:
+
+            interp = Interpolator2D(mm, zz, jnp.log10(array))
+
+            def callable(T_eff, m_ncdm, z):
+                return 10**interp(m_ncdm * TEFF / T_eff, z) * (T_eff / TEFF)**4
+
+        return callable
+
+    dirname = os.path.join(os.path.dirname(__file__), '_cache')
+
+    for out in ['rho', 'p', 'drhodm']:
+        name = os.path.join(dirname, '{}.npy'.format(out))
+        if os.path.exists(name):
+            array = np.load(name)
+        else:
+            array = vmap(lambda m: _compute_ncdm_momenta(TEFF, m, zz, out=out, **kwargs))(mm)
+        for jax in ['_jax', '']:
+            toret[out + jax] = get_callable(array, jax=bool(jax), out=out)
+
+    return toret
+
+
+def compute_ncdm_momenta(T_eff, m_ncdm, z, out='rho'):
+    # Evaluating 2D interpolation is actually slower than recomputing the integrals
+    from .jax import use_jax
+    global _cache
+    if 'ncdm' not in _cache:
+        _cache['ncdm'] = _precompute_ncdm_momenta()
+    jax = '_jax' if use_jax(T_eff, m_ncdm, z) else ''
+    return _cache['ncdm'][out + jax](T_eff, m_ncdm, z)
+
+
+#compute_ncdm_momenta(1., 0., 0.)
+compute_ncdm_momenta = _compute_ncdm_momenta
+
+
 def _compute_rs_cosmomc(omega_b, omega_m, hubble_function, epsabs=1e-7, epsrel=1e-7):
 
     """Return sound horizon in proper Mpc, and redshift of the last scattering surface in the CosmoMC approximation."""
@@ -377,7 +439,7 @@ class BaseCosmology(BaseClass):
         #return (self._params['w0_fld'], self._params['wa_fld'], self._params['cs2_fld']) != (-1, 0., 1.)
         return (self._params['w0_fld'] != -1) | (self._params['wa_fld'] != 0) | (self._params['cs2_fld'] != 1.)  # for jax
 
-    def _get_rho_ncdm(self, z=0, species=None, epsrel=1e-7):
+    def _get_rho_ncdm(self, z=0, species=None):
         r"""
         Return energy density of non-CDM components (massive neutrinos) for each species by integrating over the phase-space distribution (frozen since CMB),
         including non-relativistic (contributing to :math:`\Omega_{m}`) and relativistic (contributing to :math:`\Omega_{r}`) components.
@@ -388,9 +450,6 @@ class BaseCosmology(BaseClass):
         z : float, array, default=0
             Redshift.
 
-        epsrel : float, default=1e-7
-            Relative precision (for :meth:`scipy.integrate.quad` integration).
-
         Returns
         -------
         rho_ncdm : array
@@ -400,7 +459,7 @@ class BaseCosmology(BaseClass):
         T_cmb, T_ncdm_over_cmb, m_ncdm = self['T_cmb'], self['T_ncdm_over_cmb'], self['m_ncdm']
 
         def compute(T_ncdm_over_cmb, m_ncdm):
-            return _compute_ncdm_momenta(T_cmb * T_ncdm_over_cmb, m_ncdm, z=z, epsrel=epsrel, out='rho') / (1 + z)**3 / h2
+            return compute_ncdm_momenta(T_cmb * T_ncdm_over_cmb, m_ncdm, z=z, out='rho') / (1 + z)**3 / h2
 
         if species is None:
             species = list(range(len(m_ncdm)))
@@ -410,7 +469,7 @@ class BaseCosmology(BaseClass):
 
         return compute(self['T_ncdm_over_cmb'][species], self['m_ncdm'][species])
 
-    def _get_p_ncdm(self, z=0, species=None, epsrel=1e-7):
+    def _get_p_ncdm(self, z=0, species=None):
         r"""
         Return pressure of non-CDM components (massive neutrinos) for each species by integrating over the phase-space distribution (frozen since CMB).
 
@@ -418,9 +477,6 @@ class BaseCosmology(BaseClass):
         ----------
         z : float, array, default=0.
             Redshift.
-
-        epsrel : float, default=1e-7
-            Relative precision (for :meth:`scipy.integrate.quad` integration).
 
         Returns
         -------
@@ -431,7 +487,7 @@ class BaseCosmology(BaseClass):
         T_cmb, T_ncdm_over_cmb, m_ncdm = self['T_cmb'], self['T_ncdm_over_cmb'], self['m_ncdm']
 
         def compute(T_ncdm_over_cmb, m_ncdm):
-            return _compute_ncdm_momenta(T_cmb * T_ncdm_over_cmb, m_ncdm, z=z, epsrel=epsrel, out='p') / (1 + z)**3 / h2
+            return compute_ncdm_momenta(T_cmb * T_ncdm_over_cmb, m_ncdm, z=z, out='p') / (1 + z)**3 / h2
 
         if species is None:
             species = list(range(len(m_ncdm)))
@@ -901,13 +957,13 @@ class Cosmology(BaseCosmology):
 
                 def solve_newton(omega_ncdm, m, T_eff):
                     # m is a starting guess
-                    omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
+                    omega_check = compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
 
                     def body_fun(i, args):
                         m, omega_check = args
-                        domegadm = _compute_ncdm_momenta(T_eff, m, z=0, out='drhodm') / constants.rho_crit_over_Msunph_per_Mpcph3
+                        domegadm = compute_ncdm_momenta(T_eff, m, z=0, out='drhodm') / constants.rho_crit_over_Msunph_per_Mpcph3
                         m = m + (omega_ncdm - omega_check) / domegadm
-                        omega_check = _compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
+                        omega_check = compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
                         return m, omega_check
 
                     def cond_fun(i, args):
@@ -997,7 +1053,7 @@ class Cosmology(BaseCosmology):
 
                     # Split the sum into 3 masses under normal hierarchy, m3 > m2 > m1
                     m_ncdm = [0., deltam21sq, deltam31sq]
-                    solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
+                    m_ncdm = solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
 
                 elif (neutrino_hierarchy == 'inverted'):
                     #deltam31sq = -2.43e-3
@@ -1010,7 +1066,7 @@ class Cosmology(BaseCosmology):
                     sum_ncdm = exception_or_nan(sum_ncdm, sum_ncdm**2 < -deltam31sq - deltam32sq, error)
                     # Split the sum into 3 masses under inverted hierarchy, m2 > m1 > m3, here ordered as m1, m2, m3
                     m_ncdm = [jnp.sqrt(-deltam31sq), jnp.sqrt(-deltam32sq), 1e-5]
-                    solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
+                    m_ncdm = solve_newton(sum_ncdm, m_ncdm, deltam21sq, deltam31sq)
 
                 elif (neutrino_hierarchy == 'degenerate'):
                     m_ncdm = [sum_ncdm / 3.] * 3
@@ -1254,12 +1310,12 @@ class Cosmology(BaseCosmology):
             new = self.clone(base='input', **{param: value})
             return func(new) - target
 
-        # FIXME: for JAX
-        from scipy import optimize
+        from .jax import bisect
+
         try:
-            value = optimize.bisect(f, *limits, xtol=xtol, rtol=rtol, maxiter=maxiter, disp=True)
+            value = bisect(f, *limits, xtol=xtol, rtol=rtol, maxiter=maxiter, disp=True)
         except ValueError as exc:
-            raise CosmologyInputError('Could not find proper {} value in the interval that matches target = {:.4f} with [f({:.3f}), f({:.3f})] = [{:.4f}, {:.4f}]'.format(param, target, *limits, *list(map(f, limits)))) from exc
+            raise CosmologyInputError('Could not find proper {} value in the interval that matches target = {:.4f} with [f({:.3f}), f({:.3f})] = [{:.4f}, {:.4f}]'.format(param, target, *limits, *[f(x) + target for x in limits])) from exc
 
         return self.clone(base='input', **{param: value})
 
@@ -1748,13 +1804,15 @@ class BaseBackground(BaseSection):
         return switch(index, [flat, close, open], self.comoving_radial_distance(z2) - self.comoving_radial_distance(z1)) / (1 + z2)
 
     @utils.flatarray()
-    def comoving_angular_distance(self, z):
+    def comoving_transverse_distance(self, z):
         r"""
-        Comoving angular distance, in :math:`\mathrm{Mpc}/h`.
+        Comoving transverse distance, in :math:`\mathrm{Mpc}/h`.
 
         See eq. 16 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{M}(z)`.
         """
         return self.angular_diameter_distance(z) * (1. + z)
+
+    comoving_angular_distance = comoving_transverse_distance  # backward-compatibility
 
     @utils.flatarray()
     def luminosity_distance(self, z):
@@ -1842,9 +1900,10 @@ class DefaultBackground(BaseBackground):
                 return constants.c / 1e3 / (100. * self.efunc(z))
 
             zc = 1. / np.logspace(-4, 0., 400)[::-1] - 1.
+            #zm = 0.3
+            #zc = np.concatenate([np.linspace(0., zm, 20)[:-1], 1. / np.geomspace(1e-4, 1. / (1 + zm), 100)[::-1] - 1.])
             tmp = odeint(integrand, 0., zc)
-
-            self._cache[name] = Interpolator1D(zc, tmp)
+            self._cache[name] = Interpolator1D(zc, tmp)  # cubic interpolation takes a lot of time, but is very efficient
         return self._cache[name](z)
 
     @utils.flatarray()
@@ -1871,34 +1930,6 @@ class DefaultBackground(BaseBackground):
             def f2(eta):
                 z = self._np.exp(- eta) - 1.
                 return 3. / 2. * Omega_mass(z)
-
-            """
-            OmM0 = self._engine['Omega_m']
-            print('lool', OmM0)
-
-            def OmM(z):
-                return 1./(1. + ((1-OmM0)/OmM0)*(1 + z)**(-3))
-
-            def f1(eta):
-                z = self._np.exp(- eta) - 1.
-                return - (2. - 3./2. * OmM(z))
-
-            #def f2(eta):
-            #    z = self._np.exp(- eta) - 1.
-            #    return 3./2. * OmM(z)
-
-
-            """
-            """
-            def OmM(eta):
-                return 1/(1 + ((1-OmM0)/OmM0)* np.exp(3*eta) )
-
-            def f1(eta):
-                return -(2 - 3/2 * OmM(eta))
-
-            def f2(eta):
-                return 3/2 * OmM(eta)
-            """
 
             # differential eq.
             def Deqs(Df, eta):
