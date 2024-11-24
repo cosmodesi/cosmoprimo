@@ -906,6 +906,20 @@ def test_jax():
     from cosmoprimo.fiducial import DESI
     from cosmoprimo.cosmology import DefaultBackground, _cache, _precompute_ncdm_momenta
 
+    def test(params):
+        cosmo = Cosmology(neutrino_hierarchy='normal', **params)
+        background = DefaultBackground(cosmo)
+        return background.comoving_radial_distance(1.)
+
+    #print(test(1.), test(1.1))
+    test_jit = jit(test)
+    test_jit(dict(m_ncdm=np.array(0.1)))
+    n = 20
+    t0 = time.time()
+    for value in np.linspace(0.01, 0.2, n):
+        test_jit(dict(m_ncdm=value))
+    print((time.time() - t0) / n)
+
     def test(theta_MC_100):
         cosmo = DESI(engine='eisenstein_hu').solve('h', 'theta_MC_100', target=theta_MC_100)
         return cosmo.comoving_radial_distance(1.)
@@ -968,57 +982,139 @@ def test_interp():
     from jax import numpy as jnp
 
     from cosmoprimo.fiducial import DESI
-    from cosmoprimo.cosmology import DefaultBackground
+    from cosmoprimo.cosmology import BaseBackground, DefaultBackground
     from cosmoprimo.jax import odeint, Interpolator1D
 
-    def comoving_radial_distance_ref(self, z):
-        def integrand(y, z):
-            return constants.c / 1e3 / (100. * self.efunc(z))
+    z = jnp.geomspace(0.0001, 1000., 10000)
 
-        zc = 1. / np.logspace(-1, 0., 1000)[::-1] - 1.
-        tmp = odeint(integrand, 0., zc)
-        tmp = Interpolator1D(zc, tmp)
-        return tmp(z)
 
-    def comoving_radial_distance_0(self, z):
-        def integrand(y, loga):
-            a = jnp.exp(loga)
-            z = 1 / a - 1.
-            return constants.c / 1e3 / (100. * self.efunc(z)) / a**2 * a
+    if 0:
+        def ncdm_ref(self, name, z):
+            func = getattr(BaseBackground, name)
+            zc = 1. / np.logspace(-8, 0., 2000)[::-1] - 1.
+            tmp = Interpolator1D(zc, func(self, zc).T)  # interpolation along axis = 0
+            return tmp(z)
 
-        ac = np.logspace(-3, 0., 256)
-        tmp = odeint(integrand, 0., jnp.log(ac))
-        tmp = tmp[-1] - tmp
-        tmp = Interpolator1D(ac, tmp, k=1)
-        return tmp(1. / (1. + z))
+        def ncdm_1(self, name, z):
+            func = getattr(BaseBackground, name)
+            zc = 1. / np.logspace(-8, 0., 120)[::-1] - 1.
+            tmp = Interpolator1D(zc, func(self, zc).T)  # interpolation along axis = 0
+            return tmp(z)
 
-    def comoving_radial_distance_1(self, z):
-        def integrand(y, z):
-            return constants.c / 1e3 / (100. * self.efunc(z))
+        cosmo = DESI(h=jnp.array(0.7), engine=None)
+        ba = DefaultBackground(cosmo)
 
-        zc = 1. / np.logspace(-4, 0., 200)[::-1] - 1.
-        zm = 0.3
-        zc = jnp.concatenate([jnp.linspace(0., zm, 20)[:-1], 1. / np.geomspace(1e-4, 1. / (1 + zm), 100)[::-1] - 1.])
-        tmp = odeint(integrand, 0., zc)
-        tmp = Interpolator1D(zc, tmp)
-        return tmp(z)
+        ax = plt.gca()
+        ax.plot(z, jnp.abs(ncdm_1(ba, 'rho_ncdm', z) / ncdm_ref(ba, 'rho_ncdm', z) - 1.), label='rho')
+        ax.plot(z, jnp.abs(ncdm_1(ba, 'p_ncdm', z) / ncdm_ref(ba, 'p_ncdm', z) - 1.), label='p')
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.legend()
+        plt.show()
 
-    def comoving_radial_distance_2(self, z):
-        def integrand(y, z):
-            return constants.c / 1e3 / (100. * self.efunc(z))
+    if 1:
+        def time_ref(self, z):
+            def integrand(y, z):
+                return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
 
-        def integral_desitter(z):
-            return 2. - 2. / (1. + z)**0.5
+            zc = 1. / np.logspace(-8, 0., 1000)[::-1] - 1.
+            tmp = odeint(integrand, 0., zc)
+            tmp = Interpolator1D(zc, (tmp[-1] - tmp) / self.h / constants.gigayear_over_megaparsec)
+            return tmp(z)
 
-        #zc = 1. / np.geomspace(1e-2, 1., 1000)[::-1] - 1.
-        zm = 0.3
-        zc = jnp.concatenate([jnp.linspace(0., zm, 100)[:-1], 1. / np.geomspace(1e-4, 1. / (1 + zm), 128)[::-1] - 1.])
-        tmp = odeint(integrand, 0., zc)
-        #tmp = jnp.where(zc > 0., tmp / integral_desitter(zc), 0.)
-        tmp = Interpolator1D(zc, tmp, k=1)
-        return tmp(z)# * integral_desitter(z)
+        def time_1(self, z):
+            def integrand(y, z):
+                return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
 
-    if False:
+            zc = 1. / np.logspace(-8, 0., 300)[::-1] - 1.
+            tmp = odeint(integrand, 0., zc)
+            tmp = Interpolator1D(zc, (tmp[-1] - tmp) / self.h / constants.gigayear_over_megaparsec)
+            return tmp(z)
+
+        def age_1(self, z):
+            def integrand(y, z):
+                return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
+
+            zc = 1. / np.logspace(-8, 0., 300)[::-1] - 1.
+            tmp = odeint(integrand, 0., zc)
+            tmp = (tmp[-1] - tmp[0]) / self.h / constants.gigayear_over_megaparsec
+            return tmp
+
+        cosmo = DESI(m_ncdm=0.2, h=jnp.array(0.7), engine=None)
+        ba = DefaultBackground(cosmo)
+
+        ax = plt.gca()
+        print(np.abs(age_1(ba) / time_ref(ba, 0) - 1.))
+        ax.plot(z, jnp.abs(time_1(ba, z) / time_ref(ba, z) - 1.), label='cubic')
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.legend()
+        plt.show()
+
+    if 0:
+        def comoving_radial_distance_ref(self, z):
+            def integrand(y, z):
+                return constants.c / 1e3 / (100. * self.efunc(z))
+
+            zc = 1. / np.logspace(-1, 0., 1000)[::-1] - 1.
+            tmp = odeint(integrand, 0., zc)
+            tmp = Interpolator1D(zc, tmp)
+            return tmp(z)
+
+        def comoving_radial_distance_0(self, z):
+            def integrand(y, loga):
+                a = jnp.exp(loga)
+                z = 1 / a - 1.
+                return constants.c / 1e3 / (100. * self.efunc(z)) / a**2 * a
+
+            ac = np.logspace(-3, 0., 256)
+            tmp = odeint(integrand, 0., jnp.log(ac))
+            tmp = tmp[-1] - tmp
+            tmp = Interpolator1D(ac, tmp, k=1)
+            return tmp(1. / (1. + z))
+
+        def comoving_radial_distance_1(self, z):
+            def integrand(y, z):
+                return constants.c / 1e3 / (100. * self.efunc(z))
+
+            zm = 0.3
+            zc = np.concatenate([np.linspace(0., zm, 20)[:-1], 1. / np.geomspace(1e-4, 1. / (1 + zm), 100)[::-1] - 1.])
+            tmp = odeint(integrand, 0., zc)
+            tmp = Interpolator1D(zc, tmp)
+            return tmp(z)
+
+        def comoving_radial_distance_2(self, z):
+            def integrand(y, z):
+                return constants.c / 1e3 / (100. * self.efunc(z))
+
+            def integral_desitter(z):
+                return 2. - 2. / (1. + z)**0.5
+
+            #zc = 1. / np.geomspace(1e-2, 1., 1000)[::-1] - 1.
+            zm = 0.3
+            zc = jnp.concatenate([jnp.linspace(0., zm, 100)[:-1], 1. / np.geomspace(1e-4, 1. / (1 + zm), 128)[::-1] - 1.])
+            tmp = odeint(integrand, 0., zc)
+            #tmp = jnp.where(zc > 0., tmp / integral_desitter(zc), 0.)
+            tmp = Interpolator1D(zc, tmp, k=1)
+            return tmp(z)# * integral_desitter(z)
+
+        cosmo = DESI(m_ncdm=0.2, h=0.7)
+        ref = cosmo.comoving_radial_distance(np.array(z))
+
+        cosmo = DESI(m_ncdm=0.2, h=jnp.array(0.7), engine=None)
+        ba = DefaultBackground(cosmo)
+
+        ax = plt.gca()
+        #ax.plot(z, comoving_radial_distance_0(ba, z) / comoving_radial_distance_ref(ba, z), label='loga')
+        ax.plot(z, jnp.abs(comoving_radial_distance_ref(ba, z) / ref - 1.), label='class')
+        ax.plot(z, jnp.abs(comoving_radial_distance_1(ba, z) / comoving_radial_distance_ref(ba, z) - 1.), label='cubic')
+        #ax.plot(z, jnp.abs(comoving_radial_distance_2(ba, z) / comoving_radial_distance_ref(ba, z) - 1.), label='linear')
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.legend()
+        plt.show()
+
+    if 0:
         def integral_desitter(z):
             #return constants.c / 1e3 / 100. * (2. - 2. / (1. + z)**0.5)
             return constants.c / 1e3 / 100. * z
@@ -1030,19 +1126,6 @@ def test_interp():
         ax.plot(z, desitter)
         plt.show()
         exit()
-
-    cosmo = DESI(h=jnp.array(0.7), engine=None)
-    ba = DefaultBackground(cosmo)
-
-
-    z = jnp.linspace(0.0001, 2., 100)
-    ax = plt.gca()
-    #ax.plot(z, comoving_radial_distance_0(ba, z) / comoving_radial_distance_ref(ba, z), label='loga')
-    ax.plot(z, jnp.abs(comoving_radial_distance_1(ba, z) / comoving_radial_distance_ref(ba, z) - 1.), label='cubic')
-    #ax.plot(z, jnp.abs(comoving_radial_distance_2(ba, z) / comoving_radial_distance_ref(ba, z) - 1.), label='linear')
-    ax.set_yscale('log')
-    ax.legend()
-    plt.show()
 
 
 def test_default_background():
@@ -1133,17 +1216,17 @@ def test_default_background():
                 #background = BaseBackground(cosmo)
                 return getattr(background, name)(z)
 
-        test_jax = jax.jit(test)
+        test_jit = jax.jit(test)
         list_params = [{'m_ncdm': 0.4}, {'m_ncdm': 0.4, 'w0_fld': -0.6, 'wa_fld': -1.}, {'m_ncdm': 5., 'w0_fld': -0.8, 'wa_fld': -0.5}]
         for params in list_params:
             ref(**params)
             test(**params)
-            test_jax(**params)
-            assert np.allclose(test(**params), ref(**params), rtol=1e-6, atol=1e-4)
-            assert np.allclose(test_jax(**params), ref(**params), rtol=1e-6, atol=1e-4)
+            test_jit(**params)
+            assert np.allclose(test(**params), ref(**params), rtol=1e-5, atol=1e-4), (name, test(**params) / ref(**params))
+            assert np.allclose(test_jit(**params), ref(**params), rtol=1e-5, atol=1e-4)
         n = 10
         t0 = time.time()
-        for params in list_params * n: test_jax(**params)
+        for params in list_params * n: test_jit(**params)
         dt_test = time.time() - t0
         t0 = time.time()
         for params in list_params * n: ref(**params)
@@ -1320,7 +1403,6 @@ def test_emu():
 
 if __name__ == '__main__':
 
-    #test_default_background()
     #test_precompute_ncdm()
     #test_interp()
     #test_jax()

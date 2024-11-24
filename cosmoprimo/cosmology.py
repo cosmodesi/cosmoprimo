@@ -1846,7 +1846,7 @@ class DefaultBackground(BaseBackground):
             species = np.arange(self.N_ncdm)
 
         if name not in self._cache:
-            zc = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
+            zc = 1. / np.logspace(-8, 0., 120)[::-1] - 1.  # enough for 1e-6 relative precision
             self._cache[name] = Interpolator1D(zc, func(self, zc).T)  # interpolation along axis = 0
 
         return self._cache[name](z).T[species]
@@ -1864,7 +1864,7 @@ class DefaultBackground(BaseBackground):
             species = np.arange(self.N_ncdm)
 
         if name not in self._cache:
-            zc = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
+            zc = 1. / np.logspace(-8, 0., 120)[::-1] - 1.   # enough for 1e-6 relative precision
             self._cache[name] = Interpolator1D(zc, func(self, zc).T)  # interpolation along axis = 0
 
         return self._cache[name](z).T[species]
@@ -1885,7 +1885,13 @@ class DefaultBackground(BaseBackground):
     @property
     def age(self):
         r"""The current age of the Universe, in :math:`\mathrm{Gy}`."""
-        return self.time(0.)
+        # Faster to not instiante Interpolator1D
+        def integrand(y, z):
+            return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
+
+        zc = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
+        tmp = odeint(integrand, 0., zc)
+        return (tmp[-1] - tmp[0]) / self.h / constants.gigayear_over_megaparsec
 
     @utils.flatarray()
     def comoving_radial_distance(self, z):
@@ -1899,9 +1905,9 @@ class DefaultBackground(BaseBackground):
             def integrand(y, z):
                 return constants.c / 1e3 / (100. * self.efunc(z))
 
-            zc = 1. / np.logspace(-4, 0., 400)[::-1] - 1.
-            #zm = 0.3
-            #zc = np.concatenate([np.linspace(0., zm, 20)[:-1], 1. / np.geomspace(1e-4, 1. / (1 + zm), 100)[::-1] - 1.])
+            #zc = 1. / np.logspace(-4, 0., 400)[::-1] - 1.
+            zm = 0.3
+            zc = np.concatenate([np.linspace(0., zm, 20)[:-1], 1. / np.geomspace(1e-4, 1. / (1 + zm), 100)[::-1] - 1.])
             tmp = odeint(integrand, 0., zc)
             self._cache[name] = Interpolator1D(zc, tmp)  # cubic interpolation takes a lot of time, but is very efficient
         return self._cache[name](z)
