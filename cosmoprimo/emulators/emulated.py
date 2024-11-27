@@ -132,7 +132,7 @@ class EmulatedEngine(BaseEngine):
 
     def _rescale_sigma8(self):
         """Rescale perturbative quantities to match input sigma8 or A_s."""
-        if hasattr(self, '_rsigma8'):
+        if getattr(self, '_rsigma8', None) is not None:
             return self._rsigma8
         self._rsigma8 = 1.
         if self._needs_rescale == 'sigma8':  # sigma8 provided by cosmology, emulator wants A_s
@@ -247,7 +247,6 @@ if False:
 
         def __init__(self, engine):
             self.__setstate__(engine._predict(section='transfer'))
-            self._engine = engine
 
         def table(self):
             r"""Return source functions (in array of shape (k.size, z.size))."""
@@ -279,18 +278,19 @@ if False:
                 for name in names: table[name] = value[name]
 
 
-@utils.addproperty('n_s', 'alpha_s', 'beta_s')
+@utils.addproperty('k_pivot', 'n_s', 'alpha_s', 'beta_s')
 class Primordial(BaseSection):
 
     def __init__(self, engine):
         """Initialize :class:`Primordial`."""
         super().__init__(engine)
         self.__setstate__(engine._predict(section='primordial'))
-        self._h = self._engine['h']
-        self._n_s = self._engine['n_s']
-        self._alpha_s = self._engine['alpha_s']
-        self._beta_s = self._engine['beta_s']
-        self._rsigma8 = self._engine._rescale_sigma8()
+        self._h = engine['h']
+        self._n_s = engine['n_s']
+        self._alpha_s = engine['alpha_s']
+        self._beta_s = engine['beta_s']
+        self._k_pivot = engine['k_pivot'] / self._h
+        self._rsigma8 = engine._rescale_sigma8()
 
     @property
     def A_s(self):
@@ -301,11 +301,6 @@ class Primordial(BaseSection):
     def ln_1e10_A_s(self):
         r""":math:`\ln(10^{10}A_s)`, unitless."""
         return np.log(1e10 * self.A_s)
-
-    @property
-    def k_pivot(self):
-        r"""Primordial power spectrum pivot scale, where the primordial power is equal to :math:`A_{s}`, in :math:`h/\mathrm{Mpc}`."""
-        return self._engine['k_pivot'] / self._h
 
     def pk_k(self, k, mode='scalar'):
         r"""
@@ -377,9 +372,9 @@ class Harmonic(BaseSection):
 
     def __init__(self, engine):
         super().__init__(engine)
-        self._rsigma8 = self._engine._rescale_sigma8()
+        self._rsigma8 = engine._rescale_sigma8()
         self.__setstate__(engine._predict(section='harmonic'))
-        self.ellmax_cl = self._engine['ellmax_cl']
+        self.ellmax_cl = engine['ellmax_cl']
 
     def unlensed_cl(self, ellmax=-1):
         r"""Return unlensed :math:`C_{\ell}` ['tt', 'ee', 'bb', 'te'], unitless."""
@@ -449,8 +444,8 @@ class Fourier(BaseSection):
             self._callable = state
         else:
             self.__setstate__(state)
-        self._h = self._engine['h']
-        self._rsigma8 = self._engine._rescale_sigma8()
+        self._h = engine['h']
+        self._rsigma8 = engine._rescale_sigma8()
         self._sigma8_m = self.sigma8_z(0., of='delta_m')
 
     def sigma_rz(self, r, z, of='delta_m', **kwargs):

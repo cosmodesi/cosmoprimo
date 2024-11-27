@@ -93,7 +93,7 @@ class EisensteinHuEngine(BaseEngine):
 
     def _rescale_sigma8(self):
         """Rescale perturbative quantities to match input sigma8."""
-        if hasattr(self, '_rsigma8'):
+        if getattr(self, '_rsigma8', None) is not None:
             return self._rsigma8
         self._rsigma8 = 1.
         if 'sigma8' in self._params:
@@ -158,22 +158,23 @@ class Thermodynamics(BaseSection):
     def __init__(self, engine):
         """Initialize :class:`Thermodynamics`."""
         super().__init__(engine)
-        self._rs_drag = self._engine.rs_drag * self._engine['h']
-        self._z_drag = self._engine.z_drag
+        self._rs_drag = engine.rs_drag * engine['h']
+        self._z_drag = engine.z_drag
 
 
-@utils.addproperty('n_s', 'alpha_s', 'beta_s')
+@utils.addproperty('k_pivot', 'n_s', 'alpha_s', 'beta_s')
 class Primordial(BaseSection):
 
     def __init__(self, engine):
         """Initialize :class:`Primordial`."""
         super().__init__(engine)
-        self._h = self._engine['h']
-        self._A_s = self._engine._A_s
-        self._n_s = self._engine['n_s']
-        self._alpha_s = self._engine['alpha_s']
-        self._beta_s = self._engine['beta_s']
-        self._rsigma8 = self._engine._rescale_sigma8()
+        self._h = engine['h']
+        self._A_s = engine._A_s
+        self._n_s = engine['n_s']
+        self._alpha_s = engine['alpha_s']
+        self._beta_s = engine['beta_s']
+        self._k_pivot = engine['k_pivot'] / self._h
+        self._rsigma8 = engine._rescale_sigma8()
 
     @property
     def A_s(self):
@@ -184,11 +185,6 @@ class Primordial(BaseSection):
     def ln_1e10_A_s(self):
         r""":math:`\ln(10^{10}A_s)`, unitless."""
         return np.log(1e10 * self.A_s)
-
-    @property
-    def k_pivot(self):
-        r"""Primordial power spectrum pivot scale, where the primordial power is equal to :math:`A_{s}`, in :math:`h/\mathrm{Mpc}`."""
-        return self._engine['k_pivot'] / self._h
 
     def pk_k(self, k, mode='scalar'):
         r"""
@@ -236,6 +232,12 @@ class Primordial(BaseSection):
 
 class Transfer(BaseSection):
 
+    def __init__(self, engine):
+        super().__init__(engine)
+        self._h = engine['h']
+        for name in ['k_eq', 'k_silk', 'rs_drag', 'beta_node', 'beta_c', 'alpha_c', 'alpha_b', 'beta_b', 'k_silk', 'frac_b']:
+            setattr(self, '_' + name, getattr(engine, name))
+
     def transfer_k(self, k):
         """
         Return matter transfer function.
@@ -249,14 +251,14 @@ class Transfer(BaseSection):
         -------
         transfer : array
         """
-        k = self._np.asarray(k) * self._engine['h']  # now in 1/Mpc
+        k = self._np.asarray(k) * self._h  # now in 1/Mpc
         # EH eq. 10
-        q = k / (13.41 * self._engine.k_eq)
-        ks = k * self._engine.rs_drag
+        q = k / (13.41 * self._k_eq)
+        ks = k * self._rs_drag
 
-        T_c_ln_beta = self._np.log(np.e + 1.8 * self._engine.beta_c * q)
+        T_c_ln_beta = self._np.log(np.e + 1.8 * self._beta_c * q)
         T_c_ln_nobeta = self._np.log(np.e + 1.8 * q)
-        T_c_C_alpha = 14.2 / self._engine.alpha_c + 386. / (1 + 69.9 * q ** 1.08)
+        T_c_C_alpha = 14.2 / self._alpha_c + 386. / (1 + 69.9 * q ** 1.08)
         T_c_C_noalpha = 14.2 + 386. / (1 + 69.9 * q ** 1.08)
 
         # EH eq. 18
@@ -268,27 +270,27 @@ class Transfer(BaseSection):
         T_c = T_c_f * T0(T_c_ln_beta, T_c_C_noalpha) + (1 - T_c_f) * T0(T_c_ln_beta, T_c_C_alpha)
 
         # EH eq. 22
-        s_tilde = self._engine.rs_drag * (1 + (self._engine.beta_node / ks)**3) ** (-1. / 3.)
+        s_tilde = self._rs_drag * (1 + (self._beta_node / ks)**3) ** (-1. / 3.)
         ks_tilde = k * s_tilde
 
         # EH eq. 21
         T_b_T0 = T0(T_c_ln_nobeta, T_c_C_noalpha)
         T_b_1 = T_b_T0 / (1 + (ks / 5.2)**2)
-        T_b_2 = self._engine.alpha_b / (1 + (self._engine.beta_b / ks)**3) * self._np.exp(-(k / self._engine.k_silk) ** 1.4)
+        T_b_2 = self._alpha_b / (1 + (self._beta_b / ks)**3) * self._np.exp(-(k / self._k_silk) ** 1.4)
         T_b = self._np.sinc(ks_tilde / np.pi) * (T_b_1 + T_b_2)
 
         # EH eq. 16
-        return self._engine.frac_b * T_b + (1 - self._engine.frac_b) * T_c
+        return self._frac_b * T_b + (1 - self._frac_b) * T_c
 
 
 class Fourier(BaseSection):
 
     def __init__(self, engine):
         super().__init__(engine)
-        self.pm = self._engine.get_primordial()
-        self.tr = self._engine.get_transfer()
-        self.ba = self._engine.get_background()
-        self._h = self._engine['h']
+        self.pm = engine.get_primordial()
+        self.tr = engine.get_transfer()
+        self.ba = engine.get_background()
+        self._h = engine['h']
 
     def pk_interpolator(self, of='delta_m', **kwargs):
         """
@@ -304,26 +306,27 @@ class Fourier(BaseSection):
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
         """
-        transfer = self.tr.transfer_k
-
         if isinstance(of, str): of = (of,)
         of = list(of)
         of = of + [of[0]] * (2 - len(of))
 
         ntheta = sum(of_.startswith('theta_') for of_ in of)
         if ntheta:
-            def growth_factor_sq(z):
-                return self.ba.growth_factor(z, znorm=0.)**2 * self.ba.growth_rate(z)**ntheta
+            def growth_factor_sq(ba, z):
+                return ba.growth_factor(z, znorm=0.)**2 * ba.growth_rate(z)**ntheta
         else:
-            def growth_factor_sq(z):
-                return self.ba.growth_factor(z, znorm=0.)**2
+            def growth_factor_sq(ba, z):
+                return ba.growth_factor(z, znorm=0.)**2
 
-        def pk_callable(k):
-            potential_to_density = (3. * self.ba.Omega0_m * 100**2 / (2. * (constants.c / 1e3)**2 * k**2)) ** (-2)
-            curvature_to_potential = 9. / 25. * 2. * np.pi**2 / k**3 / self._h ** 3
-            return transfer(k) ** 2 * potential_to_density * curvature_to_potential * self.pm.pk_k(k)
+        def pk_callable(ba, pm, tr, k):
+            potential_to_density = (3. * ba.Omega0_m * 100**2 / (2. * (constants.c / 1e3)**2 * k**2)) ** (-2)
+            curvature_to_potential = 9. / 25. * 2. * np.pi**2 / k**3 / ba.h ** 3
+            return tr.transfer_k(k) ** 2 * potential_to_density * curvature_to_potential * pm.pk_k(k)
 
-        return PowerSpectrumInterpolator2D.from_callable(pk_callable=pk_callable, growth_factor_sq=growth_factor_sq, **kwargs)
+        from .jax import Partial
+
+        return PowerSpectrumInterpolator2D.from_callable(pk_callable=Partial(pk_callable, self.ba, self.pm, self.tr),
+                                                         growth_factor_sq=Partial(growth_factor_sq, self.ba), **kwargs)
 
     def sigma_rz(self, r, z, of='delta_m', **kwargs):
         r"""Return the r.m.s. of `of` perturbations in sphere of :math:`r \mathrm{Mpc}/h`. No distinction is made between baryons and CDM."""

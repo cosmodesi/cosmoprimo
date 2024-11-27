@@ -23,6 +23,12 @@ class EisensteinHuNoWiggleEngine(EisensteinHuEngine):
 
 class Transfer(BaseSection):
 
+    def __init__(self, engine):
+        super().__init__(engine)
+        self._h = engine['h']
+        for name in ['rs_drag', 'omega_m', 'alpha_gamma', 'theta_cmb']:
+            setattr(self, '_' + name, getattr(engine, name))
+
     def transfer_k(self, k):
         """
         Return matter transfer function.
@@ -36,10 +42,10 @@ class Transfer(BaseSection):
         -------
         transfer : array
         """
-        k = self._np.asarray(k) * self._engine['h']  # now in 1/Mpc
-        ks = k * self._engine.rs_drag
-        gamma_eff = self._engine.omega_m * (self._engine.alpha_gamma + (1 - self._engine.alpha_gamma) / (1 + (0.43 * ks) ** 4))
-        q = k * self._engine.theta_cmb**2 / gamma_eff
+        k = self._np.asarray(k) * self._h  # now in 1/Mpc
+        ks = k * self._rs_drag
+        gamma_eff = self._omega_m * (self._alpha_gamma + (1 - self._alpha_gamma) / (1 + (0.43 * ks) ** 4))
+        q = k * self._theta_cmb**2 / gamma_eff
         L0 = self._np.log(2 * np.e + 1.8 * q)
         C0 = 14.2 + 731.0 / (1 + 62.5 * q)
         return L0 / (L0 + C0 * q**2)

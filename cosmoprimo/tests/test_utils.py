@@ -26,21 +26,21 @@ def test_least_squares():
             x0 = np.zeros(len(gradient))
             result_ref = optimize.minimize(chi2, x0=x0, args=(), method='Nelder-Mead', tol=1e-6, options={'maxiter': 1000000}).x
 
-            lss = LeastSquareSolver(gradient, precision, compute_inverse=compute_inverse)
-            result = lss(y)
+            solver = LeastSquareSolver(gradient, precision, compute_inverse=compute_inverse)
+            result = solver(y)
             assert np.allclose(result, result_ref, rtol=1e-2, atol=1e-2)
 
             lss_c = LeastSquareSolver(gradient, precision, constraint_gradient=np.ones((len(gradient), 1)), compute_inverse=compute_inverse)
             constraint = 0.42
             result = lss_c(y, constraint=constraint)
-            assert lss_c.chi2() >= lss.chi2()
+            assert lss_c.chi2() >= solver.chi2()
             assert np.allclose(sum(result), constraint)
 
             weights = np.arange(len(gradient))
             lss_c = LeastSquareSolver(gradient, precision, constraint_gradient=np.column_stack([np.ones(len(gradient)), weights]), compute_inverse=compute_inverse)
             constraint = [0.42, 2.]
             result = lss_c(y, constraint=constraint)
-            assert lss_c.chi2() >= lss.chi2()
+            assert lss_c.chi2() >= solver.chi2()
             assert np.allclose(sum(result), constraint[0])
             assert np.allclose(sum(r * w for r, w in zip(result, weights)), constraint[1])
 
@@ -49,19 +49,26 @@ def test_least_squares():
             result = LeastSquareSolver(gradient, precision=precision, compute_inverse=compute_inverse)(y)
             assert np.allclose(result, result_ref)
 
-        lss = LeastSquareSolver(gradient, precision=np.eye(x.size), compute_inverse=compute_inverse)
-        result_ref = lss(y)
+        solver = LeastSquareSolver(gradient, precision=np.eye(x.size), compute_inverse=compute_inverse)
+        result_ref = solver(y)
         ys = np.array([y] * 12)
-        result = lss(ys)
+        result = solver(ys)
         assert result.shape == (len(ys), len(gradient))
         assert np.allclose(result, result_ref)
-        assert lss.model().shape == ys.shape
-        assert lss.chi2().shape == (len(ys), )
+        assert solver.model().shape == ys.shape
+        assert solver.chi2().shape == (len(ys), )
 
         gradient = np.ones_like(x)
-        lss = LeastSquareSolver(gradient, precision=np.eye(x.size), compute_inverse=compute_inverse)
-        assert lss(y).ndim == 0
-        assert lss(ys).shape == (len(ys), )
+        solver = LeastSquareSolver(gradient, precision=np.eye(x.size), compute_inverse=compute_inverse)
+        assert solver(y).ndim == 0
+        assert solver(ys).shape == (len(ys), )
+
+        def test(factor):
+            gradient = np.ones_like(x)
+            return LeastSquareSolver(gradient, precision=factor * np.eye(x.size), compute_inverse=compute_inverse)
+
+        import jax
+        jax.jit(test)(1.)
 
 
 def test_redshift_array():
@@ -74,11 +81,37 @@ def test_redshift_array():
     z = np.random.uniform(0., 2., 10000)
     assert np.allclose(redshift(distance(z)), z, atol=1e-6)
 
+    def test(params):
+        cosmo = DESI(**params, engine='bbks')
+        return DistanceToRedshift(distance=cosmo.comoving_radial_distance, zmax=10.)
+
+    import jax
+    jax.jit(test)(dict(h=0.7))(100.)
+    jax.jacfwd(lambda params: test(params)(100.))(dict(h=0.7))
+
 
 def test_jax():
     import jax
     from jax import numpy as jnp
-    from cosmoprimo.jax import romberg, odeint, bisect
+    from cosmoprimo.jax import romberg, odeint, bisect, Interpolator1D, Interpolator2D, Partial
+
+    def test(factor):
+
+        def fun(factor, x):
+            return x * factor
+
+        return Partial(fun, factor)
+
+    def test(factor):
+        x = jnp.linspace(0., 1., 100)
+        fun = factor * jnp.linspace(0., 1., 100)
+        toret1 = Interpolator1D(x, fun)
+        y = jnp.linspace(0., 1., 10)
+        fun = factor * jnp.linspace(0., 1., 1000).reshape(100, 10)
+        toret2 = Interpolator2D(x, y, fun)
+        return toret1, toret2
+
+    print(jax.jit(test)(1.))
 
     def fun(x, a=0.):
         return x**3 + a
@@ -114,6 +147,6 @@ def test_jax():
 
 if __name__ == '__main__':
 
+    test_jax()
     test_least_squares()
     test_redshift_array()
-    test_jax()

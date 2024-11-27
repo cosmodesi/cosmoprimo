@@ -61,6 +61,27 @@ def numpy_jax(*args, return_use_jax=False):
     return toret
 
 
+def exception_numpy(fun, *args):
+    return fun(*args)
+
+
+def exception_jax(fun, *args):
+    return jax.debug.callback(fun, *args)
+
+
+if jax:
+    exception = exception_jax
+    from jax import vmap
+    from jax.tree_util import register_pytree_node_class
+    from jax.tree_util import Partial
+else:
+    exception = exception_numpy
+    vmap = numpy.vectorize
+    def register_pytree_node_class(cls):
+        return cls
+    from functools import partial as Partial
+
+
 def _interpax_convert_method(k):
     return  {1: 'linear', 3: 'cubic2'}[k]
 
@@ -70,19 +91,20 @@ def _scipy_convert_method(k):
 
 
 def _mask_bounds(x, xlim, bounds_error=False):
-    jnp = numpy_jax(*x)
+    exception = exception_jax if use_jax(*x) else exception_numpy
     masks = [(xx >= xxlim[0]) & (xx <= xxlim[1]) for xx, xxlim in zip(x, xlim)]
 
     if bounds_error:
         def raise_error():
             for mask, xx, xxlim in zip(masks, x, xlim):
-                if not jnp.all(mask):
+                if not mask.all():
                     raise ValueError('input outside of extrapolation range (min: {} vs. {}; max: {} vs. {})'.format(xx.min(), xxlim[0], xx.max(), xxlim[1]))
         exception(raise_error)
 
     return masks
 
 
+@register_pytree_node_class
 class Interpolator1D(object):
 
     """Wrapper for 1D interpolation (along axis 0); use :mod:`interpax` if :mod:`jax` input, else :func:`scipy.interpolate.interp1d`."""
@@ -147,7 +169,21 @@ class Interpolator1D(object):
             toret[..., self._mask_nan] = tmp
         return toret.astype(dtype).reshape(toret_shape)
 
+    def tree_flatten(self):
+        # WARNING: does not preserve key orders in _params
+        children = (self._spline, self.xmin, self.xmax)
+        aux_data = {name: getattr(self, name) for name in ['interp_x', 'interp_fun', '_np', '_use_jax', '_mask_nan', 'shape', 'extrap'] if hasattr(self, name)}
+        return children, aux_data
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new._spline, new.xmin, new.xmax = children
+        return new
+
+
+@register_pytree_node_class
 class Interpolator2D(object):
 
     """Wrapper for 2D interpolation; use :mod:`interpax` if :mod:`jax` input, else :func:`scipy.interpolate.interp1d`."""
@@ -211,6 +247,19 @@ class Interpolator2D(object):
         if self.interp_fun == 'log': tmp = 10**tmp
         toret = tmp if self.extrap else self._np.where(mask_x, tmp, self._np.nan)
         return toret.astype(dtype).reshape(toret_shape)
+
+    def tree_flatten(self):
+        # WARNING: does not preserve key orders in _params
+        children = (self._spline, self.xmin, self.xmax, self.ymin, self.ymax)
+        aux_data = {name: getattr(self, name) for name in ['interp_x', 'interp_y', 'interp_fun', '_np', '_use_jax', 'extrap'] if hasattr(self, name)}
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new._spline, new.xmin, new.xmax, new.ymin, new.ymax = children
+        return new
 
 
 def scan_numpy(f, init, xs, length=None):
@@ -286,25 +335,6 @@ def opmask(array, mask, value, op='set'):
         if op == 'add':
             array[mask] += value
             return array
-
-
-def exception_numpy(fun, *args):
-    return fun(*args)
-
-
-def exception_jax(fun, *args):
-    return jax.debug.callback(fun, *args)
-
-
-if jax:
-    exception = exception_jax
-    from jax import vmap
-    from jax.tree_util import register_pytree_node_class
-else:
-    exception = exception_numpy
-    vmap = numpy.vectorize
-    def register_pytree_node_class(cls):
-        return cls
 
 
 def simpson(y, x=None, dx=1, axis=-1, even='avg'):

@@ -11,6 +11,8 @@ from scipy.special import gamma as numpy_gamma
 from scipy.special import loggamma as numpy_loggamma
 
 from .jax import numpy_jax
+from .jax import register_pytree_node_class
+
 try:
     import jax
 
@@ -25,7 +27,7 @@ except ImportError:
     pass
 
 
-
+@register_pytree_node_class
 class FFTlog(object):
     r"""
     Implementation of the FFTlog algorithm presented in https://jila.colorado.edu/~ajsh/FFTLog/, which computes the generic integral:
@@ -91,30 +93,27 @@ class FFTlog(object):
         self.inparallel = isinstance(kernel, (tuple, list))
         if not self.inparallel:
             kernel = [kernel]
-        self.kernel = list(kernel)
+        kernel = list(kernel)
         if np.ndim(q) == 0:
-            q = [q] * self.nparallel
-        self.q = list(q)
+            q = [q] * len(kernel)
+        q = list(q)
         jnp = numpy_jax(x)
         self.x = jnp.asarray(x)
         if not self.inparallel:
             self.x = self.x[None, :]
         elif self.x.ndim == 1:
-            self.x = jnp.tile(self.x[None, :], (self.nparallel, 1))
+            self.x = jnp.tile(self.x[None, :], (len(kernel), 1))
         if np.ndim(xy) == 0:
-            xy = [xy] * self.nparallel
-        self.xy = list(xy)
-        self.check_level = check_level
-        if self.check_level:
-            if len(self.x) != self.nparallel:
+            xy = [xy] * len(kernel)
+        xy = list(xy)
+        if check_level:
+            if len(self.x) != len(kernel):
                 raise ValueError('x and kernel must of same length')
-            if len(self.q) != self.nparallel:
+            if len(q) != len(kernel):
                 raise ValueError('q and kernel must be lists of same length')
-            if len(self.xy) != self.nparallel:
+            if len(xy) != len(kernel):
                 raise ValueError('xy and kernel must be lists of same length')
-        self.minfolds = minfolds
-        self.lowring = lowring
-        self.setup()
+        self._setup(kernel, q, minfolds=minfolds, lowring=lowring, xy=xy, check_level=check_level)
         self.set_fft_engine(engine, **engine_kwargs)
 
     def set_fft_engine(self, engine='numpy', **engine_kwargs):
@@ -135,30 +134,34 @@ class FFTlog(object):
     @property
     def nparallel(self):
         """Number of transforms performed in parallel."""
-        return len(self.kernel)
+        return self.x.shape[0]
 
-    def setup(self):
+    @property
+    def size(self):
+        """Size of x-coordinates."""
+        return self.x.shape[-1]
+
+    def _setup(self, kernels, qs, minfolds=2, lowring=True, xy=1., check_level=0):
         """Set up u funtions."""
         jnp = numpy_jax(self.x)
-        self.size = self.x.shape[-1]
         self.delta = jnp.log(self.x[:, -1] / self.x[:, 0]) / (self.size - 1)
 
-        nfolds = (self.size * self.minfolds - 1).bit_length()
+        nfolds = (self.size * minfolds - 1).bit_length()
         self.padded_size = 2**nfolds
         npad = self.padded_size - self.size
         self.padded_size_in_left, self.padded_size_in_right = npad // 2, npad - npad // 2
         self.padded_size_out_left, self.padded_size_out_right = npad - npad // 2, npad // 2
 
-        if self.check_level:
+        if check_level:
             if not jnp.allclose(jnp.log(self.x[:, 1:] / self.x[:, :-1]), self.delta, rtol=1e-3):
                 raise ValueError('Input x must be log-spaced')
             if self.padded_size < self.size:
                 raise ValueError('Convolution size must be larger than input x size')
 
-        if self.lowring:
-            self.lnxy = jnp.array([delta / jnp.pi * jnp.angle(kernel(q + 1j * np.pi / delta)) for kernel, delta, q in zip(self.kernel, self.delta, self.q)], dtype=self.x.dtype)
+        if lowring:
+            self.lnxy = jnp.array([delta / jnp.pi * jnp.angle(kernel(q + 1j * np.pi / delta)) for kernel, delta, q in zip(kernels, self.delta, qs)], dtype=self.x.dtype)
         else:
-            self.lnxy = jnp.log(self.xy) + self.delta
+            self.lnxy = jnp.log(xy) + self.delta
 
         self.y = jnp.exp(self.lnxy - self.delta)[:, None] / self.x[:, ::-1]
 
@@ -167,7 +170,7 @@ class FFTlog(object):
         self.padded_x = pad(self.x, (self.padded_size_in_left, self.padded_size_in_right), axis=-1, extrap='log')
         self.padded_y = pad(self.y, (self.padded_size_out_left, self.padded_size_out_right), axis=-1, extrap='log')
         prev_kernel, prev_q, prev_delta, prev_u = None, None, None, None
-        for kernel, padded_x, padded_y, lnxy, delta, q in zip(self.kernel, self.padded_x, self.padded_y, self.lnxy, self.delta, self.q):
+        for kernel, padded_x, padded_y, lnxy, delta, q in zip(kernels, self.padded_x, self.padded_y, self.lnxy, self.delta, qs):
             self.padded_prefactor.append(padded_x**(-q))
             self.padded_postfactor.append(padded_y**(-q))
             if kernel is prev_kernel and q == prev_q and delta == prev_delta:
@@ -179,6 +182,18 @@ class FFTlog(object):
         self.padded_u = jnp.array(self.padded_u)
         self.padded_prefactor = jnp.array(self.padded_prefactor)
         self.padded_postfactor = jnp.array(self.padded_postfactor)
+
+    def tree_flatten(self):
+        children = (self.x, self.y, self.padded_x, self.padded_y, self.padded_u, self.padded_prefactor, self.padded_postfactor)
+        aux_data = {name: getattr(self, name) for name in ['inparallel', 'padded_size', 'padded_size_in_left', 'padded_size_in_right', 'padded_size_out_left', 'padded_size_out_right', '_engine']}
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new.x, new.y, new.padded_x, new.padded_y, new.padded_u, new.padded_prefactor, new.padded_postfactor = children
+        return new
 
     def __call__(self, fun, extrap=0, keep_padding=False):
         """
@@ -233,6 +248,7 @@ class FFTlog(object):
         self.padded_u = 1 / self.padded_u.conj()
 
 
+@register_pytree_node_class
 class HankelTransform(FFTlog):
     """
     Hankel transform implementation using :class:`FFTlog`.
@@ -264,6 +280,7 @@ class HankelTransform(FFTlog):
         self.padded_prefactor *= self.padded_x**2
 
 
+@register_pytree_node_class
 class PowerToCorrelation(FFTlog):
     r"""
     Power spectrum to correlation function transform, defined as:
@@ -313,6 +330,7 @@ class PowerToCorrelation(FFTlog):
         self.padded_postfactor = self.padded_postfactor * phase[:, None]
 
 
+@register_pytree_node_class
 class CorrelationToPower(FFTlog):
     r"""
     Correlation function to power spectrum transform, defined as:
@@ -359,6 +377,7 @@ class CorrelationToPower(FFTlog):
         self.padded_postfactor = self.padded_postfactor * phase[:, None]
 
 
+@register_pytree_node_class
 class TophatVariance(FFTlog):
     """
     Variance in tophat window.
@@ -386,6 +405,7 @@ class TophatVariance(FFTlog):
         self.padded_prefactor *= self.padded_x**3 / (2 * np.pi**2)
 
 
+@register_pytree_node_class
 class GaussianVariance(FFTlog):
     """
     Variance in Gaussian window.

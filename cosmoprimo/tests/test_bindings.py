@@ -40,7 +40,7 @@ def test_cobaya():
 
 
 def test_cobaya2():
-    test = ['camb', 'class'][:1]
+    test = ['camb', 'class', 'capse'][-1:]
 
     if 'camb' in test:
         params = {'logA': {'prior': {'min': 1.61, 'max': 3.91}, 'ref': {'dist': 'norm', 'loc': 3.036, 'scale': 0.001}, 'proposal': 0.001, 'latex': '\\ln(10^{10} A_\\mathrm{s})', 'drop': True},
@@ -90,6 +90,25 @@ def test_cobaya2():
         print(logpost.loglike)
         info['theory'] = {'classy': {'stop_at_error': True, 'extra_args': {'N_ncdm': 0, 'N_ur': 3.044}}}
         model = get_model(info)
+        logpost = model.logposterior(params)
+        print(logpost.loglike)
+
+    if 'capse' in test:
+        params = {'logA': {'prior': {'min': 1.61, 'max': 3.91}, 'ref': {'dist': 'norm', 'loc': 3.036, 'scale': 0.001}, 'proposal': 0.001, 'latex': '\\ln(10^{10} A_\\mathrm{s})', 'drop': True},
+                'A_s': {'value': 'lambda logA: 1e-10*np.exp(logA)', 'latex': 'A_\\mathrm{s}'},
+                'n_s': {'prior': {'min': 0.8, 'max': 1.2}, 'ref': {'dist': 'norm', 'loc': 0.9649, 'scale': 0.004}, 'proposal': 0.002, 'latex': 'n_\\mathrm{s}'},
+                'H0': {'prior': {'min': 20, 'max': 100}, 'ref': {'dist': 'norm', 'loc': 67.36, 'scale': 0.01}, 'latex': 'H_0'},
+                'omega_b': {'prior': {'min': 0.005, 'max': 0.1}, 'ref': {'dist': 'norm', 'loc': 0.02237, 'scale': 0.0001}, 'proposal': 0.0001, 'latex': '\\Omega_\\mathrm{b} h^2'},
+                'omega_cdm': {'prior': {'min': 0.001, 'max': 0.99}, 'ref': {'dist': 'norm', 'loc': 0.12, 'scale': 0.001}, 'proposal': 0.0005, 'latex': '\\Omega_\\mathrm{c} h^2'},
+                'tau_reio': {'latex': '\\tau_\\mathrm{reio}', 'value': 0.0544},
+                #'nnu': {'latex': 'N_\\mathrm{eff}', 'value': 3.044}
+                }
+        info = {'params': params,
+                'likelihood': {'planck_2018_highl_plik.TTTEEE_lite_native': None, 'act_dr6_lenslike.ACTDR6LensLike': {'lens_only': False, 'variant': 'actplanck_baseline', 'lmax': 4000, 'version': 'v1.2'}},
+                'theory': {'cosmoprimo.bindings.cobaya.cosmoprimo': {'engine': 'capse', 'stop_at_error': True}}}
+        from cobaya.model import get_model
+        model = get_model(info)
+        params = {'logA': 3.057147, 'n_s': 0.9657119, 'H0': 70., 'omega_b': 0.02246306, 'omega_cdm': 0.1184775, 'A_planck': 1.} #, 'nnu': 3.044} #, 'A_planck': 1.}
         logpost = model.logposterior(params)
         print(logpost.loglike)
 

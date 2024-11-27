@@ -52,7 +52,7 @@ class Background(BaseBackground):
     """
     def __init__(self, engine):
         super().__init__(engine)
-        self.ba = self._engine._astropy
+        self.ba = engine._astropy
 
     @property
     def age(self):

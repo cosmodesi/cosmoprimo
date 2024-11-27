@@ -16,7 +16,7 @@ import numpy as np
 from .interpolator import PowerSpectrumInterpolator2D, CorrelationFunctionInterpolator2D
 from .utils import BaseClass, LeastSquareSolver
 from .cosmology import Cosmology, Fourier
-from .jax import numpy_jax, simpson, Interpolator1D
+from .jax import numpy_jax, simpson, Interpolator1D, register_pytree_node_class
 
 
 class RegisteredPowerSpectrumBAOFilter(type(BaseClass)):
@@ -26,7 +26,7 @@ class RegisteredPowerSpectrumBAOFilter(type(BaseClass)):
     _registry = {}
 
     def __new__(meta, name, bases, class_dict):
-        cls = super().__new__(meta, name, bases, class_dict)
+        cls = register_pytree_node_class(super().__new__(meta, name, bases, class_dict))
         meta._registry[cls.name] = cls
         return cls
 
@@ -62,6 +62,18 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
         self._prepare()
         self._compute()
         self.pk, self.pknow = (x.reshape(self.shape) for x in (self.pk, self.pknow))
+
+    def tree_flatten(self):
+        children = ({getattr(self, name) for name in ['_cosmo_fid', '_cosmo', 'pk_interpolator', 'k', 'pk', 'pknow']},)
+        aux_data = {name: getattr(self, name) for name in ['shape', '_np']}
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new.__dict__.update(children[0])
+        return new
 
     def _prepare(self):
         """Anything that can be done once."""
@@ -194,6 +206,11 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         self.weight = weight
         super(Hinton2017PowerSpectrumBAOFilter, self).__init__(pk_interpolator, **kwargs)
 
+    def tree_flatten(self):
+        children, aux_data = super().tree_flatten()
+        children[0].update({name: getattr(self, name) for name in ['kmask', 'solver']})
+        return children, aux_data
+
     def _prepare(self):
         self.kmask = (self.k > 1e-4) & (self.k < 5.)
         logk = np.log10(self.k[self.kmask])
@@ -210,18 +227,18 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
                                                gradient[..., -1], gradient[..., -2] - gradient[..., -1],
                                                gradient[..., -3] - 2. * gradient[..., -2] + gradient[..., -1]])
 
-        self.lss = LeastSquareSolver(gradient, precision=w**2, constraint_gradient=constraint_gradient, compute_inverse=True)
+        self.solver = LeastSquareSolver(gradient, precision=w**2, constraint_gradient=constraint_gradient, compute_inverse=True)
 
     def _compute(self):
         """Run filter."""
         logpk = self._np.log10(self.pk[self.kmask].T)
-        self.lss(logpk, constraint=self._np.column_stack([logpk[..., 0], logpk[..., 1] - logpk[..., 0],
+        self.solver(logpk, constraint=self._np.column_stack([logpk[..., 0], logpk[..., 1] - logpk[..., 0],
                                                           logpk[..., 2] - 2. * logpk[..., 1] + logpk[..., 0],
                                                           logpk[..., -1], logpk[..., -2] - logpk[..., -1],
                                                           logpk[..., -3] - 2. * logpk[..., -2] + logpk[..., -1]]))
 
         self.pknow = self.pk.copy()
-        self.pknow[self.kmask] = 10 ** self.lss.model().T
+        self.pknow[self.kmask] = 10 ** self.solver.model().T
 
 
 class SavGolPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
@@ -300,6 +317,12 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         self.rescale_krange = rescale_krange
         super(EHNoWigglePolyPowerSpectrumBAOFilter, self).__init__(pk_interpolator, cosmo=cosmo, **kwargs)
 
+    def tree_flatten(self):
+        children, aux_data = super().tree_flatten()
+        children[0].update({name: getattr(self, name) for name in ['krange']})
+        aux_data.update({name: getattr(self, name) for name in ['rescale_krange']})
+        return children, aux_data
+
     def _compute(self):
         """Run filter."""
         krange = np.asarray(self.krange)
@@ -311,11 +334,11 @@ class EHNoWigglePolyPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
 
         gradient = np.array([k**(i - 2) for i in range(6)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
-        lss = LeastSquareSolver(gradient, precision=k**2, constraint_gradient=constraint_gradient, compute_inverse=False)
-        lss(ratio, constraint=self._np.column_stack([ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]]))
+        solver = LeastSquareSolver(gradient, precision=k**2, constraint_gradient=constraint_gradient, compute_inverse=False)
+        solver(ratio, constraint=self._np.column_stack([ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]]))
 
         wiggles = self._np.ones_like(self.pk)
-        wiggles[mask] = (ratio / lss.model()).T
+        wiggles[mask] = (ratio / solver.model()).T
         self.pknow = self.pk / wiggles
 
 
@@ -418,6 +441,12 @@ class Brieden2022PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     """
     name = 'brieden2022'
 
+    def tree_flatten(self):
+        children, aux_data = super().tree_flatten()
+        children[0].update({name: getattr(self, name) for name in ['k_fid', 'pknow_correction', 'ratio_fid', 'ratio_now_fid']})
+        aux_data.update({name: getattr(self, name) for name in ['kmask_fid']})
+        return children, aux_data
+
     def _prepare(self):
         self.kmask_fid = (self.k >= 1e-3) & (self.k <= 1.)
         self.k_fid = self.k[self.kmask_fid]
@@ -426,9 +455,9 @@ class Brieden2022PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         ratio = pk_fid / pknow_fid
         gradient = np.array([self.k_fid**(i - 1) for i in range(4)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
-        lss = LeastSquareSolver(gradient, precision=self.k_fid**2, constraint_gradient=constraint_gradient, compute_inverse=False)
-        lss(ratio, constraint=[ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]])
-        self.pknow_correction = lss.model()[:, None]
+        solver = LeastSquareSolver(gradient, precision=self.k_fid**2, constraint_gradient=constraint_gradient, compute_inverse=False)
+        solver(ratio, constraint=[ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]])
+        self.pknow_correction = solver.model()[:, None]
         self.ratio_fid = ratio[:, None] / self.pknow_correction
         ik0 = np.searchsorted(self.k_fid, 0.02, side='right') + 1
         self.ik_fid_peaks = []
@@ -480,6 +509,12 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     """
     name = 'peakaverage'
 
+    def tree_flatten(self):
+        children, aux_data = super().tree_flatten()
+        children[0].update({name: getattr(self, name) for name in ['k_peaks']})
+        aux_data.update({name: getattr(self, name) for name in ['pad_peaks']})
+        return children, aux_data
+
     def _prepare(self):
         index = np.flatnonzero((self.k >= 1e-3) & (self.k <= 1.))
         k_fid = self.k[index]
@@ -491,9 +526,9 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         ratio = pk_fid / pknow_fid
         gradient = np.array([k_fid**(i - 1) for i in range(4)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
-        lss = LeastSquareSolver(gradient, precision=k_fid**2, constraint_gradient=constraint_gradient, compute_inverse=False)
-        lss(ratio, constraint=[ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]])
-        pknow_correction = lss.model()
+        solver = LeastSquareSolver(gradient, precision=k_fid**2, constraint_gradient=constraint_gradient, compute_inverse=False)
+        solver(ratio, constraint=[ratio[..., 0], ratio[..., 1] - ratio[..., 0], ratio[..., -1], ratio[..., -2] - ratio[..., -1]])
+        pknow_correction = solver.model()
         ik0 = np.searchsorted(k_fid, 1e-2, side='right') + 1
         self.k_peaks, self.pad_peaks = [], []
         from scipy import signal
@@ -556,6 +591,12 @@ class BSplinePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         self.constraint = list(constraint)
         super(BSplinePowerSpectrumBAOFilter, self).__init__(pk_interpolator, cosmo=cosmo, **kwargs)
 
+    def tree_flatten(self):
+        children, aux_data = super().tree_flatten()
+        children[0].update({name: getattr(self, name) for name in ['solvers']})
+        aux_data.update({name: getattr(self, name) for name in ['kmask_fid', 'constraint']})
+        return children, aux_data
+
     def _prepare(self):
         from scipy import interpolate
         kmin, kmax = 5e-3, 1.
@@ -577,8 +618,8 @@ class BSplinePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
                 bsplines.append(interpolate.BSpline(ts, cn, degree))
             gradient = np.array([bspline(logk_fid) for bspline in bsplines])
             constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])
-            lss = LeastSquareSolver(gradient, precision=weights_fid, constraint_gradient=constraint_gradient, compute_inverse=True)
-            self.solvers.append(lss)
+            solver = LeastSquareSolver(gradient, precision=weights_fid, constraint_gradient=constraint_gradient, compute_inverse=True)
+            self.solvers.append(solver)
 
     def _compute(self):
         pknow = Fourier(self.cosmo, engine='eisenstein_hu_nowiggle', set_engine=False).pk_interpolator()(self.k, z=0.)
@@ -586,10 +627,10 @@ class BSplinePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         constraint = self._np.array([ratio_fid[..., 0], ratio_fid[..., 1] - ratio_fid[..., 0], ratio_fid[..., -1], ratio_fid[..., -2] - ratio_fid[..., -1]]).T
         spline_models = []
 
-        for lss in self.solvers:
-            lss(ratio_fid, constraint=constraint)
+        for solver in self.solvers:
+            solver(ratio_fid, constraint=constraint)
             spline_model = self.pk.T.copy()
-            spline_model[..., self.kmask_fid] = lss.model() * pknow[self.kmask_fid]
+            spline_model[..., self.kmask_fid] = solver.model() * pknow[self.kmask_fid]
             spline_models.append(spline_model)
 
         spline_models = self._np.array(spline_models)
@@ -632,7 +673,7 @@ class RegisteredCorrelationFunctionBAOFilter(type(BaseClass)):
     _registry = {}
 
     def __new__(meta, name, bases, class_dict):
-        cls = super().__new__(meta, name, bases, class_dict)
+        cls = register_pytree_node_class(super().__new__(meta, name, bases, class_dict))
         meta._registry[cls.name] = cls
         return cls
 
@@ -667,6 +708,18 @@ class BaseCorrelationFunctionBAOFilter(BaseClass, metaclass=RegisteredCorrelatio
         self._prepare()
         self._compute()
         self.xi, self.xinow = (x.reshape(self.shape) for x in (self.xi, self.xinow))
+
+    def tree_flatten(self):
+        children = ({getattr(self, name) for name in ['_cosmo_fid', '_cosmo', 'xi_interpolator', 's', 'xi', 'xinow']},)
+        aux_data = {name: getattr(self, name) for name in ['shape', '_np']}
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new.__dict__.update(children[0])
+        return new
 
     def _prepare(self):
         """Anything that can be done once."""
@@ -801,6 +854,12 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
         self.rescale_sbox = rescale_sbox
         super(Kirkby2013CorrelationFunctionBAOFilter, self).__init__(xi_interpolator, cosmo=cosmo, **kwargs)
 
+    def tree_flatten(self):
+        children, aux_data = super().tree_flatten()
+        children[0].update({name: getattr(self, name) for name in ['model', 'window']})
+        aux_data.update({name: getattr(self, name) for name in ['smask']})
+        return children, aux_data
+
     def _prepare(self):
         factor = 2.  # safety factor
         self.smask = (self.s >= self.srange_left[0] / factor) & (self.s <= self.srange_right[1] * factor)
@@ -822,8 +881,8 @@ class Kirkby2013CorrelationFunctionBAOFilter(BaseCorrelationFunctionBAOFilter):
         # center window: 1 between (self.srange_left[1], self.srange_right[0]), 0 elsewhere
         center = self._np.interp(self.s / rescale, self.window[0][2:-2], 1. - self.window[1][2:-2], left=0., right=0.)
 
-        lss = LeastSquareSolver(self.model[..., self.smask], precision=precision, compute_inverse=False)
-        params = lss(self.xi[self.smask].T)
+        solver = LeastSquareSolver(self.model[..., self.smask], precision=precision, compute_inverse=False)
+        params = solver(self.xi[self.smask].T)
         model = params.dot(self.model)
         self.xinow = (self.xi.T * (1. - center) + model * center).T
 

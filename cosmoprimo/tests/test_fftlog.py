@@ -184,6 +184,12 @@ def test_jax():
     print(jac(pk))
     fftlog(jnp.repeat(pk[None, :], 3, 0))
 
+    def test():
+        k = jnp.logspace(-3, 1, 10)
+        return PowerToCorrelation(k)
+
+    jax.jit(test)()(pk)
+
 
 def benchmark():
     cosmo = Cosmology()
@@ -227,8 +233,6 @@ def plot():
 
 if __name__ == '__main__':
 
-    test_jax()
-    exit()
     test_pad()
     test_fftlog()
     test_power_to_correlation()

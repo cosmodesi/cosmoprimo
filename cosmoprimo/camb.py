@@ -240,7 +240,7 @@ class CambEngine(BaseEngine):
 
     def _rescale_sigma8(self):
         """Rescale perturbative quantities to match input sigma8."""
-        if hasattr(self, '_rsigma8'):
+        if getattr(self, '_rsigma8', None) is not None:
             return self._rsigma8
         self._rsigma8 = 1.
         if 'sigma8' in self._params:
@@ -262,6 +262,7 @@ class Background(BaseBackground):
 
     def __init__(self, engine):
         super().__init__(engine)
+        self._engine = engine
         self._engine.compute('background')
         self.ba = self._engine.ba
         # convert RHO to 1e10 Msun/h
@@ -428,6 +429,7 @@ class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
         super().__init__(engine)
+        self._engine = engine
         self._engine.compute('thermodynamics')
         self.th = self._engine.th
         self.ba = self._engine.ba
@@ -460,6 +462,7 @@ class Thermodynamics(BaseSection):
 class Transfer(BaseSection):
 
     def __init__(self, engine):
+        super().__init__(engine)
         self._engine = engine
         self._engine.compute('transfer')
         self.tr = self._engine.tr
@@ -487,6 +490,7 @@ class Primordial(BaseSection):
 
     def __init__(self, engine):
         super().__init__(engine)
+        self._engine = engine
         self.pm = self._engine._camb_params.InitPower
         self._h = self._engine._camb_params.h
         self._rsigma8 = self._engine._rescale_sigma8()
@@ -583,6 +587,7 @@ class Harmonic(BaseSection):
 
     def __init__(self, engine):
         super().__init__(engine)
+        self._engine = engine
         self._engine.compute('harmonic')
         self.hr = self._engine.hr
         self._rsigma8 = self._engine._rescale_sigma8()
@@ -639,6 +644,7 @@ class Fourier(BaseSection):
 
     def __init__(self, engine):
         super().__init__(engine)
+        self._engine = engine
         self._engine.compute('fourier')
         self.fo = self._engine.fo
         self._h = self._engine._camb_params.h

@@ -908,6 +908,45 @@ def test_jax():
 
     def test(params):
         cosmo = Cosmology(neutrino_hierarchy='normal', **params)
+        return cosmo
+
+    test_jit = jit(test)
+    print(test_jit(dict(m_ncdm=np.array(0.1))))
+    assert np.allclose(test_jit(dict(m_ncdm=np.array(0.2)))['m_ncdm_tot'], 0.2)
+
+    def test(params):
+        cosmo = Cosmology(neutrino_hierarchy='normal', engine='bbks', **params)
+        return cosmo._engine
+
+    test_jit = jit(test)
+    print(test_jit(dict(m_ncdm=np.array(0.1))))
+
+    def test(params):
+        cosmo = Cosmology(neutrino_hierarchy='normal', **params)
+        return cosmo.get_background(engine='bbks')
+
+    test_jit = jit(test)
+    print(test_jit(dict(m_ncdm=np.array(0.1))).comoving_radial_distance(1.))
+
+    def test(params):
+        cosmo = Cosmology(neutrino_hierarchy='normal', engine='bbks', **params)
+        pk = cosmo.get_fourier().pk_interpolator()
+        return pk
+
+    test_jit = jit(jacfwd(lambda params: test(params)(20., z=1.)))
+    test_jit(dict(m_ncdm=np.array(0.1)))
+
+    def test(params):
+        cosmo = Cosmology(neutrino_hierarchy='normal', engine='bbks', **params)
+        pk = cosmo.get_fourier().pk_interpolator()
+        return pk, pk.to_1d(z=1.), pk.to_xi(), pk.to_xi().to_1d(z=0.)
+
+    test_jit = jit(test)
+    tmp = test_jit(dict(m_ncdm=np.array(0.1)))
+    print(tmp[0](0.1, z=0.), tmp[1](0.1), tmp[2](20., z=1.), tmp[3](20.))
+
+    def test(params):
+        cosmo = Cosmology(neutrino_hierarchy='normal', **params)
         background = DefaultBackground(cosmo)
         return background.comoving_radial_distance(1.)
 
@@ -1405,7 +1444,7 @@ if __name__ == '__main__':
 
     #test_precompute_ncdm()
     #test_interp()
-    #test_jax()
+    test_jax()
     test_params()
     test_engine()
     for params in list_params:

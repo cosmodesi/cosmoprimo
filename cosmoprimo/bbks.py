@@ -40,6 +40,12 @@ class BBKSEngine(BaseEngine):
 
 class Transfer(BaseSection):
 
+    def __init__(self, engine):
+        super().__init__(engine)
+        self._h = engine['h']
+        for name in ['gamma']:
+            setattr(self, '_' + name, getattr(engine, name))
+
     def transfer_k(self, k):
         """
         Return matter transfer function.
@@ -53,6 +59,6 @@ class Transfer(BaseSection):
         -------
         transfer : array
         """
-        q = self._np.asarray(k) * self._engine['h'] / self._engine.gamma
+        q = self._np.asarray(k) * self._h / self._gamma
         x = 2.34 * q
         return self._np.log(1 + x) / x * (1. + 3.89 * q * (16.2 * q)**2 + (5.47 * q)**3 + (6.71 * q)**4)**(-0.25)

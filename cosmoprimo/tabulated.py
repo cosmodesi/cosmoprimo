@@ -23,7 +23,7 @@ class Background(BaseSection):
 
     def __init__(self, engine):
         super().__init__(engine)
-        self.ba = self._engine
+        self.ba = engine
 
 
 def make_func(name):

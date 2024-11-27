@@ -75,6 +75,13 @@ class EisensteinHuNoWiggleVariantsEngine(BaseEngine):
 
 class Transfer(BaseSection):
 
+    def __init__(self, engine):
+        super().__init__(engine)
+        self._h = engine['h']
+        for name in ['omega_m', 'theta_cmb', 'N_ncdm', 'frac_ncdm', 'z_eq', 'p_cb', 'gamma_ncdm', 'rs_drag', 'beta_c']:
+            setattr(self, '_' + name, getattr(engine, name))
+        self.ba = engine.get_background()
+
     def transfer_kz(self, k, z=0., of='delta_m', grid=True):
         """
         Return matter transfer function.
@@ -98,25 +105,25 @@ class Transfer(BaseSection):
         transfer : array
         """
         z = self._np.asarray(z)
-        k = self._np.asarray(k) * self._engine['h']  # now in 1/Mpc
+        k = self._np.asarray(k) * self._h  # now in 1/Mpc
         if grid:
             toret_shape = k.shape + z.shape
             k = k.reshape(k.shape + (1,) * z.ndim)
-        q = k / self._engine.omega_m * self._engine.theta_cmb ** 2
+        q = k / self._omega_m * self._theta_cmb ** 2
 
         # Compute the scale-dependent growth functions
         # EH eq. 14
-        if self._engine.N_ncdm:
-            growth_k0 = Background(self._engine).growth_factor(z, znorm=self._engine.z_eq)
-            y_freestream = 17.2 * self._engine.frac_ncdm * (1 + 0.488 * self._engine.frac_ncdm ** (-7. / 6.)) * (self._engine.N_ncdm * q / self._engine.frac_ncdm) ** 2
-            tmp1 = growth_k0 ** (1. - self._engine.p_cb)
+        if self._N_ncdm:
+            growth_k0 = self.ba.growth_factor(z, znorm=self._z_eq)
+            y_freestream = 17.2 * self._frac_ncdm * (1 + 0.488 * self._frac_ncdm ** (-7. / 6.)) * (self._N_ncdm * q / self._frac_ncdm) ** 2
+            tmp1 = growth_k0 ** (1. - self._p_cb)
             tmp2 = (growth_k0 / (1 + y_freestream)) ** 0.7
             if of == 'delta_cb':
                 # EH eq. 12
-                growth = (1. + tmp2) ** (self._engine.p_cb / 0.7) * tmp1
+                growth = (1. + tmp2) ** (self._p_cb / 0.7) * tmp1
             elif of == 'delta_m':
                 # EH eq. 13
-                growth = (self._engine.frac_cb ** (0.7 / self._engine.p_cb) + tmp2) ** (self._engine.p_cb / 0.7) * tmp1
+                growth = (self._frac_cb ** (0.7 / self._p_cb) + tmp2) ** (self._p_cb / 0.7) * tmp1
             else:
                 raise CosmologyError('No {} transfer function can be computed (choices are ["delta_cb", "delta_m"]).'.format(of))
         else:
@@ -124,18 +131,18 @@ class Transfer(BaseSection):
 
         # Compute the master function
         # EH eq. 16
-        gamma_eff = self._engine.omega_m * (self._engine.gamma_ncdm + (1 - self._engine.gamma_ncdm) / (1 + (k * self._engine.rs_drag * 0.43) ** 4))
-        q_eff = q * self._engine.omega_m / gamma_eff
+        gamma_eff = self._omega_m * (self._gamma_ncdm + (1 - self._gamma_ncdm) / (1 + (k * self._rs_drag * 0.43) ** 4))
+        q_eff = q * self._omega_m / gamma_eff
 
         # EH eq. 18
-        T_sup_L = self._np.log(np.e + 1.84 * self._engine.beta_c * self._engine.gamma_ncdm * q_eff)
+        T_sup_L = self._np.log(np.e + 1.84 * self._beta_c * self._gamma_ncdm * q_eff)
         T_sup_C = 14.4 + 325. / (1 + 60.5 * q_eff ** 1.08)
         T_sup = T_sup_L / (T_sup_L + T_sup_C * q_eff ** 2)
 
         # EH eq. 22 - 23
-        if self._engine.N_ncdm:
-            q_ncdm = 3.92 * q * self._np.sqrt(self._engine.N_ncdm / self._engine.frac_ncdm)
-            max_fs_correction = 1 + 1.24 * self._engine.frac_ncdm ** 0.64 * self._engine.N_ncdm ** (0.3 + 0.6 * self._engine.frac_ncdm)\
+        if self._N_ncdm:
+            q_ncdm = 3.92 * q * self._np.sqrt(self._N_ncdm / self._frac_ncdm)
+            max_fs_correction = 1 + 1.24 * self._frac_ncdm ** 0.64 * self._N_ncdm ** (0.3 + 0.6 * self._frac_ncdm)\
                                 / (q_ncdm ** (-1.6) + q_ncdm ** 0.8)
             T_sup *= max_fs_correction
 
@@ -163,26 +170,26 @@ class Fourier(EHFourier):
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
         """
-        transfer = self.tr.transfer_kz
-
         if not isinstance(of, (tuple, list)):
             of = (of, of)
         ntheta = sum(of_.startswith('theta_') for of_ in of)
         of = tuple(of_.replace('theta_', 'delta_') for of_ in of)
         if ntheta:
-            def growth_factor_sq(z):
-                return self.ba.growth_factor(z, znorm=0.)**2 * self.ba.growth_rate(z)**ntheta
+            def growth_factor_sq(ba, z):
+                return ba.growth_factor(z, znorm=0.)**2 * ba.growth_rate(z)**ntheta
         else:
-            def growth_factor_sq(z):
-                return self.ba.growth_factor(z, znorm=0.)**2
+            def growth_factor_sq(ba, z):
+                return ba.growth_factor(z, znorm=0.)**2
 
-        def pk_callable(k, z=0, grid=True):
-            tr = transfer(k, z=z, grid=grid, of=of[0])
-            if of[1] == of[0]: tr **= 2
-            else: tr *= transfer(k, z=z, grid=grid, of=of[1])
-            potential_to_density = (3. * self.ba.Omega0_m * 100**2 / (2. * (constants.c / 1e3)**2 * k**2)) ** (-2)
-            curvature_to_potential = 9. / 25. * 2. * np.pi**2 / k**3 / self._h ** 3
-            pdd = potential_to_density * curvature_to_potential * self.pm.pk_k(k)
-            return tr * growth_factor_sq(z) * pdd.reshape(pdd.shape + (1,) * (tr.ndim - pdd.ndim))
+        def pk_callable(ba, pm, tr, k, z=0, grid=True):
+            tk = tr.transfer_kz(k, z=z, grid=grid, of=of[0])
+            if of[1] == of[0]: tk **= 2
+            else: tk *= tr.transfer_kz(k, z=z, grid=grid, of=of[1])
+            potential_to_density = (3. * ba.Omega0_m * 100**2 / (2. * (constants.c / 1e3)**2 * k**2)) ** (-2)
+            curvature_to_potential = 9. / 25. * 2. * np.pi**2 / k**3 / ba.h ** 3
+            pdd = potential_to_density * curvature_to_potential * pm.pk_k(k)
+            return tk * growth_factor_sq(ba, z) * pdd.reshape(pdd.shape + (1,) * (tk.ndim - pdd.ndim))
 
-        return PowerSpectrumInterpolator2D.from_callable(pk_callable=pk_callable, growth_factor_sq=None, **kwargs)
+        from .jax import Partial
+
+        return PowerSpectrumInterpolator2D.from_callable(pk_callable=Partial(pk_callable, self.ba, self.pm, self.tr), growth_factor_sq=None, **kwargs)

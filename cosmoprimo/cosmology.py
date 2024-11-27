@@ -6,7 +6,7 @@ import sys
 import numpy as np
 
 from .utils import BaseClass
-from .jax import numpy_jax
+from .jax import numpy_jax, register_pytree_node_class
 from . import utils, constants
 
 
@@ -233,30 +233,11 @@ def _compute_rs_cosmomc(omega_b, omega_m, hubble_function, epsabs=1e-7, epsrel=1
         raise CosmologyComputationError from exc
 
 
-class BaseCosmology(BaseClass):
+class BaseCosmoParams(BaseClass):
 
     _default_cosmological_parameters = dict()
     _default_calculation_parameters = dict()
     _conflict_parameters = []
-
-    def __init__(self, extra_params=None, **params):
-        """
-        Initialize engine.
-
-        Parameters
-        ----------
-        extra_params : dict, default=None
-            Extra engine parameters, typically precision parameters.
-
-        params : dict
-            Engine parameters.
-        """
-        check_params(params, conflicts=self.__class__._conflict_parameters)
-        self._derived = {}
-        self._input_params = merge_params(self.get_default_params(include_conflicts=False), params, conflicts=self.__class__._conflict_parameters)
-        self._params = self._compile_params(self._input_params)
-        self._set_jax()
-        self._extra_params = dict(extra_params or {})
 
     def _set_jax(self):
         from .jax import use_jax
@@ -388,12 +369,12 @@ class BaseCosmology(BaseClass):
             if name == 'm_ncdm_tot':
                 return sum(params['m_ncdm'])
             if name == 'Omega_ncdm':
-                derived['Omega_ncdm'] = self._np.array(self._get_rho_ncdm(z=0)) / constants.rho_crit_over_Msunph_per_Mpcph3
+                derived['Omega_ncdm'] = self._get_ncdm(z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
                 return derived['Omega_ncdm']
             if name == 'Omega_ncdm_tot':
                 return sum(self.get('Omega_ncdm'))
             if name == 'Omega_pncdm':
-                derived['Omega_pncdm'] = 3. * self._np.array(self._get_p_ncdm(z=0)) / constants.rho_crit_over_Msunph_per_Mpcph3
+                derived['Omega_pncdm'] = 3. * self._get_ncdm(z=0, out='p') / constants.rho_crit_over_Msunph_per_Mpcph3
                 return derived['Omega_pncdm']
             if name == 'Omega_pncdm_tot':
                 return sum(self.get('Omega_pncdm'))
@@ -439,7 +420,7 @@ class BaseCosmology(BaseClass):
         #return (self._params['w0_fld'], self._params['wa_fld'], self._params['cs2_fld']) != (-1, 0., 1.)
         return (self._params['w0_fld'] != -1) | (self._params['wa_fld'] != 0) | (self._params['cs2_fld'] != 1.)  # for jax
 
-    def _get_rho_ncdm(self, z=0, species=None):
+    def _get_ncdm(self, z=0, species=None, out='rho'):
         r"""
         Return energy density of non-CDM components (massive neutrinos) for each species by integrating over the phase-space distribution (frozen since CMB),
         including non-relativistic (contributing to :math:`\Omega_{m}`) and relativistic (contributing to :math:`\Omega_{r}`) components.
@@ -457,70 +438,44 @@ class BaseCosmology(BaseClass):
         """
         h2 = self['h']**2
         T_cmb, T_ncdm_over_cmb, m_ncdm = self['T_cmb'], self['T_ncdm_over_cmb'], self['m_ncdm']
+        jnp = numpy_jax(h2,  T_cmb, T_ncdm_over_cmb, m_ncdm, z)
+        z = jnp.asarray(z)
 
         def compute(T_ncdm_over_cmb, m_ncdm):
-            return compute_ncdm_momenta(T_cmb * T_ncdm_over_cmb, m_ncdm, z=z, out='rho') / (1 + z)**3 / h2
+            return compute_ncdm_momenta(T_cmb * T_ncdm_over_cmb, m_ncdm, z=z, out=out) / (1 + z)**3 / h2
 
         if species is None:
             species = list(range(len(m_ncdm)))
 
         if is_sequence(species):
-            return [compute(T_ncdm_over_cmb[s], m_ncdm[s]) for s in species]
+            return jnp.array([compute(T_ncdm_over_cmb[s], m_ncdm[s]) for s in species]).reshape((len(species),) + z.shape)
 
-        return compute(self['T_ncdm_over_cmb'][species], self['m_ncdm'][species])
-
-    def _get_p_ncdm(self, z=0, species=None):
-        r"""
-        Return pressure of non-CDM components (massive neutrinos) for each species by integrating over the phase-space distribution (frozen since CMB).
-
-        Parameters
-        ----------
-        z : float, array, default=0.
-            Redshift.
-
-        Returns
-        -------
-        p_ncdm : array
-            Pressure, in units of :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`.
-        """
-        h2 = self['h']**2
-        T_cmb, T_ncdm_over_cmb, m_ncdm = self['T_cmb'], self['T_ncdm_over_cmb'], self['m_ncdm']
-
-        def compute(T_ncdm_over_cmb, m_ncdm):
-            return compute_ncdm_momenta(T_cmb * T_ncdm_over_cmb, m_ncdm, z=z, out='p') / (1 + z)**3 / h2
-
-        if species is None:
-            species = list(range(len(m_ncdm)))
-
-        if is_sequence(species):
-            return [compute(T_ncdm_over_cmb[s], m_ncdm[s]) for s in species]
-
-        return compute(self['T_ncdm_over_cmb'][species], self['m_ncdm'][species])
+        return compute(T_ncdm_over_cmb[species], m_ncdm[species]).reshape(z.shape)
 
     def __eq__(self, other):
         r"""Is ``other`` same as ``self``?"""
         return type(other) == type(self) and _deepeq(other._params, self._params) and _deepeq(other._extra_params, self._extra_params)
 
 
-class RegisteredEngine(type(BaseCosmology)):
+class RegisteredEngine(type(BaseCosmoParams)):
 
     """Metaclass registering :class:`BaseEngine`-derived classes."""
 
     _registry = {}
 
     def __new__(meta, name, bases, class_dict):
-        cls = super().__new__(meta, name, bases, class_dict)
+        cls = register_pytree_node_class(super().__new__(meta, name, bases, class_dict))
         meta._registry[cls.name] = cls
         return cls
 
 
-class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
+class BaseEngine(BaseCosmoParams, metaclass=RegisteredEngine):
 
     """Base engine for cosmological calculation."""
     name = 'base'
     _check_ignore = ()
 
-    def __init__(self, extra_params=None, **params):
+    def __init__(self, cosmo, **extra_params):
         """
         Initialize engine.
 
@@ -532,7 +487,14 @@ class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
         params : dict
             Engine parameters.
         """
-        super(BaseEngine, self).__init__(extra_params=extra_params, **params)
+        params = cosmo._params
+        check_params(params, conflicts=self.__class__._conflict_parameters)
+        self._derived = {}
+        self._rsigma8 = None
+        _input_params = merge_params(self.get_default_params(include_conflicts=False), params, conflicts=self.__class__._conflict_parameters)
+        self._params = self._compile_params(_input_params)
+        self._set_jax()
+        self._extra_params = extra_params
         self._Sections = {}
         module = sys.modules[self.__class__.__module__]
         for name in _Sections:
@@ -557,7 +519,7 @@ class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
 
     def _rescale_sigma8(self):
         """Rescale perturbative quantities to match input sigma8."""
-        if hasattr(self, '_rsigma8'):
+        if getattr(self, '_rsigma8', None) is not None:
             return self._rsigma8
         self._rsigma8 = 1.
         if 'sigma8' in self._params:
@@ -566,6 +528,31 @@ class BaseEngine(BaseCosmology, metaclass=RegisteredEngine):
             self._rsigma8 = self._params['sigma8'] / self.get_fourier().sigma8_m
             self._sections.clear()  # to reinitialize fourier with correct _rsigma8
         return self._rsigma8
+
+    def tree_flatten(self):
+        # WARNING: does not preserve key orders in _params
+        _numerical_param_names = getattr(self, '_numerical_param_names', None)
+
+        if _numerical_param_names is None:
+            self._numerical_param_names = _numerical_param_names = _filter_numerical_params(self._params)
+
+        children = ({name: self._params[name] for name in _numerical_param_names},
+                    {name: value for name, value in self.__dict__.items() if name not in ['_params', '_extra_params', '_Sections', '_np', '_use_jax', '_numerical_param_names']})
+        aux_data = {name: getattr(self, name) for name in ['_extra_params', '_Sections']}
+        aux_data['_params'] = {name: value for name, value in self._params.items() if name not in children[0]}
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new._derived = {}
+        new._params, di = children
+        new.__dict__.update(di)
+        new._numerical_param_names = list(new._params)
+        new._params.update(aux_data['_params'])
+        new._set_jax()
+        return new
 
 
 def _make_section_getter(section):
@@ -668,7 +655,7 @@ def _get_cosmology_engine(cosmology, engine=None, set_engine=True, **extra_param
             raise CosmologyInputError('Please provide an engine')
         engine = cosmology._engine
     elif not isinstance(engine, BaseEngine):
-        engine = get_engine(engine)(**cosmology._params, extra_params=extra_params)
+        engine = get_engine(engine)(cosmology, **extra_params)
     if set_engine:
         cosmology._engine = engine
     engine._np = cosmology._np
@@ -713,8 +700,25 @@ for section in _Sections:
     globals()[section] = _make_section_getter(section)
 
 
+from .jax import register_pytree_node_class
+
+
+def _filter_numerical_params(params):
+    toret = []
+    for name, value in params.items():
+        if name in ['z_pk', 'kmax_pk', 'ellmax_cl']:
+            continue
+        if value is None:
+            continue
+        if (isinstance(value, (list, tuple, str, bool)) and not ('ncdm' in name or 'nu' in name)):
+            continue
+        toret.append(name)
+    return toret
+
+
+@register_pytree_node_class
 @utils.addproperty('engine')
-class Cosmology(BaseCosmology):
+class Cosmology(BaseCosmoParams):
 
     """Cosmology, defined as a set of parameters (and possibly a current engine attached to it)."""
 
@@ -779,6 +783,36 @@ class Cosmology(BaseCosmology):
         self._extra_params = {}
         if engine is not None:
             self.set_engine(engine, **(extra_params or {}))
+
+    def tree_flatten(self):
+        # WARNING: does not preserve key orders in _input_params, _params
+        _numerical_param_names, _numerical_input_param_names = getattr(self, '_numerical_param_names', None), getattr(self, '_numerical_input_param_names', None)
+
+        if _numerical_param_names is None:
+            self._numerical_param_names = _numerical_param_names = _filter_numerical_params(self._params)
+        if _numerical_input_param_names is None:
+            self._numerical_input_param_names = _numerical_input_param_names = _filter_numerical_params(self._input_params)
+
+        children = ({name: self._input_params[name] for name in _numerical_input_param_names},
+                    {name: self._params[name] for name in _numerical_param_names},
+                    self._engine)
+        aux_data = {name: getattr(self, name) for name in ['_extra_params']}
+        aux_data['_input_params'] = {name: value for name, value in self._input_params.items() if name not in children[0]}
+        aux_data['_params'] = {name: value for name, value in self._params.items() if name not in children[1]}
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new._derived = {}
+        new._input_params, new._params, new._engine = children
+        new._numerical_input_param_names = list(new._input_params)
+        new._numerical_param_names = list(new._params)
+        new._input_params.update(aux_data['_input_params'])
+        new._params.update(aux_data['_params'])
+        new._set_jax()
+        return new
 
     @class_or_instancemethod
     def get_default_params(cls, of=None, include_conflicts=True):
@@ -1132,7 +1166,7 @@ class Cosmology(BaseCosmology):
             params['z_pk'] = np.insert(params['z_pk'], 0, 0.)  # in order to normalise CAMB power spectrum with sigma8
 
         if 'Omega_m' in params:
-            nonrelativistic_ncdm = (sum(BaseEngine._get_rho_ncdm(params, z=0)) - 3 * sum(BaseEngine._get_p_ncdm(params, z=0))) / constants.rho_crit_over_Msunph_per_Mpcph3
+            nonrelativistic_ncdm = (sum(BaseEngine._get_ncdm(params, z=0, out='rho')) - 3 * sum(BaseEngine._get_ncdm(params, z=0, out='p'))) / constants.rho_crit_over_Msunph_per_Mpcph3
             params['Omega_cdm'] = params.pop('Omega_m') - params['Omega_b'] - nonrelativistic_ncdm
 
         defaults = {'w0_fld': -1., 'wa_fld': 0., 'cs2_fld': 1.}
@@ -1398,14 +1432,34 @@ class Cosmology(BaseCosmology):
         return type(other) == type(self) and _deepeq(other._params, self._params) and other._engine == self._engine
 
 
+class MetaSection(type(object)):
+
+    """Metaclass registering :class:`BaseEngine`-derived classes."""
+
+    _registry = {}
+
+    def __new__(meta, name, bases, class_dict):
+        return register_pytree_node_class(super().__new__(meta, name, bases, class_dict))
+
+
 @utils.addproperty('engine')
-class BaseSection(object):
+class BaseSection(object, metaclass=MetaSection):
 
     """Base section."""
 
     def __init__(self, engine):
-        self._engine = engine
         self._np = engine._np
+
+    def tree_flatten(self):
+        return ({name: value for name, value in self.__dict__.items() if name not in ['_engine', '_np']},), {'_np': self._np}
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        di, = children
+        new.__dict__.update(di)
+        return new
 
 
 def _make_section_getter(section):
@@ -1536,13 +1590,18 @@ class BaseBackground(BaseSection):
     def __init__(self, engine):
         super().__init__(engine)
         for name in ['H0', 'h', 'N_ur', 'N_ncdm', 'm_ncdm', 'm_ncdm_tot', 'N_eff', 'w0_fld', 'wa_fld', 'cs2_fld', 'K']:
-            setattr(self, '_{}'.format(name), self._engine[name])
-        self._T0_cmb = self._engine['T_cmb']
-        self._T0_ncdm = self._np.array(self._engine['T_ncdm_over_cmb']) * self._T0_cmb
+            setattr(self, '_{}'.format(name), engine[name])
+        self._T0_cmb = engine['T_cmb']
+        self._T0_ncdm = self._np.array(engine['T_ncdm_over_cmb']) * self._T0_cmb
         for name in ['cdm', 'b', 'k', 'g', 'ur', 'r', 'ncdm', 'ncdm_tot', 'pncdm', 'pncdm_tot', 'm', 'Lambda', 'fld', 'de']:
-            setattr(self, '_Omega0_{}'.format(name), self._engine['Omega_{}'.format(name)])
+            setattr(self, '_Omega0_{}'.format(name), engine['Omega_{}'.format(name)])
         for name in ['_m_ncdm', '_Omega0_pncdm', '_Omega0_ncdm']:
             setattr(self, name, self._np.array(getattr(self, name), dtype='f8'))
+
+    def tree_flatten(self):
+        children, aux_data = super().tree_flatten()
+        aux_data['_N_ncdm'] = children[0].pop('_N_ncdm')
+        return children, aux_data
 
     @utils.flatarray()
     def rho_ncdm(self, z, species=None):
@@ -1551,16 +1610,8 @@ class BaseBackground(BaseSection):
         If ``species`` is ``None`` returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
         Else if ``species`` is between 0 and N_ncdm, return density for this species.
         """
-        if species is None:
-            species = list(range(self.N_ncdm))
-
-        def compute(z, species):
-            return self._np.array(self._engine._get_rho_ncdm(z=z, species=species))
-
-        if is_sequence(species):
-            return self._np.array([compute(z, species=s) for s in species]).reshape(len(species), len(z))
-
-        return compute(z, species)
+        params = {'h': self._h, 'T_cmb': self._T0_cmb, 'T_ncdm_over_cmb': self._T0_ncdm / self._T0_cmb, 'm_ncdm': self._m_ncdm}
+        return BaseEngine._get_ncdm(params, z=z, species=species, out='rho')
 
     def rho_ncdm_tot(self, z):
         r"""Total comoving density of non-relativistic part of massive neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
@@ -1573,20 +1624,12 @@ class BaseBackground(BaseSection):
         If ``species`` is ``None`` returned shape is (N_ncdm,) if ``z`` is a scalar, else (N_ncdm, len(z)).
         Else if ``species`` is between 0 and N_ncdm, return pressure for this species.
         """
-        if species is None:
-            species = list(range(self.N_ncdm))
-
-        def compute(z, species):
-            return self._np.array(self._engine._get_p_ncdm(z=z, species=species))
-
-        if is_sequence(species):
-            return self._np.array([compute(z, species=s) for s in species]).reshape(len(species), len(z))
-
-        return compute(z, species)
+        params = {'h': self._h, 'T_cmb': self._T0_cmb, 'T_ncdm_over_cmb': self._T0_ncdm / self._T0_cmb, 'm_ncdm': self._m_ncdm}
+        return BaseEngine._get_ncdm(params, z=z, species=species, out='p')
 
     def p_ncdm_tot(self, z):
         r"""Total pressure of non-relativistic part of massive neutrinos, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return np.sum(self.p_ncdm(z, species=None), axis=0)
+        return self._np.sum(self.p_ncdm(z, species=None), axis=0)
 
     @utils.flatarray()
     def rho_g(self, z):
@@ -1886,12 +1929,15 @@ class DefaultBackground(BaseBackground):
     def age(self):
         r"""The current age of the Universe, in :math:`\mathrm{Gy}`."""
         # Faster to not instiante Interpolator1D
-        def integrand(y, z):
-            return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
+        name = 'age'
+        if name not in self._cache:
+            def integrand(y, z):
+                return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
 
-        zc = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
-        tmp = odeint(integrand, 0., zc)
-        return (tmp[-1] - tmp[0]) / self.h / constants.gigayear_over_megaparsec
+            zc = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
+            tmp = odeint(integrand, 0., zc)
+            self._cache[name] = (tmp[-1] - tmp[0]) / self.h / constants.gigayear_over_megaparsec
+        return self._cache[name]
 
     @utils.flatarray()
     def comoving_radial_distance(self, z):

@@ -12,7 +12,7 @@ from scipy import integrate
 from .utils import BaseClass, _bcast_dtype
 from .fftlog import PowerToCorrelation, CorrelationToPower, TophatVariance
 from .jax import numpy as jnp
-from .jax import romberg, simpson, opmask, _mask_bounds, numpy_jax
+from .jax import romberg, simpson, opmask, _mask_bounds, numpy_jax, register_pytree_node_class, Partial
 
 
 def get_default_k_callable():
@@ -392,10 +392,23 @@ class _BasePowerSpectrumInterpolator(BaseClass):
         """Maximum (interpolated) ``k`` value."""
         return self.k[-1]
 
+    def tree_flatten(self):
+        children = ({name: getattr(self, name) for name in ['k', 'z', '_pk', '_rsigma8sq', '_interp', 'growth_factor_sq'] if hasattr(self, name)},)
+        aux_data = {name: getattr(self, name) for name in ['is_from_callable', '_np'] if hasattr(self, name)} | self.params()
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new.__dict__.update(children[0])
+        return new
+
 
 from .jax import Interpolator1D, Interpolator2D
 
 
+@register_pytree_node_class
 class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
     """
     1D power spectrum interpolator, broadly adapted from CAMB's P(k) interpolator by Antony Lewis
@@ -476,18 +489,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         #self.extrap_kmin, self.extrap_kmax = self._np.minimum(extrap_kmin, self.k[0]), self._np.maximum(extrap_kmax, self.k[-1])
         #self.extrap_kmin, self.extrap_kmax = self.kmin, self.kmax
         self.is_from_callable = True
-
-        def interp(k, bounds_error=False, **kwargs):
-            dtype = _bcast_dtype(k)
-            k = self._np.asarray(k, dtype=dtype)
-            toret_shape = k.shape
-            k = k.ravel()
-            mask_k, = _mask_bounds([k], [(self.extrap_kmin, self.extrap_kmax)], bounds_error=bounds_error)
-            toret = self._np.where(mask_k, pk_callable(k, **kwargs), self._np.nan)
-            return toret.astype(dtype).reshape(toret_shape)
-
-        self._interp = interp
-
+        self._interp = pk_callable
         return self
 
     def __call__(self, k, **kwargs):
@@ -502,7 +504,20 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         islogk : bool, default=False
             Whether input ``k`` is already in log10-space.
         """
-        return self._interp(k, **kwargs) * self._rsigma8sq
+        interp = self._interp
+
+        if self.is_from_callable:
+
+            def interp(k, bounds_error=False, **kwargs):
+                dtype = _bcast_dtype(k)
+                k = self._np.asarray(k, dtype=dtype)
+                toret_shape = k.shape
+                k = k.ravel()
+                mask_k, = _mask_bounds([k], [(self.extrap_kmin, self.extrap_kmax)], bounds_error=bounds_error)
+                toret = self._np.where(mask_k, self._interp(k, **kwargs), self._np.nan)
+                return toret.astype(dtype).reshape(toret_shape)
+
+        return interp(k, **kwargs) * self._rsigma8sq
 
     def sigma_d(self, **kwargs):
         r"""
@@ -589,6 +604,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         return CorrelationFunctionInterpolator1D(s, xi=xi.T, **default_params)
 
 
+@register_pytree_node_class
 class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
     """
     2D power spectrum interpolator, broadly adapted from CAMB's P(k) interpolator by Antony Lewis
@@ -654,31 +670,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             _interp = Interpolator1D(k, pk[:, 0], k=self.interp_order_k, interp_x=self.interp_k, interp_fun=self.extrap_pk, assume_sorted=True)
 
         self.is_from_callable = False
-
-        def interp(k, z, grid=True, ignore_growth=False, bounds_error=False, **kwargs):
-            dtype = _bcast_dtype(k, z)
-            k, z = (self._np.asarray(xx, dtype=dtype) for xx in (k, z))
-            if grid:
-                toret_shape = k.shape + z.shape
-            else:
-                toret_shape = k.shape
-            k, z = (xx.ravel() for xx in (k, z))
-            mask_k, mask_z = _mask_bounds([k, z], [(self.extrap_kmin, self.extrap_kmax), (self.zmin, self.zmax)], bounds_error=bounds_error)
-            if not is2d: mask_z |= True  # ignore input z
-            if grid: mask_k = mask_k[:, None] & mask_z
-            else: mask_k = mask_k & mask_z
-            if is2d:
-                tmp = _interp(k, z, grid=grid, **kwargs)
-            else:
-                tmp = _interp(k, **kwargs)
-                if grid:
-                    tmp = self._np.repeat(tmp[:, None], z.size, axis=-1)
-            if self.growth_factor_sq is not None and not ignore_growth:
-                tmp = tmp * self.growth_factor_sq(z).astype(dtype)
-            toret = self._np.where(mask_k, tmp, self._np.nan)
-            return toret.astype(dtype).reshape(toret_shape)
-
-        self._interp = interp
+        self._interp = _interp
 
     default_params = _get_default_kwargs(__init__, start=4)
 
@@ -742,34 +734,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         #self.extrap_kmin, self.extrap_kmax = self._np.minimum(extrap_kmin, self.k[0]), self._np.maximum(extrap_kmax, self.k[-1])
         #self.extrap_kmin, self.extrap_kmax = self.kmin, self.kmax
         self.is_from_callable = True
-
-        def interp(k, z, grid=True, ignore_growth=False, bounds_error=False):
-            dtype = _bcast_dtype(k, z)
-            k, z = (self._np.asarray(xx, dtype=dtype) for xx in (k, z))
-            if grid:
-                toret_shape = k.shape + z.shape
-            else:
-                toret_shape = k.shape
-            k, z = (xx.ravel() for xx in (k, z))
-            mask_k, mask_z = _mask_bounds([k, z], [(self.extrap_kmin, self.extrap_kmax), (self.zmin, self.zmax)], bounds_error=bounds_error)
-            if grid: mask_k = mask_k[:, None] & mask_z
-            else: mask_k = mask_k & mask_z
-            if self.growth_factor_sq is not None:
-                tmp = pk_callable(k).astype(dtype)
-                if not ignore_growth:
-                    growth = self.growth_factor_sq(z).astype(dtype)
-                else:
-                    growth = 1.
-                if grid:
-                    tmp = tmp[..., None] * growth
-                else:
-                    tmp = tmp * growth
-            else:
-                tmp = pk_callable(k, z, grid=grid)
-            toret = self._np.where(mask_k, tmp, self._np.nan)
-            return toret.astype(dtype).reshape(toret_shape)
-
-        self._interp = interp
+        self._interp = pk_callable
         return self
 
     def __call__(self, k, z, grid=True, **kwargs):
@@ -793,7 +758,62 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         ignore_growth : bool, default=False
             Whether to ignore multiplication by growth function (if provided).
         """
-        return self._interp(k, z=z, grid=grid, **kwargs) * self._rsigma8sq
+        if self.is_from_callable:
+
+            def interp(k, z, grid=True, ignore_growth=False, bounds_error=False):
+                dtype = _bcast_dtype(k, z)
+                k, z = (self._np.asarray(xx, dtype=dtype) for xx in (k, z))
+                if grid:
+                    toret_shape = k.shape + z.shape
+                else:
+                    toret_shape = k.shape
+                k, z = (xx.ravel() for xx in (k, z))
+                mask_k, mask_z = _mask_bounds([k, z], [(self.extrap_kmin, self.extrap_kmax), (self.zmin, self.zmax)], bounds_error=bounds_error)
+                if grid: mask_k = mask_k[:, None] & mask_z
+                else: mask_k = mask_k & mask_z
+                if self.growth_factor_sq is not None:
+                    tmp = self._interp(k).astype(dtype)
+                    if not ignore_growth:
+                        growth = self.growth_factor_sq(z).astype(dtype)
+                    else:
+                        growth = 1.
+                    if grid:
+                        tmp = tmp[..., None] * growth
+                    else:
+                        tmp = tmp * growth
+                else:
+                    tmp = self._interp(k, z, grid=grid)
+                toret = self._np.where(mask_k, tmp, self._np.nan)
+                return toret.astype(dtype).reshape(toret_shape)
+
+        else:
+
+            is2d = self._pk.shape[1] > 1
+
+            def interp(k, z, grid=True, ignore_growth=False, bounds_error=False, **kwargs):
+                dtype = _bcast_dtype(k, z)
+                k, z = (self._np.asarray(xx, dtype=dtype) for xx in (k, z))
+                if grid:
+                    toret_shape = k.shape + z.shape
+                else:
+                    toret_shape = k.shape
+                k, z = (xx.ravel() for xx in (k, z))
+                mask_k, mask_z = _mask_bounds([k, z], [(self.extrap_kmin, self.extrap_kmax), (self.zmin, self.zmax)], bounds_error=bounds_error)
+                if not is2d: mask_z |= True  # ignore input z
+                if grid: mask_k = mask_k[:, None] & mask_z
+                else: mask_k = mask_k & mask_z
+                if is2d:
+                    tmp = self._interp(k, z, grid=grid, **kwargs)
+                else:
+                    tmp = self._interp(k, **kwargs)
+                    if grid:
+                        tmp = self._np.repeat(tmp[:, None], z.size, axis=-1)
+                if self.growth_factor_sq is not None and not ignore_growth:
+                    tmp = tmp * self.growth_factor_sq(z).astype(dtype)
+                toret = self._np.where(mask_k, tmp, self._np.nan)
+                return toret.astype(dtype).reshape(toret_shape)
+
+        return interp(k, z=z, grid=grid, **kwargs) * self._rsigma8sq
 
     def sigma_dz(self, z, **kwargs):
         r"""
@@ -932,11 +952,8 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         interp : PowerSpectrumInterpolator1D
         """
         if self.is_from_callable:
-
-            def pk_callable(k, **kwargs):
-                return self._interp(k, z=z, **kwargs) * self._rsigma8sq
-
-            return PowerSpectrumInterpolator1D.from_callable(self.k, pk_callable=pk_callable, extrap_kmin=self.extrap_kmin, extrap_kmax=self.extrap_kmax)
+            return PowerSpectrumInterpolator1D.from_callable(self.k, pk_callable=Partial(lambda self, k, **kwargs: self(k, z=z, **kwargs), self),
+                                                             extrap_kmin=self.extrap_kmin, extrap_kmax=self.extrap_kmax)
         default_params = dict(extrap_pk=self.extrap_pk, extrap_kmin=self.extrap_kmin, extrap_kmax=self.extrap_kmax, interp_order_k=self.interp_order_k)
         default_params.update(kwargs)
         self.extrap_kmin, self.extrap_kmax = -np.inf, np.inf  # in case self.k > self.extrap_kmax
@@ -1039,7 +1056,20 @@ class _BaseCorrelationFunctionInterpolator(BaseClass):
         """Maximum (extrapolated) ``s`` value (same as maximum interpolated value)."""
         return self.s[-1]
 
+    def tree_flatten(self):
+        children = ({name: getattr(self, name) for name in ['s', 'z', '_xi', '_rsigma8sq', '_interp', 'growth_factor_sq'] if hasattr(self, name)},)
+        aux_data = {name: getattr(self, name) for name in ['is_from_callable', '_np'] if hasattr(self, name)} | self.params()
+        return children, aux_data
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new.__dict__.update(children[0])
+        return new
+
+
+@register_pytree_node_class
 class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
 
     """1D correlation funcion interpolator."""
@@ -1101,20 +1131,11 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         self = cls.__new__(cls)
         self.__dict__.update(self.default_params)
         self._rsigma8sq = 1.
-        jnp = numpy_jax(s) 
+        jnp = numpy_jax(s)
         self.s = jnp.sort(jnp.asarray(s, dtype='f8').ravel())
         self._np = numpy_jax(xi_callable(s[:1]))
-
-        def interp(s, bounds_error=False, **kwargs):
-            dtype = _bcast_dtype(s)
-            s = self._np.asarray(s, dtype=dtype)
-            toret_shape = s.shape
-            s = s.ravel()
-            mask_s, = _mask_bounds([s], [(self.smin, self.smax)], bounds_error=bounds_error)
-            toret = self._np.where(mask_s, xi_callable(s, **kwargs), self._np.nan)
-            return toret.astype(dtype).reshape(toret_shape)
-
-        self._interp = interp
+        self.is_from_callable = True
+        self._interp = xi_callable
         return self
 
     def __call__(self, s, **kwargs):
@@ -1129,7 +1150,20 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         islogs : bool, default=False
             Whether input ``s`` is already in log10-space.
         """
-        return self._interp(s, **kwargs) * self._rsigma8sq
+        interp = self._interp
+
+        if self.is_from_callable:
+
+            def interp(s, bounds_error=False, **kwargs):
+                dtype = _bcast_dtype(s)
+                s = self._np.asarray(s, dtype=dtype)
+                toret_shape = s.shape
+                s = s.ravel()
+                mask_s, = _mask_bounds([s], [(self.smin, self.smax)], bounds_error=bounds_error)
+                toret = self._np.where(mask_s, self._interp(s, **kwargs), self._np.nan)
+                return toret.astype(dtype).reshape(toret_shape)
+
+        return interp(s, **kwargs) * self._rsigma8sq
 
     def sigma_d(self, **kwargs):
         """
@@ -1180,6 +1214,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         return PowerSpectrumInterpolator1D(k, pk=pk, **default_params)
 
 
+@register_pytree_node_class
 class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
 
     """2D correlation function interpolator."""
@@ -1222,9 +1257,8 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         self._rsigma8sq = 1.
         self.growth_factor_sq = growth_factor_sq
         s, xi = self._prepare(s, xi, z=z, interp_s=interp_s)
-
-        self.interp_order_s, self.interp_order_z = int(interp_order_s), int(interp_order_z)
         is2d = self._xi.shape[1] > 1
+        self.interp_order_s, self.interp_order_z = int(interp_order_s), int(interp_order_z)
         if is2d:
             _interp = Interpolator2D(s, self.z, xi, kx=self.interp_order_s, ky=self.interp_order_z, interp_x=self.interp_s, assume_sorted=True)
         else:
@@ -1233,31 +1267,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
             _interp = Interpolator1D(s, xi[:, 0], k=self.interp_order_s, interp_x=self.interp_s, assume_sorted=True)
 
         self.is_from_callable = False
-
-        def interp(s, z, grid=True, ignore_growth=False, bounds_error=False, **kwargs):
-            dtype = _bcast_dtype(s, z)
-            s, z = (self._np.asarray(xx, dtype=dtype) for xx in (s, z))
-            if grid:
-                toret_shape = s.shape + z.shape
-            else:
-                toret_shape = s.shape
-            s, z = (xx.ravel() for xx in (s, z))
-            mask_s, mask_z = _mask_bounds([s, z], [(self.smin, self.smax), (self.zmin, self.zmax)], bounds_error=bounds_error)
-            if not is2d: mask_z |= True  # ignore input z
-            if grid: mask_s = mask_s[:, None] & mask_z
-            else: mask_s = mask_s & mask_z
-            if is2d:
-                tmp = _interp(s, z, grid=grid, **kwargs)
-            else:
-                tmp = _interp(s, **kwargs)
-                if grid:
-                    tmp = self._np.repeat(tmp[:, None], z.size, axis=-1)
-            if self.growth_factor_sq is not None and not ignore_growth:
-                tmp = tmp * self.growth_factor_sq(z).astype(dtype)
-            toret = self._np.where(mask_s, tmp, self._np.nan)
-            return toret.astype(dtype).reshape(toret_shape)
-
-        self._interp = interp
+        self._interp = _interp
 
     default_params = _get_default_kwargs(__init__, start=4)
 
@@ -1281,29 +1291,6 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
     def zmax(self):
         """Maximum (spline-interpolated) redshift."""
         return self.z[-1]
-
-    def __call__(self, s, z, grid=True, **kwargs):
-        """
-        Evaluate correlation function at separations ``s`` and redshifts ``z``.
-
-        Parameters
-        ----------
-        s : array_like
-            Separations where to evaluate the correlation function.
-
-        z : array_like
-            Redshifts where to evaluate the correlation function.
-
-        grid : bool, default=True
-            Whether ``s``, ``z`` coordinates should be interpreted as a grid, in which case the output will be of shape ``(s.size, z.size)``.
-
-        islogs : bool, default=False
-            Whether input ``s`` is already in log10-space.
-
-        ignore_growth : bool, default=False
-            Whether to ignore multiplication by growth function (if provided).
-        """
-        return self._interp(s, z, grid=grid, **kwargs) * self._rsigma8sq
 
     @classmethod
     def from_callable(cls, s=None, z=None, xi_callable=None, growth_factor_sq=None):
@@ -1343,36 +1330,87 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         self.growth_factor_sq = growth_factor_sq
         self._np = numpy_jax(xi_callable(s[:1], z[:1]) if self.growth_factor_sq is None else xi_callable(s[:1]) * self.growth_factor_sq(z[:1]))
         self.is_from_callable = True
-
-        def interp(s, z, grid=True, ignore_growth=False, bounds_error=False):
-            dtype = _bcast_dtype(s, z)
-            s, z = (self._np.asarray(xx, dtype=dtype) for xx in (s, z))
-            if grid:
-                toret_shape = s.shape + z.shape
-            else:
-                toret_shape = s.shape
-            s, z = (xx.ravel() for xx in (s, z))
-            mask_s, mask_z = _mask_bounds([s, z], [(self.smin, self.smax), (self.zmin, self.zmax)], bounds_error=bounds_error)
-            if grid: mask_s = mask_s[:, None] & mask_z
-            else: mask_s = mask_s & mask_z
-
-            if self.growth_factor_sq is not None:
-                tmp = xi_callable(s).astype(dtype)
-                if not ignore_growth:
-                    growth = self.growth_factor_sq(z).astype(dtype)
-                else:
-                    growth = 1.
-                if grid:
-                    tmp = tmp[..., None] * growth
-                else:
-                    tmp = tmp * growth
-            else:
-                tmp = xi_callable(s, z, grid=grid)
-            toret = self._np.where(mask_s, tmp, self._np.nan)
-            return toret.astype(dtype).reshape(toret_shape)
-
-        self._interp = interp
+        self._interp = xi_callable
         return self
+
+    def __call__(self, s, z, grid=True, **kwargs):
+        """
+        Evaluate correlation function at separations ``s`` and redshifts ``z``.
+
+        Parameters
+        ----------
+        s : array_like
+            Separations where to evaluate the correlation function.
+
+        z : array_like
+            Redshifts where to evaluate the correlation function.
+
+        grid : bool, default=True
+            Whether ``s``, ``z`` coordinates should be interpreted as a grid, in which case the output will be of shape ``(s.size, z.size)``.
+
+        islogs : bool, default=False
+            Whether input ``s`` is already in log10-space.
+
+        ignore_growth : bool, default=False
+            Whether to ignore multiplication by growth function (if provided).
+        """
+        if self.is_from_callable:
+
+            def interp(s, z, grid=True, ignore_growth=False, bounds_error=False):
+                dtype = _bcast_dtype(s, z)
+                s, z = (self._np.asarray(xx, dtype=dtype) for xx in (s, z))
+                if grid:
+                    toret_shape = s.shape + z.shape
+                else:
+                    toret_shape = s.shape
+                s, z = (xx.ravel() for xx in (s, z))
+                mask_s, mask_z = _mask_bounds([s, z], [(self.smin, self.smax), (self.zmin, self.zmax)], bounds_error=bounds_error)
+                if grid: mask_s = mask_s[:, None] & mask_z
+                else: mask_s = mask_s & mask_z
+
+                if self.growth_factor_sq is not None:
+                    tmp = self._interp(s).astype(dtype)
+                    if not ignore_growth:
+                        growth = self.growth_factor_sq(z).astype(dtype)
+                    else:
+                        growth = 1.
+                    if grid:
+                        tmp = tmp[..., None] * growth
+                    else:
+                        tmp = tmp * growth
+                else:
+                    tmp = self._interp(s, z, grid=grid)
+                toret = self._np.where(mask_s, tmp, self._np.nan)
+                return toret.astype(dtype).reshape(toret_shape)
+
+        else:
+
+            is2d = self._xi.shape[1] > 1
+
+            def interp(s, z, grid=True, ignore_growth=False, bounds_error=False, **kwargs):
+                dtype = _bcast_dtype(s, z)
+                s, z = (self._np.asarray(xx, dtype=dtype) for xx in (s, z))
+                if grid:
+                    toret_shape = s.shape + z.shape
+                else:
+                    toret_shape = s.shape
+                s, z = (xx.ravel() for xx in (s, z))
+                mask_s, mask_z = _mask_bounds([s, z], [(self.smin, self.smax), (self.zmin, self.zmax)], bounds_error=bounds_error)
+                if not is2d: mask_z |= True  # ignore input z
+                if grid: mask_s = mask_s[:, None] & mask_z
+                else: mask_s = mask_s & mask_z
+                if is2d:
+                    tmp = self._interp(s, z, grid=grid, **kwargs)
+                else:
+                    tmp = self._interp(s, **kwargs)
+                    if grid:
+                        tmp = self._np.repeat(tmp[:, None], z.size, axis=-1)
+                if self.growth_factor_sq is not None and not ignore_growth:
+                    tmp = tmp * self.growth_factor_sq(z).astype(dtype)
+                toret = self._np.where(mask_s, tmp, self._np.nan)
+                return toret.astype(dtype).reshape(toret_shape)
+
+        return interp(s, z, grid=grid, **kwargs) * self._rsigma8sq
 
     def sigma_dz(self, z, **kwargs):
         """
@@ -1429,7 +1467,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         interp : CorrelationFunctionInterpolator1D
         """
         if self.is_from_callable:
-            return CorrelationFunctionInterpolator1D.from_callable(self.s, xi_callable=lambda s: self._interp(s, z=z) * self._rsigma8sq)
+            return CorrelationFunctionInterpolator1D.from_callable(self.s, Partial(lambda self, s, **kwargs: self(s, z=z, **kwargs), self))
         default_params = dict(interp_order_s=self.interp_order_s)
         default_params.update(kwargs)
         return CorrelationFunctionInterpolator1D(self.s, self(self.s, z=z), **default_params)

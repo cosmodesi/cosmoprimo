@@ -6,7 +6,8 @@ import inspect
 import logging
 
 import numpy as np
-from scipy import interpolate
+
+from .jax import register_pytree_node_class
 
 
 def mkdir(dirname):
@@ -110,6 +111,7 @@ def flatarray(iargs=[0], dtype=np.float64):
 from .jax import numpy_jax, Interpolator1D, exception
 
 
+@register_pytree_node_class
 class LeastSquareSolver(BaseClass):
     r"""
     Class that solves the least square problem, i.e. solves :math:`d\chi^{2}/d\mathbf{p} = 0` for :math:`\mathbf{p}`, with:
@@ -154,7 +156,7 @@ class LeastSquareSolver(BaseClass):
             than computing the inverse.
         """
         # gradient shape = (nparams, ndata)
-        jnp = numpy_jax(gradient)
+        jnp = numpy_jax(gradient, precision, constraint_gradient)
         self.gradient = jnp.atleast_1d(gradient)
         self.isscalar = self.gradient.ndim == 1
         if self.isscalar:
@@ -165,8 +167,8 @@ class LeastSquareSolver(BaseClass):
         if self.precision.ndim == 1:
             hv = self.gradient * self.precision
         else:
-            hv = self.gradient.dot(self.precision)
-        invfisher = hv.dot(self.gradient.T)
+            hv = jnp.dot(self.gradient, self.precision)
+        invfisher = jnp.dot(hv, self.gradient.T)
         if constraint_gradient is None:
             self.nconstraints = 0
         else:
@@ -199,6 +201,17 @@ class LeastSquareSolver(BaseClass):
 
             self.projector = fisher.dot(hv).T
 
+    def tree_flatten(self):
+        children = ({name: getattr(self, name) for name in ['precision', 'gradient_precision', 'projector', 'inverse_fisher', 'delta', 'params'] if hasattr(self, name)},)
+        return children, {}
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new.__dict__.update(children[0])
+        return new
+
     def compute(self, delta, constraint=None):
         """Solve least square problem for ``delta`` given :attr:`gradient`, :attr:`precision`."""
         jnp = numpy_jax(delta, self.gradient_precision)
@@ -229,6 +242,7 @@ class LeastSquareSolver(BaseClass):
         return (delta.dot(self.precision) * delta).sum(axis=-1)
 
 
+@register_pytree_node_class
 class DistanceToRedshift(BaseClass):
 
     """Class that holds a conversion distance -> redshift."""
@@ -253,13 +267,23 @@ class DistanceToRedshift(BaseClass):
         interp_order : int, default=3
             Interpolation order, e.g. 1 for linear interpolation, 3 for cubic splines.
         """
-        self.zgrid = 1. / np.geomspace(1. / (1. + zmax), 1., nz)[::-1] - 1.
-        self.rgrid = distance(self.zgrid)
-        self._interp = Interpolator1D(self.rgrid, self.zgrid, k=interp_order)
+        zgrid = 1. / np.geomspace(1. / (1. + zmax), 1., nz)[::-1] - 1.
+        rgrid = distance(zgrid)
+        self._interp = Interpolator1D(rgrid, zgrid, k=interp_order)
 
     def __call__(self, distance, bounds_error=True):
         """Return (interpolated) redshift at distance ``distance`` (scalar or array)."""
         return self._interp(distance, bounds_error=bounds_error)
+
+    def tree_flatten(self):
+        return (self._interp,), {}
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        new = cls.__new__(cls)
+        new.__dict__.update(aux_data)
+        new._interp = children[0]
+        return new
 
 
 logger = logging.getLogger('Plotting')
