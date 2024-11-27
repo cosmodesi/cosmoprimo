@@ -2,7 +2,7 @@
 
 **cosmoprimo** is a Python package for primordial cosmology, i.e. background and perturbation quantities typically predicted by Boltzmann codes
 [CAMB](https://github.com/cmbant/CAMB) or [CLASS](https://github.com/lesgourg/class_public).
-**cosmoprimo** provides a coherent interface (and parameter names!) to *CLASS* and *CAMB*, ensuring same units and same definitions
+**cosmoprimo** provides a coherent interface (and parameter names!) to *CLASS* and *CAMB*, and extensions, ensuring same units and same definitions
 (e.g. fsigma8 as the amplitude of velocity perturbations in spheres of 8 Mpc/h).
 It also includes approximations such as [EH1998](https://arxiv.org/abs/astro-ph/9709112), [BBKS](https://ui.adsabs.harvard.edu/abs/1986ApJ...304...15B/abstract),
 together with routines to manipulate these results:
@@ -11,6 +11,22 @@ together with routines to manipulate these results:
 - interpolate power spectra, correlation functions (as a function of k and k, z)
 - compute sigma(r,z)
 - filters to remove BAO features from the power spectrum/correlation function.
+
+Most of **cosmoprimo**, apart from Boltzmann solvers, is JAX-friendly.
+
+```
+from cosmoprimo.fiducial import DESI
+
+jac = jax.jacfwd(lambda params: DESI(**params, engine='bbks').comoving_radial_distance(z=1.))
+jac(dict(omega_cdm=0.25))
+```
+
+**cosmoprimo** also wraps some emulators, e.g. [capse](https://github.com/CosmologicalEmulators/Capse.jl) for Cls.
+
+```
+jac = jax.jacfwd(lambda params: DESI(**params, engine='capse').get_harmonic().lensed_cl()['tt'])
+jac(dict(omega_cdm=0.25))
+```
 
 ## Documentation
 
