@@ -240,6 +240,10 @@ class BaseCosmoParams(BaseClass):
     _conflict_parameters = []
 
     def _set_jax(self):
+        if getattr(self.__class__, '_use_jax', None) and getattr(self.__class__, '_np', None):
+            self._use_jax = self.__class__._use_jax
+            self._np = self.__class__._np
+            return
         from .jax import use_jax
         self._use_jax = use_jax(*self._params.values())
         if self._use_jax:
@@ -498,9 +502,9 @@ class BaseEngine(BaseCosmoParams, metaclass=RegisteredEngine):
         self._Sections = {}
         module = sys.modules[self.__class__.__module__]
         for name in _Sections:
-            section = getattr(module, name, None)
-            if section is not None:
-                self._Sections[name.lower()] = section
+            Section = getattr(module, name, None)
+            if Section is not None:
+                self._Sections[name.lower()] = Section
         self._sections = {}
 
     def _get_A_s_fid(self):
@@ -658,8 +662,6 @@ def _get_cosmology_engine(cosmology, engine=None, set_engine=True, **extra_param
         engine = get_engine(engine)(cosmology, **extra_params)
     if set_engine:
         cosmology._engine = engine
-    engine._np = cosmology._np
-    engine._use_jax = cosmology._use_jax
     return engine
 
 
@@ -1673,7 +1675,7 @@ class BaseBackground(BaseSection):
     @utils.flatarray()
     def rho_fld(self, z):
         r"""Comoving density of dark energy fluid :math:`\rho_{\mathrm{fld}}`, in :math:`10^{10} M_{\odot}/h / (\mathrm{Mpc}/h)^{3}`."""
-        return self.Omega0_fld * (1 + z) ** (3. * (1 + self.w0_fld + self.wa_fld)) * np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3 / (1 + z)**3
+        return self.Omega0_fld * (1 + z) ** (3. * (1 + self.w0_fld + self.wa_fld)) * self._np.exp(3. * self.wa_fld * (1. / (1 + z) - 1)) * constants.rho_crit_over_Msunph_per_Mpcph3 / (1 + z)**3
 
     @utils.flatarray()
     def rho_de(self, z):
@@ -1976,7 +1978,7 @@ class DefaultBackground(BaseBackground):
                 z = self._np.exp(- eta) - 1.
                 #return - 2. + 3. / 2. * self.Omega_m(z)
                 w_fld = self.w0_fld + z / (1. + z) * self.wa_fld
-                adotdot_over_a_over_H2 = -1. / 2. * (1. - self.Omega_k(z) + self.Omega_r(z) + 3 * w_fld * self.Omega_fld(z) - 3. * self.Omega_Lambda(z))
+                adotdot_over_a_over_H2 = -1. / 2. * (1. - self.Omega_k(z) + self.Omega_r(z) + 3 * w_fld * self.Omega_de(z))
                 return  - 1. - adotdot_over_a_over_H2
 
             def f2(eta):
