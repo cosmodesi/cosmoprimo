@@ -251,7 +251,7 @@ class Emulator(BaseClass):
     def _get_samples(self, samples):
         return samples if isinstance(samples, Samples) else Samples.load(samples)
 
-    def _get_engine_X_Y(self, samples, params=None, varied=None, fixed=None, ignore_operations=False):
+    def _get_X_Y_from_samples(self, samples, params=None, varied=None, fixed=None, ignore_operations=False):
         # Internal method to apply :attr:`xoperation` and attr:`yoperation` to input samples to engines
         if params is None:
             params = [name[2:] for name in samples.columns('X.*')]
@@ -260,14 +260,14 @@ class Emulator(BaseClass):
         X = {name: samples['X.' + name].copy() for name in params}
         fixed = dict(fixed or {})
         Y_varied = {name: samples['Y.' + name].copy() for name in varied}
-        Y = {**fixed, **Y_varied}
+        Y = fixed | Y_varied
         if not ignore_operations:
             if self.xoperations: X = {name: np.asarray(value) for name, value in X.items()}
-            if self.yoperations: Y = {name: np.asarray(value) for name, value in Y.items()}
+            if self.yoperations: Y_varied = {name: np.asarray(value) for name, value in Y_varied.items()}
             for operation in self.yoperations:
                 try:
-                    operation.initialize(Y, X=X)
-                    def func(Y_varied, X): return operation({**fixed, **Y_varied}, X=X)
+                    operation.initialize(fixed | Y_varied, X=X)
+                    def func(Y_varied, X): return operation(fixed | Y_varied, X=X)
                     Y = batch_vmap(func, (0, 0), batch_size=20)(Y_varied, X)
                 except KeyError:
                     pass
@@ -277,6 +277,7 @@ class Emulator(BaseClass):
                     X = vmap(operation)(X)
                 except KeyError:
                     pass
+        for name in fixed: Y.pop(name, None)
         return X, Y, dict(samples.attrs)
 
     def set_samples(self, engine=None, samples=None, params=None, calculator=None, ignore_operations=False, **kwargs):
@@ -354,10 +355,11 @@ class Emulator(BaseClass):
             notfinite = [name for name, value in samples.items() if not np.isfinite(value).all()]
             if notfinite:
                 warnings.warn('{} are not finite'.format(notfinite))
-            X, Y, attrs = self._get_engine_X_Y(samples, params=params, varied=varied, fixed=fixed, ignore_operations=ignore_operations)
-            for name in fixed: Y.pop(name)
+            X, Y, attrs = self._get_X_Y_from_samples(samples, params=params, varied=varied, fixed=fixed, ignore_operations=ignore_operations)
             _varied, _fixed = self._sort_varied_fixed(Y, subsample=min(samples.size, 10))
-            fixed.update(_fixed)
+            if self.yoperations:  # engine outputs may have been updated
+                varied = _varied
+                fixed.update(_fixed)
             params = list(X)
             samples_operations = Samples({**{'X.' + name: X[name] for name in X}, **{'Y.' + name: Y[name] for name in Y}}, attrs=dict(attrs))
         else:
@@ -527,7 +529,6 @@ def get_engine(engine):
     return engine
 
 
-
 class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
     """
     Base class for emulator engine.
@@ -557,8 +558,12 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
                 def func(y, x): return operation(y, X=dict(zip(self.params, x)))
                 Y = vmap(func)(Y, X)
             for operation in self.xoperations:
+                if getattr(operation, 'input_type', None) == 'dict':
+                    X = {name: x for name, x in zip(self.params, X)}
                 operation.initialize(X)
                 X = vmap(operation)(X)
+                if isinstance(X, dict):
+                    X = np.column_stack([X[name] for name in self.params])
             xshape, yshape = X.shape[1:], Y.shape[1:]
             X, Y = np.asarray(X).reshape(len(X), -1), np.asarray(Y).reshape(len(Y), -1)
         self.xshape, self.yshape = self.mpicomm.bcast((xshape, yshape) if self.mpicomm.rank == 0 else None, root=0)
@@ -571,7 +576,11 @@ class BaseEmulatorEngine(BaseClass, metaclass=RegisteredEmulatorEngine):
     def predict(self, params, kw_yoperation=None):
         X = jnp.column_stack([params[name] for name in self.params])
         for operation in self.xoperations:
-            X = operation(X, X=params)
+            if getattr(operation, 'input_type', None) == 'dict':
+                X = {name: x for name, x in zip(self.params, X)}
+            X = operation(X)
+            if isinstance(X, dict):
+                X = jnp.column_stack([X[name] for name in self.params])
         Y = self._predict_no_operation(X.reshape(-1)).reshape(self.yshape)
         if kw_yoperation is None: kw_yoperation = {}
         for operation in self.yoperations[::-1]:
@@ -691,8 +700,9 @@ class Operation(BaseClass, metaclass=RegisteredOperation):
     _inverse = None
     verbose = False
 
-    def __init__(self, direct, inverse=None, locals=None):
+    def __init__(self, direct, inverse=None, locals=None, input_type=None):
         self.update(direct=direct, inverse=inverse, locals=locals)
+        self.input_type = input_type
 
     @property
     def locals(self):
@@ -831,10 +841,10 @@ class PCAOperation(Operation):
         self.eigenvectors = utils.subspace((v - self.mean) / self.sigma, npcs=self.npcs)
         self.eigenvectors = self.eigenvectors.T.reshape((-1,) + self.mean.shape)
 
-    def __call__(self, v):
+    def __call__(self, v, **kwargs):
         return jnp.sum(jnp.expand_dims((v - self.mean) / self.sigma, axis=0) * self.eigenvectors, axis=tuple(range(1, self.eigenvectors.ndim)))
 
-    def inverse(self, v, X=None):
+    def inverse(self, v, **kwargs):
         return jnp.sum(jnp.expand_dims(v, axis=tuple(range(1, self.eigenvectors.ndim))) * self.eigenvectors, axis=0) * self.sigma + self.mean
 
     def __getstate__(self):
@@ -873,10 +883,10 @@ class ChebyshevOperation(Operation):
         flatpoly = np.reshape(self.poly, (size, -1))
         self.proj = flatpoly.dot(np.linalg.inv(flatpoly.T.dot(flatpoly))).reshape(self.poly.shape)  # projector, for C = eye(size)
 
-    def __call__(self, v):
+    def __call__(self, v, **kwargs):
         return jnp.sum(jnp.expand_dims(v, self.axis + 1) * self.poly, axis=self.axis)  # shape is (v.shape[0], ..., self.order + 1, ..., v.shape[-1])
 
-    def inverse(self, v, X=None):
+    def inverse(self, v, **kwargs):
         return jnp.sum(jnp.expand_dims(v, self.axis) * self.proj, axis=self.axis + 1)
 
     def __getstate__(self):

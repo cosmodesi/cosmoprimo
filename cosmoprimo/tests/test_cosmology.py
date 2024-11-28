@@ -906,6 +906,28 @@ def test_jax():
     from cosmoprimo.fiducial import DESI
     from cosmoprimo.cosmology import DefaultBackground, _cache, _precompute_ncdm_momenta
 
+    from cosmoprimo.bbks import Background
+    cosmo = Cosmology(neutrino_hierarchy='normal', m_ncdm=0.1, engine='bbks')
+    cosmo.clone(m_ncdm=0.1).get_background().comoving_radial_distance(1.)
+    t0 = time.time()
+    n = 10
+    for m_ncdm in np.linspace(0.1, 0.2, n):
+        cosmo.clone(m_ncdm=float(m_ncdm)).get_background().comoving_radial_distance(1.)
+        #cosmo.get_background().comoving_radial_distance(1.)
+    print((time.time() - t0) / n)
+
+    def test(params):
+        cosmo = Cosmology(neutrino_hierarchy='normal', **params)
+        return DefaultBackground(cosmo).growth_rate(1.)
+
+    test_jit = jit(test)
+    print(test_jit(dict(m_ncdm=0.1)))
+    t0 = time.time()
+    n = 10
+    for m_ncdm in np.linspace(0.01, 0.1, n):
+        test_jit(dict(m_ncdm=float(m_ncdm)))
+    print((time.time() - t0) / n)
+
     def test(params):
         cosmo = Cosmology(neutrino_hierarchy='normal', **params)
         return cosmo
