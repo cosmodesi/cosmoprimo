@@ -41,7 +41,15 @@ def test_samplers():
 
     sampler = DiffSampler(calculator, params={'a': (0.8, 1.2), 'b': (0.8, 1.2)})
     sampler.run()
-    sampler.samples
+
+    def reparam(samples):
+        apb, amb = samples['a'], samples['b']
+        samples['a'] = (apb + amb) / 2.
+        samples['b'] = (apb - amb) / 2.
+        return samples
+
+    sampler = GridSampler(calculator, params={'a': (0.8, 1.2), 'b': (0.8, 1.2)}, reparam=reparam)
+    sampler.run()
 
 
 if __name__ == '__main__':

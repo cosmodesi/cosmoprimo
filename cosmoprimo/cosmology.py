@@ -1869,6 +1869,27 @@ class BaseBackground(BaseSection):
         """
         return self.angular_diameter_distance(z) * (1. + z)**2
 
+    def rs(self, z):
+        from .jax import romberg
+
+        astart = 1e-8
+        astar = 1. / (1 + z)
+
+        def dtauda(a):
+            return 1. / (a**2 * self.hubble_function(1 / a - 1.) / (constants.c / 1e3))
+
+        def dsoundda(a):
+            # https://github.com/cmbant/CAMB/blob/758c6c2359764297e332ee2108df599506a754c3/fortran/results.f90#L1138
+            R = 3 / 4. * a * self.Omega0_b / self.Omega0_g
+            cs = (3 * (1 + R))**(-0.5)
+            return dtauda(a) * cs
+
+        limits = (astart, astar)
+        try:
+            return romberg(dsoundda, *limits, divmax=15, epsabs=1e-7, epsrel=1e-7) * self.h
+        except ValueError as exc:
+            raise CosmologyComputationError from exc
+
 
 from .jax import Interpolator1D, odeint
 
