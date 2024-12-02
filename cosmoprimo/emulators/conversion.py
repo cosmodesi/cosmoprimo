@@ -271,10 +271,10 @@ if __name__ == '__main__':
     #train_dir = Path(__file__).parent / 'train'
 
     convert, test = [], []
-    convert = ['jaxcapse_base_mnu_w_wa']
+    #convert = ['jaxcapse_base_mnu_w_wa']
     #convert = ['jaxcapse']
-    #convert = ['cosmopower_bolliet2023_base', 'cosmopower_bolliet2023_base_mnu', 'cosmopower_bolliet2023_base_w',
-    #           'cosmopower_jense2024_base', 'cosmopower_jense2024_base_mnu', 'cosmopower_jense2024_base_w_wa']
+    convert = ['cosmopower_bolliet2023_base', 'cosmopower_bolliet2023_base_mnu', 'cosmopower_bolliet2023_base_w',
+               'cosmopower_jense2024_base', 'cosmopower_jense2024_base_mnu', 'cosmopower_jense2024_base_w_wa']
     test = convert
 
     def get_source_jaxcapse(name, return_params=False):
@@ -378,6 +378,7 @@ if __name__ == '__main__':
                 kw = dict()
                 cosmo_emu = DESI(**kw, kmax_pk=10., ellmax_cl=ellmax,
                                  engine=EmulatedEngine.load({train_dir / name / 'emulator_{}.npy'.format(section): None for section in ['thermodynamics', 'harmonic', 'fourier']}))
+                cosmo_emu.rs_star
                 cosmo_camb = DESI(**kw, lensing=True, kmax_pk=10., engine='camb', ellmax_cl=ellmax, non_linear='mead',
                             #extra_params=dict(AccuracyBoost=2, lSampleBoost=2, lAccuracyBoost=2, DoLateRadTruncation=False), non_linear='mead2016')
                             extra_params=dict(lens_margin=1250, lens_potential_accuracy=4, AccuracyBoost=1, lSampleBoost=1, lAccuracyBoost=1, DoLateRadTruncation=False))

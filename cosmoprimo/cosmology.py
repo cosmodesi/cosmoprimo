@@ -743,7 +743,8 @@ class Cosmology(BaseCosmoParams):
                         'Omega_m': ('Omega0_m',), 'Omega_cdm': ('Omega0_cdm', 'Omega_c'),
                         'Omega_b': ('Omega0_b',), 'Omega_k': ('Omega0_k',), 'Omega_ur': ('Omega0_ur',),
                         'Omega_ncdm': ('Omega0_ncdm',), 'Omega_fld': ('Omega0_fld',), 'T_cmb': ('T0_cmb',),
-                        'Omega_g': ('Omega0_g',), 'logA': ('ln10^10A_s', 'ln10^{10}A_s', 'ln_A_s_1e10')}
+                        'Omega_g': ('Omega0_g',), 'logA': ('ln10^10A_s', 'ln10^{10}A_s', 'ln_A_s_1e10'),
+                        'w0_fld': ('w',), 'wa_fld': ('wa',)}
 
     def __init__(self, engine=None, extra_params=None, **params):
         r"""
