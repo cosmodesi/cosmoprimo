@@ -347,20 +347,55 @@ def evaluate(value, type=None, locals=None, verbose=True):
     return value
 
 
-def weights_trapz(x):
-    """Return weights for trapezoidal integration."""
-    if x.size == 0:
-        return np.array(1.)
-    if x.size == 1:
-        return np.ones(x.size)
-    if x.size == 2:
-        return np.ones(x.size) / 2. * (x[1] - x[0])
-    return np.concatenate([[x[1] - x[0]], x[2:] - x[:-2], [x[-1] - x[-2]]]) / 2.
+def download(url, target, authorization=None, size=None):
+    """
+    Download file from input ``url``.
 
+    Parameters
+    ----------
+    url : str, Path
+        url to download file from.
 
-def weights_leggauss(nx, sym=False):
-    """Return weights for Gauss-Legendre integration."""
-    x, wx = np.polynomial.legendre.leggauss((1 + sym) * nx)
-    if sym:
-        x, wx = x[nx:], (wx[nx:] + wx[nx - 1::-1]) / 2.
-    return x, wx
+    target : str, Path
+        Path where to save the file, on disk.
+
+    size : int, default=None
+        Expected file size, in bytes, used to show progression bar.
+        If not provided, taken from header (if the file is larger than a couple of GBs,
+        it may be wrong due to integer overflow).
+        If a sensible file size is obtained, a progression bar is printed.
+    """
+    # Adapted from https://stackoverflow.com/questions/15644964/python-progress-bar-and-downloads
+    print('Downloading {} to {}.'.format(url, target))
+    mkdir(os.path.dirname(target))
+    import requests
+    # See https://stackoverflow.com/questions/61991164/python-requests-missing-content-length-response
+    headers = {}
+    if authorization:
+        headers.update({'Authorization': authorization})
+    if size is None:
+        size = requests.head(url, headers={**headers, 'Accept-Encoding': None}).headers.get('content-length')
+    try:
+        r = requests.get(url, headers=headers, allow_redirects=True, stream=True)
+        r.raise_for_status()
+    except requests.exceptions.HTTPError:
+        return False
+
+    with open(target, 'wb') as file:
+        if size is None or int(size) < 0:  # no content length header
+            file.write(r.content)
+        else:
+            import shutil
+            width = shutil.get_terminal_size((80, 20))[0] - 9  # pass fallback
+            dl, size, current = 0, int(size), 0
+            for data in r.iter_content(chunk_size=2048):
+                dl += len(data)
+                file.write(data)
+                if size:
+                    frac = min(dl / size, 1.)
+                    done = int(width * frac)
+                    if done > current:  # it seems, when content-length is not set iter_content does not care about chunk_size
+                        print('\r[{}{}] [{:3.0%}]'.format('#' * done, ' ' * (width - done), frac), end='', flush=True)
+                        current = done
+            print('')
+    return True

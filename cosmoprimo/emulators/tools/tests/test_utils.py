@@ -30,19 +30,6 @@ def test_utils():
     fun(z1, z2)
 
 
-def test_romberg():
-
-    def function(x):
-        return x**6
-
-    from cosmoprimo.emulators.tools.jax import romberg
-    from scipy.integrate import romberg as romberg_ref
-
-    print(romberg(function, 0., 1.))
-    print(romberg_ref(function, 0., 1.))
-
-
 if __name__ == '__main__':
 
     test_utils()
-    #test_romberg()

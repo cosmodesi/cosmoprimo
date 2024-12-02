@@ -1458,11 +1458,18 @@ def test_fk():
 def test_emu():
     from cosmoprimo import Cosmology
     cosmo = Cosmology(logA=3., engine='capse')
-    #cosmo.lensed_cl()
+    cosmo.lensed_cl()
+    print(cosmo.rs_drag)
+
+    cosmo = Cosmology(logA=3., engine='cosmopower_bolliet2023')
+    cosmo.lensed_cl()
     print(cosmo.rs_drag)
 
 
 if __name__ == '__main__':
+
+    test_emu()
+    exit()
 
     #test_precompute_ncdm()
     #test_interp()

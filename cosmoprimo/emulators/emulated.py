@@ -1,5 +1,6 @@
 """Emulated cosmological calculation."""
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -46,11 +47,11 @@ class EmulatedEngine(BaseEngine):
         if emulator is None:
             from . import Emulator
             emulator = Emulator()
-            if isinstance(self.path, (tuple, list)):
-                for path in self.path:
-                    emulator.update(Emulator.load(path))
-            else:
-                emulator.update(Emulator.load(self.path))
+            for path, url in self.path.items():
+                if not os.path.exists(path):
+                    from cosmoprimo.emulators.tools.utils import download
+                    download(url, path)
+                emulator.update(Emulator.load(path))
             self.__class__._emulator = emulator
 
         self._A_s = self._get_A_s_fid()
@@ -74,10 +75,12 @@ class EmulatedEngine(BaseEngine):
                         params[param] = self[param]
                         del self._params['A_s']
                         self._needs_rescale = 'sigma8'
-                    else:
-                        raise exc
+                    #else:  # maybe default values
+                    #    raise exc
         if 'm_ncdm' in params:  # FIXME
             params['m_ncdm'] = self['m_ncdm_tot']
+
+        params = emulator.defaults | params
 
         for operation in emulator.xoperations:
             params = operation(params)
@@ -85,19 +88,18 @@ class EmulatedEngine(BaseEngine):
         def predict(section):
             fixed = {name: value for name, value in emulator.fixed.items() if name.startswith(section + '.')}
             base_predict = {}
-            section_requires = False  # where this section requires extra parameters than cosmo
+            requires_predict = []  # where this section requires extra parameters than cosmo
             # For sections that do not require extra parameters, call predict
             for name, engine in emulator.engines.items():
                 if name.startswith(section + '.'):
                     if engine in requires:
-                        base_predict[name] = None
-                        section_requires = True
+                        requires_predict.append(name)
                     else:
                         base_predict[name] = engine.predict(params)
 
             def finalize(predict):
                 # Apply postprocessing
-                predict = {**fixed, **predict}
+                predict = fixed | predict
                 X = dict(self._params)
                 kw_yoperation = {}  #'cosmo': self}
                 for operation in emulator.yoperations[::-1]:
@@ -105,13 +107,12 @@ class EmulatedEngine(BaseEngine):
                     except KeyError: pass
                 return {name[len(section) + 1:]: value for name, value in predict.items()}
 
-            if section_requires:
+            if requires_predict:
 
                 def predict(**requires):
-                    requires.update(params)
-                    for name, value in base_predict.items():
-                        if value is None:
-                            base_predict[name] = emulator.engines[name].predict(requires)
+                    requires = params | requires
+                    for name in requires_predict:
+                        base_predict[name] = emulator.engines[name].predict(requires)
                     return finalize(base_predict)
 
                 return predict
@@ -529,7 +530,8 @@ class Fourier(BaseSection):
                     state = self._state
                     pk.append(state['pk' + suffix][of] * self._rsigma8**2)
                 del self._state
-                return interpolate.interp1d(state['k'], self._np.column_stack(pk), kind='cubic', bounds_error=True, assume_sorted=True, axis=0)(k).astype(dtype=dtype)
+                pk = self._np.column_stack(pk)
+                return Interpolator1D(state['k'], pk, interp_x='log', interp_fun='log', extrap=True)(k)
 
             return PowerSpectrumInterpolator2D.from_callable(k=get_default_k_callable(), z=get_default_z_callable(non_linear=non_linear), pk_callable=pk_callable)
 

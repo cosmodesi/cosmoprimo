@@ -616,7 +616,7 @@ def get_engine(engine):
             from . import astropy
         elif engine == 'tabulated':
             from . import tabulated
-        elif engine in ['capse']:
+        elif engine in ['capse', 'cosmopower_bolliet2023']:
             from cosmoprimo import emulators
 
         try:

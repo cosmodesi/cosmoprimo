@@ -1,7 +1,7 @@
 from .tools import *
 from . import tools, emulated
 from .emulated import EmulatedEngine
-from .mixed import CAPSEEngine
+from .hybrid import CAPSEEngine
 
 
 def get_calculator(cosmo, xoperation=None, section=None):
@@ -29,7 +29,7 @@ def get_calculator(cosmo, xoperation=None, section=None):
 
     def calculator(**params):
         from cosmoprimo import CosmologyError
-        toret = {}     
+        toret = {}
         try:
             clone = cosmo.clone(**params)
             for section_name in section_names:
