@@ -19,11 +19,11 @@ class Background(DefaultBackground):
 class CAPSEEngine(EmulatedEngine):
 
     name = 'capse'
-    path = {train_dir / 'cosmopower_bolliet2023_base_mnu/emulator.npy': 'https://github.com/adematti/cosmoprimo-emulators/raw/refs/heads/main/cosmopower_bolliet2023_base_mnu/emulator.npy',
+    path = {train_dir / 'cosmopower_bolliet2023_base_mnu/emulator_thermodynamics.npy': 'https://github.com/adematti/cosmoprimo-emulators/raw/refs/heads/main/cosmopower_bolliet2023_base_mnu/emulator_thermodynamics.npy',
             train_dir / 'jaxcapse_base_mnu_w_wa/emulator.npy': 'https://github.com/adematti/cosmoprimo-emulators/raw/refs/heads/main/jaxcapse_base_mnu_w_wa/emulator.npy'}
 
 
 class CosmopowerBolliet2023Engine(EmulatedEngine):
 
     name = 'cosmopower_bolliet2023'
-    path = {train_dir / 'cosmopower_bolliet2023_base_mnu/emulator.npy': 'https://github.com/adematti/cosmoprimo-emulators/raw/refs/heads/main/cosmopower_bolliet2023_base_mnu/emulator.npy'}
+    path = {train_dir / 'cosmopower_bolliet2023_base_mnu/emulator_{}.npy'.format(section): 'https://github.com/adematti/cosmoprimo-emulators/raw/refs/heads/main/cosmopower_bolliet2023_base_mnu/emulator_{}.npy'.format(section) for section in ['thermodynamics', 'harmonic', 'fourier']}

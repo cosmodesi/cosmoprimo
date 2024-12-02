@@ -47,6 +47,8 @@ class EmulatedEngine(BaseEngine):
         if emulator is None:
             from . import Emulator
             emulator = Emulator()
+            if not isinstance(self.path, dict):
+                self.path = {str(self.path): None}
             for path, url in self.path.items():
                 if not os.path.exists(path):
                     from cosmoprimo.emulators.tools.utils import download

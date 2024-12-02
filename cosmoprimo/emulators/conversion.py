@@ -3,15 +3,16 @@ from pathlib import Path
 
 import numpy as np
 from cosmoprimo.emulators import Operation, Emulator
+from cosmoprimo.emulators.tools import utils
 from cosmoprimo.cosmology import Cosmology
 
 
-def convert_jaxcapse_to_cosmoprimo(fn, params=None, quantities=None):
+def convert_jaxcapse_to_cosmoprimo(fn, params=None, include_quantities=None):
     # For Cl
     import jaxcapse
     fn = Path(fn)
 
-    def get_conversion(fn):
+    def get_conversion():
         conversion = {}
         for name in ['tt', 'te', 'ee', 'ee', 'bb']:
             conversion['harmonic.lensed_cl.{}'.format(name)] = name.upper()
@@ -20,13 +21,14 @@ def convert_jaxcapse_to_cosmoprimo(fn, params=None, quantities=None):
         return conversion
 
     def get_fn(fn, quantity):
-        conversion = get_conversion(fn)
+        conversion = get_conversion()
         fn = fn / conversion.get(quantity, quantity)
         return str(fn)
 
-    if quantities is None:
-        quantities = list(get_conversion(fn))
-        quantities = [quantity for quantity in quantities if glob.glob(get_fn(fn, quantity))]
+    quantities = list(get_conversion())
+    quantities = [quantity for quantity in quantities if glob.glob(get_fn(fn, quantity))]
+    if include_quantities is not None:
+        quantities = utils.find_names(quantities, include_quantities)
 
     if params is None:
         params = ['logA', 'n_s', 'H0', 'omega_b', 'omega_cdm', 'tau_reio']
@@ -80,7 +82,7 @@ def convert_jaxcapse_to_cosmoprimo(fn, params=None, quantities=None):
     return emulator
 
 
-def convert_cosmopower_to_cosmoprimo(fn, quantities=None):
+def convert_cosmopower_to_cosmoprimo(fn, include_quantities=None):
     # https://colab.research.google.com/drive/1YB9rUzUSKx6LeugtDU0eWRlA0yLxpM1-?usp=sharing
 
     fn = Path(fn)
@@ -154,10 +156,10 @@ def convert_cosmopower_to_cosmoprimo(fn, quantities=None):
             fn = fn / folder / '*{}*.npz'.format(conversion.get(quantity, quantity))
         return str(fn)
 
-    if quantities is None:
-        quantities = list(get_conversion())
-        print([get_fn(fn, quantity) for quantity in quantities])
-        quantities = [quantity for quantity in quantities if glob.glob(get_fn(fn, quantity))]
+    quantities = list(get_conversion())
+    quantities = [quantity for quantity in quantities if glob.glob(get_fn(fn, quantity))]
+    if include_quantities is not None:
+        quantities = utils.find_names(quantities, include_quantities)
 
     state = {'engines': {}, 'xoperations': [], 'yoperations': [], 'defaults': {}, 'fixed': {}}
 
@@ -206,7 +208,7 @@ def convert_cosmopower_to_cosmoprimo(fn, quantities=None):
         mean = fpz.get("parameters_mean", fpz.get("param_train_mean"))
         std = fpz.get("parameters_std", fpz.get("param_train_std"))
         limits = np.array([mean, mean + std])
-        print(params)
+
         if 'H0' in params:
             idx = params.index('H0')
             params[idx] = 'h'
@@ -269,10 +271,10 @@ if __name__ == '__main__':
     #train_dir = Path(__file__).parent / 'train'
 
     convert, test = [], []
-    #convert = ['jaxcapse_base_mnu_w_wa']
+    convert = ['jaxcapse_base_mnu_w_wa']
     #convert = ['jaxcapse']
-    convert = ['cosmopower_bolliet2023_base', 'cosmopower_bolliet2023_base_mnu', 'cosmopower_bolliet2023_base_w',
-               'cosmopower_jense2024_base', 'cosmopower_jense2024_base_mnu', 'cosmopower_jense2024_base_w_wa']
+    #convert = ['cosmopower_bolliet2023_base', 'cosmopower_bolliet2023_base_mnu', 'cosmopower_bolliet2023_base_w',
+    #           'cosmopower_jense2024_base', 'cosmopower_jense2024_base_mnu', 'cosmopower_jense2024_base_w_wa']
     test = convert
 
     def get_source_jaxcapse(name, return_params=False):
@@ -309,9 +311,10 @@ if __name__ == '__main__':
             #parser = YAMLParser('../../../cosmopower-organization/jense_2024_emulators/jense_2023_cmb_camb_mnu.yaml')
             #print(parser.computed_parameters)
             source_fn = get_source_cosmopower(name)
-            emulator = convert_cosmopower_to_cosmoprimo(source_fn)
-            emulator_fn = train_dir / name / 'emulator.npy'
-            emulator.save(emulator_fn)
+            for section in ['thermodynamics', 'harmonic', 'fourier']:
+                emulator = convert_cosmopower_to_cosmoprimo(source_fn, include_quantities=[section + '.*'])
+                emulator_fn = train_dir / name / 'emulator_{}.npy'.format(section)
+                emulator.save(emulator_fn)
 
     if test:
         from matplotlib import pyplot as plt
@@ -321,9 +324,10 @@ if __name__ == '__main__':
         from cosmoprimo.emulators import EmulatedEngine
 
         for name in test:
-            emulator_fn = train_dir / name / 'emulator.npy'
 
             if 'capse' in name:
+                emulator_fn = train_dir / name / 'emulator.npy'
+
                 import jaxcapse
                 source_fn, params = get_source_jaxcapse(name, return_params=True)
 
@@ -372,8 +376,8 @@ if __name__ == '__main__':
             if 'cosmopower' in name:
                 ellmax = 2000
                 kw = dict()
-                cosmo_emu = DESI(**kw, kmax_pk=10., ellmax_cl=ellmax, engine=EmulatedEngine.load(emulator_fn))
-
+                cosmo_emu = DESI(**kw, kmax_pk=10., ellmax_cl=ellmax,
+                                 engine=EmulatedEngine.load({train_dir / name / 'emulator_{}.npy'.format(section): None for section in ['thermodynamics', 'harmonic', 'fourier']}))
                 cosmo_camb = DESI(**kw, lensing=True, kmax_pk=10., engine='camb', ellmax_cl=ellmax, non_linear='mead',
                             #extra_params=dict(AccuracyBoost=2, lSampleBoost=2, lAccuracyBoost=2, DoLateRadTruncation=False), non_linear='mead2016')
                             extra_params=dict(lens_margin=1250, lens_potential_accuracy=4, AccuracyBoost=1, lSampleBoost=1, lAccuracyBoost=1, DoLateRadTruncation=False))
