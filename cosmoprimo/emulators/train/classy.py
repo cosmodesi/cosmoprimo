@@ -12,9 +12,9 @@ from cosmoprimo.fiducial import DESI
 logger = logging.getLogger('classy')
 
 this_dir = Path(__file__).parent
-train_dir = Path(os.getenv('SCRATCH', '')) / 'emulators/train/classy/new/'
+train_dir = Path(os.getenv('SCRATCH', '')) / 'emulators/train/classy/base_mnu_w_wa/'
 samples_fn = {name: train_dir / 'samples_{}'.format(name) for name in ['background', 'thermodynamics', 'fourier']}
-emulator_dir = this_dir / 'classy'
+emulator_dir = this_dir / 'classy_base_mnu_w_wa'
 emulator_fn = emulator_dir / 'emulator.npy'
 
 
@@ -32,7 +32,11 @@ def sample(samples_fn, section='background', start=0, stop=100000):
         sampler.run(save_every=100, niterations=stop - start, nstart=start)
 
     if section == 'thermodynamics':
+        #cosmo = DESI(engine='camb', neutrino_hierarchy='degenerate')
         params = {'h': (0.2, 1.), 'omega_cdm': (0.01, 0.90), 'omega_b': (0.005, 0.05), 'm_ncdm': (0., 5.), 'w0_fld': (-2., 0.), 'wa_fld': (-3., 2.)}
+        #cosmo = DESI(engine='camb')
+        #params = {'h': (0.4, 1.0), 'omega_cdm': (0.08, 0.20), 'omega_b': (0.01933, 0.02533)}
+        #params = {'h': (0.4, 1.0), 'omega_cdm': (0.09, 0.15), 'omega_b': (0.015, 0.030), 'w0_fld': (-1.5, 0.), 'wa_fld': (-2., 1.5)}
         calculator = get_calculator(cosmo, section=[section])
         sampler = QMCSampler(calculator, params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.npz'.format(samples_fn, start, stop))
         sampler.run(save_every=100, niterations=stop - start, nstart=start)
@@ -85,8 +89,8 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
     #engine['thermodynamics.*'] = MLPEmulatorEngine(nhidden=(20,) * 2)
     #engine['thermodynamics.*'] = MLPEmulatorEngine(nhidden=(20,) * 3)
     engine['thermodynamics.*'] = MLPEmulatorEngine(nhidden=(10,) * 5, activation='tanh')
-    for name in ['rs_drag', 'rs_star']:
-        engine['thermodynamics.{}'.format(name)] = MLPEmulatorEngine(nhidden=(10,) * 5, yoperation=[Operation("v / X['h']", inverse="v * X['h']"), Operation("v * (1. + 404. * jnp.exp(20.56 * (X['w0_fld'] - 1. / 3.)))", "v / (1. + 404. * jnp.exp(20.56 * (X['w0_fld'] - 1. / 3.)))")], activation='tanh')
+    #for name in ['rs_drag', 'rs_star']:
+    #    engine['thermodynamics.{}'.format(name)] = MLPEmulatorEngine(nhidden=(10,) * 5, yoperation=[Operation("v / X['h']", inverse="v * X['h']"), Operation("v * (1. + 404. * jnp.exp(20.56 * (X['w0_fld'] - 1. / 3.)))", "v / (1. + 404. * jnp.exp(20.56 * (X['w0_fld'] - 1. / 3.)))")], activation='tanh')
         #engine['thermodynamics.{}'.format(name)] = MLPEmulatorEngine(nhidden=(64,) * 5, yoperation=[Operation("v / X['h']", inverse="v * X['h']")], activation='tanh')
     #engine['thermodynamics.*'] = MLPEmulatorEngine(nhidden=(20,) * 5)
     #engine['thermodynamics.*'] = MLPEmulatorEngine(nhidden=(20,) * 6)
@@ -170,6 +174,7 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
 def plot(samples_fn, section=('background', 'thermodynamics', 'primordial', 'fourier', 'harmonic')):
 
     cosmo = DESI(engine=EmulatedEngine.load(emulator_fn))
+    #cosmo = DESI(engine=EmulatedEngine.load({Path(__file__).parent / 'cosmopower_jense2024_base_w_wa/emulator_{}.npy'.format(section): 'https://github.com/adematti/cosmoprimo-emulators/raw/refs/heads/main/cosmopower_jense2024_base_w_wa/emulator_{}.npy'.format(section) for section in ['thermodynamics']}))
 
     if 'background' in section:
         samples = load_samples(samples_fn, include=['X.*', 'Y.background.*'], exclude=['X.logA', 'X.n_s', 'X.tau_reio'])
@@ -217,7 +222,12 @@ def test():
     from cosmoprimo.cosmology import Cosmology, DefaultBackground
     from cosmoprimo.jax import vmap
     from cosmoprimo.emulators.tools.base import batch_vmap
-    
+
+    if 1:
+        ref = DESI(engine='class')
+        emu = DESI(engine='cosmopower_bolliet2023')
+        print(emu.rs_drag, ref.rs_drag)
+
     if 0:
         fiducial = DESI(engine='class', neutrino_hierarchy='degenerate')
         ref = {name: getattr(fiducial, name) for name in ['z_drag']}
@@ -234,7 +244,7 @@ def test():
                 plt.plot(values, ratio)
                 plt.savefig('{}.png'.format(name))
 
-    if 1:
+    if 0:
         fiducial = DESI(w0_fld=0., engine='class', neutrino_hierarchy='degenerate')
         ref = {name: getattr(fiducial, name) / fiducial['h'] for name in ['rs_drag']}
         params = {'wa_fld': (-3., 0.)}
@@ -508,8 +518,8 @@ if __name__ == '__main__':
 
     """Uncomment to run."""
 
-    todo = ['sample']
-    #todo = ['fit', 'plot']
+    #todo = ['sample']
+    todo = ['fit', 'plot']
     #todo = ['plot_compression']
     #todo = ['test']
     setup_logging()
