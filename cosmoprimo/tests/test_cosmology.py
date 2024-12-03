@@ -1466,10 +1466,20 @@ def test_emu():
     print(cosmo.rs_drag)
 
 
+def test_rs():
+
+    from cosmoprimo.fiducial import DESI
+
+    for params in [{}, {'w0_fld': -0.5, 'wa_fld': 0.5}]:
+        cosmo_class = DESI(**params, engine='class')
+        cosmo_camb = DESI(**params, engine='camb')
+        cosmo = DESI(**params, engine='bbks')
+        rs = cosmo.get_background().rs(cosmo_camb.z_drag)
+        print(params, cosmo_camb.rs_drag, cosmo_class.rs_drag / cosmo_camb.rs_drag, rs / cosmo_camb.rs_drag)
+
+
 if __name__ == '__main__':
 
-    test_emu()
-    exit()
 
     #test_precompute_ncdm()
     #test_interp()

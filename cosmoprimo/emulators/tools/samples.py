@@ -309,7 +309,7 @@ class BaseSampler(BaseClass):
         sampler.samples  # samples on MPI rank 0
     """
 
-    def __init__(self, calculator, params=None, mpicomm=mpi.COMM_WORLD, save_fn=None, samples=None):
+    def __init__(self, calculator, params=None, reparam=None, mpicomm=mpi.COMM_WORLD, save_fn=None, samples=None):
         """
         Initialize base sampler.
 
@@ -328,7 +328,7 @@ class BaseSampler(BaseClass):
             If not ``None``, save samples to this location.
         """
         self.mpicomm = mpicomm
-        self.set_calculator(calculator, params)
+        self.set_calculator(calculator, params, reparam=reparam)
         if not len(self.params):
             raise ValueError('Provide at least one parameter')
         self.save_fn = save_fn
@@ -336,10 +336,13 @@ class BaseSampler(BaseClass):
         if self.mpicomm.rank == 0 and samples is not None:
             self.samples = samples if isinstance(samples, Samples) else Samples.load(samples)
 
-    def set_calculator(self, calculator, params):
+    def set_calculator(self, calculator, params, reparam=None):
         """Set calculator and parameters."""
         self.calculator = calculator
         self.params = dict(params)
+        if reparam is None:
+            reparam = lambda x: x
+        self.reparam = reparam
 
     def run(self, save_every=20, timeout=np.inf, **kwargs):
         """
@@ -354,8 +357,8 @@ class BaseSampler(BaseClass):
         save_every : int, default=20
             Save every ``save_every`` iterations.
         """
+        samples = self.points(**kwargs)
         if self.mpicomm.rank == 0:
-            samples = self.points(**kwargs)
             default_params = {}
             for name in list(samples.keys()):
                 samples['X.' + name] = samples.pop(name)
@@ -406,7 +409,8 @@ class BaseSampler(BaseClass):
 
     def points(self, **kwargs):
         # Return Samples instance containing points to use evaluate calculator against.
-        raise NotImplementedError
+        points = self._points(**kwargs)
+        return Samples(self.reparam(points))
 
 
 class InputSampler(BaseSampler):
@@ -470,7 +474,7 @@ class GridSampler(BaseSampler):
     """Grid sampler, i.e. evaluate calculator on a grid of parameters."""
     name = 'grid'
 
-    def __init__(self, calculator, params=None, size=1, grid=None, mpicomm=mpi.COMM_WORLD, save_fn=None, samples=None):
+    def __init__(self, calculator, params=None, size=1, grid=None, mpicomm=mpi.COMM_WORLD, save_fn=None, samples=None, reparam=None):
         """
         Initialize grid sampler.
 
@@ -499,7 +503,7 @@ class GridSampler(BaseSampler):
         samples : str, Path, Samples
             Path to or samples to resume from.
         """
-        super(GridSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=samples)
+        super(GridSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=samples, reparam=reparam)
         self.grids = utils.expand_dict(grid, list(self.params.keys()))
         self.size = utils.expand_dict(size, list(self.params.keys()))
         for param, limits in self.params.items():
@@ -522,7 +526,7 @@ class GridSampler(BaseSampler):
         self.grids = list(self.grids.values())
         del self.size
 
-    def points(self, size=1):
+    def _points(self, size=1):
         grid = np.meshgrid(*self.grids, indexing='ij')
         samples = Samples({param: value.ravel() for param, value in zip(self.params, grid)})
         nsamples = len(self.samples) if self.samples is not None else 0
@@ -607,7 +611,7 @@ class DiffSampler(BaseSampler):
             grids.append(grid)
         self.grids = grids
 
-    def points(self):
+    def _points(self):
         from .taylor import deriv_grid
         samples = np.array(deriv_grid(self.grids)).T
         samples = Samples({param: value for param, value in zip(self.params, samples)})
@@ -632,7 +636,7 @@ class QMCSampler(BaseSampler):
     """Quasi Monte-Carlo sequences, using :mod:`scipy.qmc` (+ RQuasiRandomSequence)."""
     name = 'qmc'
 
-    def __init__(self, calculator, params=None, engine='rqrs', mpicomm=mpi.COMM_WORLD, save_fn=None, samples=None, **kwargs):
+    def __init__(self, calculator, params=None, engine='rqrs', mpicomm=mpi.COMM_WORLD, save_fn=None, samples=None, reparam=None, **kwargs):
         """
         Initialize QMC sampler.
 
@@ -656,10 +660,10 @@ class QMCSampler(BaseSampler):
         **kwargs : dict
             Optional engine-specific arguments, e.g. random seed ``seed``.
         """
-        super(QMCSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=samples)
+        super(QMCSampler, self).__init__(calculator, params=params, mpicomm=mpicomm, save_fn=save_fn, samples=samples, reparam=reparam)
         self.engine = get_qmc_engine(engine)(d=len(self.params), **kwargs)
 
-    def points(self, niterations=300, nstart=None):
+    def _points(self, niterations=300, nstart=None):
         lower, upper = [], []
         for limits in self.params.values():
             lower.append(limits[0])
