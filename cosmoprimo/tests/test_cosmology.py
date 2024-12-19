@@ -1482,6 +1482,8 @@ def test_bbn():
     from cosmoprimo.fiducial import DESI
     fiducial = DESI(extra_params={'sBBN file': 'bbn/sBBN.dat'})
     cosmo = DESI(extra_params={'sBBN file': 'bbn/sBBN_2017.dat'})
+    test = DESI()
+    assert test.rs_drag == cosmo.rs_drag
     print(fiducial.rs_drag / cosmo.rs_drag - 1.)
 
 
