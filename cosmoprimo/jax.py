@@ -82,6 +82,35 @@ else:
     from functools import partial as Partial
 
 
+try:
+    # Monkey-patching interpax, as an error is raised by jit about "method"
+    from interpax import Interpolator1D as _Interpolator1D
+    from interpax import Interpolator2D as _Interpolator2D
+    from equinox import field
+
+    #@register_pytree_node_class
+    class _JAXInterpolator1D(_Interpolator1D):
+
+        method: str = field(static=True)
+        extrap: bool | float | tuple = field(static=True)
+        period: None | float = field(static=True)
+        axis: int = field(static=True)
+
+    #@register_pytree_node_class
+    class _JAXInterpolator2D(_Interpolator2D):
+
+        method: str = field(static=True)
+        extrap: bool | float | tuple = field(static=True)
+        period: None | float = field(static=True)
+        axis: int = field(static=True)
+
+    del _Interpolator1D, _Interpolator2D
+
+
+except ImportError:
+    pass
+
+
 def _interpax_convert_method(k):
     return  {1: 'linear', 3: 'cubic2'}[k]
 
@@ -128,8 +157,7 @@ class Interpolator1D(object):
         self._mask_nan = None
         fun = fun.reshape(x.size, -1)
         if self._use_jax:
-            from interpax import Interpolator1D
-            self._spline = Interpolator1D(x, fun, method=_interpax_convert_method(k), extrap=self.extrap, period=None)
+            self._spline = _JAXInterpolator1D(x, fun, method=_interpax_convert_method(k), extrap=self.extrap, period=None)
         else:
             from scipy import interpolate
             self._mask_nan = ~np.isnan(fun).all(axis=0)  # hack: scipy returns NaN for all shape[1] if any is NaN
@@ -207,11 +235,10 @@ class Interpolator2D(object):
         if self.interp_fun == 'log': fun = self._np.log10(fun)
         self.extrap = bool(extrap)
         if self._use_jax:
-            from interpax import Interpolator2D
             methodx = _interpax_convert_method(kx)
             methody = _interpax_convert_method(ky)
             assert methody == methodx, 'interpax supports ky = ky only'
-            self._spline = Interpolator2D(x, y, fun, method=methodx, extrap=self.extrap, period=None)
+            self._spline = _JAXInterpolator2D(x, y, fun, method=methodx, extrap=self.extrap, period=None)
         else:
             from scipy.interpolate import RectBivariateSpline
             self._spline = RectBivariateSpline(x, y, fun, kx=kx, ky=ky, s=0)
