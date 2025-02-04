@@ -158,7 +158,7 @@ class Emulator(BaseClass):
         if engine is not None:
             self.set_engine(engine)
         if calculator is not None:
-            self._calculator, self._params, self._varied, self._fixed = self._get_calculator(calculator, **kwargs)
+            self._calculator, self._params, self._varied, self._fixed = self._get_calculator(calculator, params=kwargs.get('params', None))
         if self.mpicomm.bcast(samples is not None, root=0):
             self.set_samples(samples=samples, **kwargs)
 

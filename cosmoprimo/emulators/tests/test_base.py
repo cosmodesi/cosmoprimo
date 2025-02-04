@@ -5,7 +5,7 @@ import jax
 from jax import numpy as jnp
 
 from cosmoprimo.fiducial import DESI
-from cosmoprimo.emulators import Emulator, EmulatedEngine, setup_logging
+from cosmoprimo.emulators import Emulator, QMCSampler, MLPEmulatorEngine, EmulatedEngine, setup_logging
 
 
 emulator_dir = '_tests'
@@ -14,8 +14,9 @@ emulator_fn = os.path.join(emulator_dir, 'emu.npy')
 
 def test_base():
     cosmo = DESI()
+
     params = {'Omega_cdm': (0.25, 0.26), 'h': (0.6, 0.8)}
-    emulator = Emulator(cosmo, params, engine='point')
+    emulator = Emulator(cosmo, params=params, engine='point')
     emulator.set_samples()
     emulator.fit()
     emulator.save(emulator_fn)
@@ -29,6 +30,18 @@ def test_base():
     cosmo.rs_drag
     cosmo.get_harmonic().unlensed_cl()
     cosmo.get_fourier().pk_interpolator(of='delta_cb')
+
+    def reparam(X):
+        toret = dict(X)
+        toret['wa_fld'] = toret.pop('wp') - 3.66 * (1 + X['w0_fld'])
+        return toret
+
+    sampler = QMCSampler(cosmo, params={'w0_fld': (-1, -0.5), 'wp': (-0.2, 0.2)}, reparam=reparam)
+    sampler.run(niterations=3)
+    samples = sampler.samples
+
+    emulator = Emulator()
+    emulator.set_samples(samples=samples, engine=MLPEmulatorEngine(nhidden=(10, 10)))
 
 
 def test_jax():
@@ -64,6 +77,6 @@ if __name__ == '__main__':
 
     setup_logging()
 
-    #test_base()
+    test_base()
     #test_jax()
-    test_interpax()
+    #test_interpax()

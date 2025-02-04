@@ -328,7 +328,10 @@ class BaseSampler(BaseClass):
             If not ``None``, save samples to this location.
         """
         self.mpicomm = mpicomm
-        self.set_calculator(calculator, params, reparam=reparam)
+        if reparam is None:
+            reparam = lambda x: x
+        self.reparam = reparam
+        self.set_calculator(calculator, params)
         if not len(self.params):
             raise ValueError('Provide at least one parameter')
         self.save_fn = save_fn
@@ -336,15 +339,12 @@ class BaseSampler(BaseClass):
         if self.mpicomm.rank == 0 and samples is not None:
             self.samples = samples if isinstance(samples, Samples) else Samples.load(samples)
 
-    def set_calculator(self, calculator, params, reparam=None):
+    def set_calculator(self, calculator, params):
         """Set calculator and parameters."""
         self.calculator = calculator
         self.params = dict(params)
-        if reparam is None:
-            reparam = lambda x: x
-        self.reparam = reparam
 
-    def run(self, save_every=20, timeout=np.inf, **kwargs):
+    def run(self, save_every=20, **kwargs):
         """
         Run sampling. Sampling can be interrupted anytime, and resumed by providing
         the path to the saved samples in ``samples`` argument of :meth:`__init__`.
@@ -382,7 +382,7 @@ class BaseSampler(BaseClass):
                 scatter_samples['Y.' + name] = np.repeat(value[None, ...], scatter_samples.size, axis=0)
             for ivalue in range(scatter_samples.size):
                 try:
-                    state = self.calculator(**{param: scatter_samples['X.' + param][ivalue] for param in self.params})
+                    state = self.calculator(**{name: scatter_samples['X.' + name][ivalue] for name in default_params})
                 except CalculatorComputationError:
                     continue
                 for name, value in state.items():
@@ -410,7 +410,7 @@ class BaseSampler(BaseClass):
     def points(self, **kwargs):
         # Return Samples instance containing points to use evaluate calculator against.
         points = self._points(**kwargs)
-        return Samples(self.reparam(points))
+        return Samples(self.reparam(points), attrs=points.attrs)
 
 
 class InputSampler(BaseSampler):
@@ -611,7 +611,7 @@ class DiffSampler(BaseSampler):
             grids.append(grid)
         self.grids = grids
 
-    def _points(self):
+    def points(self):
         from .taylor import deriv_grid
         samples = np.array(deriv_grid(self.grids)).T
         samples = Samples({param: value for param, value in zip(self.params, samples)})

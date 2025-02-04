@@ -1,4 +1,3 @@
-from ._version import __version__
 from .cosmology import Cosmology, Background, Thermodynamics, Primordial, Transfer, Harmonic, Fourier, CosmologyError, CosmologyInputError, CosmologyComputationError
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D, CorrelationFunctionInterpolator1D, CorrelationFunctionInterpolator2D
 from .fftlog import FFTlog, PowerToCorrelation, CorrelationToPower, TophatVariance
@@ -10,3 +9,7 @@ __all__ += ['PowerSpectrumInterpolator1D', 'PowerSpectrumInterpolator2D', 'Corre
 __all__ += ['FFTlog', 'PowerToCorrelation', 'CorrelationToPower', 'TophatVariance']
 __all__ += ['PowerSpectrumBAOFilter', 'CorrelationFunctionBAOFilter']
 __all__ += ['fiducial']
+
+
+import importlib.metadata
+__version__ = importlib.metadata.version("cosmoprimo")

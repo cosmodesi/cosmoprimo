@@ -26,6 +26,16 @@ def test_samplers():
     sampler.run(niterations=10)
     sampler.samples
 
+    def reparam(X):
+        toret = dict(X)
+        toret['b'] = toret.pop('c') - toret['a']
+        return toret
+
+    sampler = QMCSampler(calculator, params={'a': (0.8, 1.2), 'c': (0.8, 1.2)}, reparam=reparam)
+    sampler.run(niterations=10)
+    columns = sampler.mpicomm.bcast(sampler.samples.columns() if sampler.mpicomm.rank == 0 else None, root=0)
+    assert set(columns) == set(['X.a', 'X.b', 'Y.x', 'Y.y'])
+
     def calculator(a=0, b=0):
         x = np.linspace(0., 1., 10)
         return {'x': x, 'y': a * x + b, 'z': a * x**2 + b}
