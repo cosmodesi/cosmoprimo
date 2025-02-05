@@ -13,7 +13,7 @@ logger = logging.getLogger('classy')
 
 this_dir = Path(__file__).parent
 train_dir = Path(os.getenv('SCRATCH', '')) / 'emulators/train/classy/base_mnu_w_wa/'
-samples_fn = {name: train_dir / 'samples_{}'.format(name) for name in ['background', 'thermodynamics', 'fourier']}
+samples_fn = {name: train_dir / 'samples_{}'.format(name) for name in ['background', 'thermodynamics', 'fourier', 'harmonic']}
 emulator_dir = this_dir / 'classy_base_mnu_w_wa'
 emulator_fn = emulator_dir / 'emulator.npy'
 
@@ -23,7 +23,8 @@ def sample(samples_fn, section='background', start=0, stop=100000):
     from cosmoprimo.emulators import QMCSampler, get_calculator, setup_logging
 
     setup_logging()
-    cosmo = DESI(engine='class', neutrino_hierarchy='degenerate', **{'sBBN file': 'bbn/sBBN_2017.dat'})
+    cosmo = DESI(engine='class', neutrino_hierarchy='degenerate')
+    #cosmo = DESI(engine='camb', neutrino_hierarchy='degenerate')
 
     if section == 'background':
         params = {'h': (0.2, 1.), 'omega_cdm': (0.01, 0.90), 'omega_b': (0.005, 0.05), 'm_ncdm': (0., 5.), 'w0_fld': (-3., 1.), 'wa_fld': (-3., 2.)}
@@ -53,13 +54,13 @@ def sample(samples_fn, section='background', start=0, stop=100000):
 
     if section == 'harmonic':
         cosmo = cosmo.clone(lensing=True)
-        params = {'logA': (2.5, 3.5), 'n_s': (0.88, 1.06), 'h': (0.4, 1.), 'omega_b': (0.019, 0.026), 'omega_cdm': (0.08, 0.2), 'm_ncdm': (0., 0.8),
-                  'Omega_k': (-0.3, 0.3), 'w0_fld': (-1.5, -0.5), 'wa_fld': (-0.7, 0.7), 'tau_reio': (0.02, 0.12)}
-        cosmo = cosmo.clone(extra_params={'number_count_contributions': []})
+        params = {'logA': (2.5, 3.5), 'n_s': (0.88, 1.06), 'h': (0.5, 0.9), 'omega_b': (0.019, 0.026), 'omega_cdm': (0.08, 0.2), 'm_ncdm': (0., 0.6),
+                  'Omega_k': (-0.1, 0.1), 'w0_fld': (-2., 1.), 'wa_fld': (-3., 2.), 'tau_reio': (0.02, 0.12)}
+        #cosmo = cosmo.clone(extra_params={'number_count_contributions': []})
         #cosmo = cosmo.clone(extra_params={'output': ['tCl', 'pCl', 'lCl']})
         calculator = get_calculator(cosmo, section=['background', 'thermodynamics', 'primordial', 'harmonic'])
-        sampler = QMCSampler(calculator, params=params, engine='lhs', seed=0.5, save_fn='{}_{:d}_{:d}.npz'.format(samples_fn, start, stop))
-        sampler.run(save_every=2, niterations=stop - start, nstart=start, timeout=1)
+        sampler = QMCSampler(calculator, params=params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.npz'.format(samples_fn, start, stop))
+        sampler.run(save_every=2, niterations=stop - start, nstart=start)
 
 
 def load_samples(samples_fn, **kwargs):
@@ -101,7 +102,7 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
     #engine['fourier.*'] = MLPEmulatorEngine(nhidden=(512,) * 3)
     #engine['fourier.pk.delta_cb.delta_cb'] = MLPEmulatorEngine(nhidden=(512,) * 3, yoperation=[ChebyshevOperation(axis=0, order=100)])
     #engine['fourier.*'] = MLPEmulatorEngine(nhidden=(64,) * 3, yoperation=PCAOperation(npcs=30), activation='silu')
-    engine['harmonic.*'] = MLPEmulatorEngine(nhidden=(64,) * 5, yoperation=[ChebyshevOperation(axis=0, order=50)])
+    engine['harmonic.*'] = MLPEmulatorEngine(nhidden=(64,) * 5) #, yoperation=[ChebyshevOperation(axis=0, order=50)])
 
     if emulator_fn.exists():
         emulator = Emulator.load(emulator_fn)
@@ -148,7 +149,7 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
         samples = load_samples(samples_fn, include=['X.*', 'Y.fourier.k', 'Y.fourier.z', 'Y.fourier.z_non_linear'] + ['Y.' + name for name in names], exclude=['X.tau_reio'])
         for name in names:
             yoperation = []
-            if name == '!fourier.pk.delta_cb.delta_cb':
+            if name != 'fourier.pk.delta_cb.delta_cb':
                 yoperation.append(Log10Operation())
             model_yoperation = []
             #model_yoperation = [PCAOperation(npcs=30)]
@@ -166,8 +167,9 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
         X = {name: emulator._samples_operations[pkname]['X.' + name] for name in emulator.engines[pkname].params}
         emulator.save(emulator_fn)
     if 'harmonic' in section:
-        emulator.set_samples(samples_fn, samples=samples.select(['X.*', 'Y.harmonic.*']))
-        emulator.fit(name='harmonic.*', batch_frac=(0.2, 0.4, 1.), learning_rate=(1e-2, 1e-4, 1e-6), epochs=1000)
+        samples = load_samples(samples_fn, include=['X.*', 'Y.harmonic.*'])
+        emulator.set_samples(samples=samples.select(['X.*', 'Y.harmonic.*']))
+        emulator.fit(name='harmonic.lensed_cl.tt', batch_frac=[0.2, 0.3, 0.3, 0.4, 0.5, 1.], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], epochs=10000)
         emulator.save(emulator_fn)
 
 
@@ -188,7 +190,8 @@ def plot(samples_fn, section=('background', 'thermodynamics', 'primordial', 'fou
         samples = load_samples(samples_fn, include=['X.*', 'Y.fourier.k', 'Y.fourier.z', 'Y.fourier.z_non_linear', 'Y.fourier.pk.delta_cb.delta_cb', 'Y.fourier.pk.delta_m.delta_m'], exclude=['X.tau_reio'])
         plot_residual_fourier(samples, emulated_samples=cosmo, subsample=0.01, volume=None, fn=emulator_dir / 'fourier.png')
     if 'harmonic' in section:
-        plot_residual_harmonic(samples, emulated_samples=cosmo, fn=emulator_dir / 'harmonic.png')
+        samples = load_samples(samples_fn, include=['X.*', 'Y.harmonic.lensed_cl.tt'])
+        plot_residual_harmonic(samples, emulated_samples=cosmo, subsample=0.01, fsky=None, fn=emulator_dir / 'harmonic.png')
 
 
 def plot_compression(samples_fn, section=('background', 'thermodynamics', 'primordial', 'fourier', 'harmonic')):
@@ -519,7 +522,8 @@ if __name__ == '__main__':
     """Uncomment to run."""
 
     #todo = ['sample']
-    todo = ['fit', 'plot']
+    todo = ['fit']
+    todo = ['plot']
     #todo = ['plot_compression']
     #todo = ['test']
     setup_logging()
@@ -538,7 +542,7 @@ if __name__ == '__main__':
 
         if 'sample' in todo:
 
-            for section in ['thermodynamics', 'fourier', 'harmonic'][:1]:
+            for section in ['thermodynamics', 'fourier', 'harmonic'][-1:]:
                 if section == 'thermodynamics':
                     nsamples = 100000
                     nworkers = 10
@@ -550,21 +554,21 @@ if __name__ == '__main__':
                 if section == 'harmonic':
                     nsamples = 80000
                     nworkers = 80
-                    tm_sample = tm.clone(scheduler=dict(max_workers=nworkers), provider=dict(provider='nersc', time='01:30:00', mpiprocs_per_worker=1, nodes_per_worker=1. / 16, output=output, error=error), environ=environ.clone(command='module unload cosmoprimo; export OMP_NUM_THREADS=16'))
+                    tm_sample = tm.clone(scheduler=dict(max_workers=nworkers), provider=dict(provider='nersc', time='02:00:00', mpiprocs_per_worker=1, nodes_per_worker=1. / 16, output=output, error=error), environ=environ.clone(command='export OMP_NUM_THREADS=8'))
 
-                #compute = tm_sample.python_app(sample)
-                compute = sample
+                compute = tm_sample.python_app(sample)
+                #compute = sample
                 steps = list(range(0, nsamples + 1, nsamples // nworkers))
                 for start, stop in zip(steps[:-1], steps[1:]):
                     compute(samples_fn[section], section=section, start=start, stop=stop)
                     #break
 
         if 'fit' in todo:
-            for section in ['thermodynamics', 'fourier', 'harmonic'][:1]:
+            for section in ['thermodynamics', 'fourier', 'harmonic'][2:]:
                 fit(samples_fn[section], section=section)
 
         if 'plot' in todo:
-            for section in ['thermodynamics', 'fourier', 'harmonic'][:1]:
+            for section in ['thermodynamics', 'fourier', 'harmonic'][2:]:
                 plot(samples_fn[section], section=section)
 
         if 'plot_compression' in todo:

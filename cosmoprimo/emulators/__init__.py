@@ -340,7 +340,7 @@ def plot_residual_harmonic(ref_samples, emulated_samples, quantities=None, fsky=
             kcl12 = {'lens_potential_cl.tp': (namespace + 'unlensed_cl.tt', namespace + 'lens_potential_cl.pp'), 'lens_potential_cl.ep': (namespace + 'unlensed_cl.ee', namespace + 'lens_potential_cl.pp')}.get(name, kcl12)
             cl1, cl2 = (ref_samples[kcl][isample] for kcl in kcl12)
             ells = np.arange(ref.size)
-            prefac = 1. / np.sqrt(fsky * (2 * ells + 1))
+            prefac = 1. / np.sqrt(fsky * (2 * ells + 1)) if fsky is not None else 1
             sigma = prefac * np.sqrt(emulated**2 + cl1 * cl2)
             mask = ells > 1
             ax.plot(ells[mask], np.abs(emulated[mask] - ref[mask]) / sigma[mask], color='k')
