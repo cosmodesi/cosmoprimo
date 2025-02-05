@@ -289,7 +289,7 @@ def plot_residual_primordial(ref_samples, emulated_samples, quantities=None, sub
     return fig
 
 
-def plot_residual_harmonic(ref_samples, emulated_samples, quantities=None, fsky=1., subsample=1., fn=None):
+def plot_residual_harmonic(ref_samples, emulated_samples, quantities=None, fsky=1., subsample=1., q=(0.68, 0.95, 0.99), color='C0', fn=None):
     """
     Plot ratio of emulated harmonic quantities minus reference, divided by estimated error.
 
@@ -328,23 +328,35 @@ def plot_residual_harmonic(ref_samples, emulated_samples, quantities=None, fsky=
 
     if quantities is None:
         quantities = [name[len(namespace):] for name in ref_samples if name.startswith(namespace)]
-
+    colors = pale_colors(color, len(q))
     fig, lax = plt.subplots(len(quantities), figsize=(6, 2 * len(quantities)), sharex=True, sharey=False, squeeze=False)
     fig.subplots_adjust(hspace=0.3)
     lax = lax.ravel()
     for ax, name in zip(lax, quantities):
-        for isample, (ref, emulated) in enumerate(zip(ref_samples[namespace + name], emulated_samples[namespace + name])):
-            of = name[-2:]
-            kcl12 = (namespace + name[:-2] + of[0] * 2, namespace + name[:-2] + of[1] * 2)
-            kcl12 = {'lens_potential_cl.tp': (namespace + 'unlensed_cl.tt', namespace + 'lens_potential_cl.pp'), 'lens_potential_cl.ep': (namespace + 'unlensed_cl.ee', namespace + 'lens_potential_cl.pp')}.get(name, kcl12)
-            cl1, cl2 = (ref_samples[kcl][isample] for kcl in kcl12)
-            ells = np.arange(ref.size)
-            prefac = 1. / np.sqrt(fsky * (2 * ells + 1)) if fsky is not None else 1
+        of = name[-2:]
+        kcl12 = (namespace + name[:-2] + of[0] * 2, namespace + name[:-2] + of[1] * 2)
+        kcl12 = {'lens_potential_cl.tp': (namespace + 'unlensed_cl.tt', namespace + 'lens_potential_cl.pp'), 'lens_potential_cl.ep': (namespace + 'unlensed_cl.ee', namespace + 'lens_potential_cl.pp')}.get(name, kcl12)
+        cl1, cl2 = (ref_samples[kcl] for kcl in kcl12)
+        emulated = emulated_samples[namespace + name]
+        ref = ref_samples[namespace + name]
+        ells = np.arange(ref.shape[-1])
+        if fsky is not None:
+            prefac = 1. / np.sqrt(fsky * (2 * ells + 1))
             sigma = prefac * np.sqrt(emulated**2 + cl1 * cl2)
-            mask = ells > 1
-            ax.plot(ells[mask], np.abs(emulated[mask] - ref[mask]) / sigma[mask], color='k')
-        ax.set_ylabel(r'$|\mathrm{emulated} - \mathrm{ref}| / \sigma$')
-        #ax.set_yscale('log')
+            ylabel = r'$|\mathrm{emulated} - \mathrm{ref}| / \sigma$'
+        else:
+            sigma = 0.5 * np.sqrt(emulated**2 + cl1 * cl2)
+            ylabel = r'|emulated/ref - 1|'
+        mask = ells > 1
+        diff = np.abs(emulated[..., mask] - ref[..., mask]) / sigma[..., mask]
+        diff = diff[np.isfinite(diff).all(axis=-1)]
+        ells = np.ones(diff.shape) * ells[mask]
+        lims = np.quantile(diff, [0.] + list(q) + [1.], axis=0)
+        for lim, color in list(zip(zip(lims[:-1], lims[1:]), colors))[::-1]:
+            mask = (diff >= lim[0]) & (diff <= lim[1])
+            ax.scatter(ells[mask], diff[mask], color=color, marker='.', alpha=0.1)
+        ax.set_ylabel(ylabel)
+        ax.set_yscale('log')
         ax.set_title(name)
         ax.grid(True)
     ax.set_xlabel(r'$\ell$')

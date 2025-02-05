@@ -102,7 +102,7 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
     #engine['fourier.*'] = MLPEmulatorEngine(nhidden=(512,) * 3)
     #engine['fourier.pk.delta_cb.delta_cb'] = MLPEmulatorEngine(nhidden=(512,) * 3, yoperation=[ChebyshevOperation(axis=0, order=100)])
     #engine['fourier.*'] = MLPEmulatorEngine(nhidden=(64,) * 3, yoperation=PCAOperation(npcs=30), activation='silu')
-    engine['harmonic.*'] = MLPEmulatorEngine(nhidden=(64,) * 5) #, yoperation=[ChebyshevOperation(axis=0, order=50)])
+    engine['harmonic.*'] = MLPEmulatorEngine(nhidden=(64,) * 6, yoperation=[Operation("v / jnp.exp(X['logA'] - 3.) / jnp.exp(-2 * X['tau_reio'])", inverse="v * jnp.exp(X['logA'] - 3.) * jnp.exp(-2 * X['tau_reio'])")]) #, yoperation=[ChebyshevOperation(axis=0, order=50)])
 
     if emulator_fn.exists():
         emulator = Emulator.load(emulator_fn)
@@ -169,7 +169,7 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
     if 'harmonic' in section:
         samples = load_samples(samples_fn, include=['X.*', 'Y.harmonic.*'])
         emulator.set_samples(samples=samples.select(['X.*', 'Y.harmonic.*']))
-        emulator.fit(name='harmonic.lensed_cl.tt', batch_frac=[0.2, 0.3, 0.3, 0.4, 0.5, 1.], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], epochs=10000)
+        emulator.fit(name='harmonic.lensed_cl.tt', batch_frac=[0.2, 0.3, 0.3, 0.4, 0.5, 1.], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], patience=1000, epochs=50000)
         emulator.save(emulator_fn)
 
 
@@ -523,7 +523,7 @@ if __name__ == '__main__':
 
     #todo = ['sample']
     todo = ['fit']
-    todo = ['plot']
+    #todo = ['plot']
     #todo = ['plot_compression']
     #todo = ['test']
     setup_logging()
