@@ -1,0 +1,33 @@
+[build-system]
+requires = [
+    "setuptools>=61",
+    "setuptools_scm>=6.2",
+]
+
+[project]
+name = "cosmoprimo"
+authors = [{name = "cosmodesi"}]
+description = "Lightweight primordial cosmology package, including wrappers for CLASS, CAMB, Eisenstein and Hu..."
+version = "1.0.0"
+dependencies = ["numpy", "scipy"]
+readme = "README.md"
+requires-python = ">=3.7"
+urls = {Repository = "https://github.com/cosmodesi/cosmoprimo"}
+classifiers = ["Programming Language :: Python :: 3"]
+
+[project.optional-dependencies]
+class = ["pyclass @ git+https://github.com/adematti/pyclass"]
+camb = ["camb"]
+isitgr = ["isitgr"]
+astropy = ["astropy"]
+extras = ["pyfftw"]
+jax = ["jax", "interpax"]
+
+[tool.setuptools]
+packages = ["cosmoprimo"]
+
+[tool.setuptools.package-data]
+cosmoprimo = ["data/*.dat", "data/*.csv", "bindings/*/*.yaml"]
+
+[tool.setuptools.dynamic]
+version = {attr = "cosmoprimo.__version__"}

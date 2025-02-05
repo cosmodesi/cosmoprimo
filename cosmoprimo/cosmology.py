@@ -1263,6 +1263,7 @@ class Cosmology(BaseCosmoParams):
 
         extra_params : dict, default=None
             Extra engine parameters, typically precision parameters.
+            If ``None``, and engine class is kept unchanged, re-use current ones.
 
         params : dict
             Cosmological and calculation parameters which take priority over the current ones.
@@ -1284,11 +1285,15 @@ class Cosmology(BaseCosmoParams):
         new._input_params = merge_params(base_params, params, conflicts=new.__class__._conflict_parameters)
         if engine is None and self._engine is not None:
             engine = self._engine.__class__
+        engine = get_engine(engine)
         new._params = new._compile_params(new._input_params, engine=engine)
         new._set_jax()
         if engine is not None:
             if extra_params is None:
-                extra_params = getattr(self._engine, '_extra_params', {})
+                if engine.name == getattr(self._engine, 'name', None):
+                    extra_params = getattr(self._engine, '_extra_params', {})
+                else:
+                    extra_params = {}
             new.set_engine(engine, **extra_params)
         return new
 

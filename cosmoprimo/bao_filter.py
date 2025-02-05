@@ -499,7 +499,7 @@ class Brieden2022PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
 
 
 class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
-    """
+    r"""
     Filter BAO wiggles by averaging the minima and maxima of the wiggles at the fiducial positions rescaled by :math:`r_{\mathrm{drag}} / r_{\mathrm{drag}}^{\mathrm{fid}}`.
     A simpler version of :class:`Brieden2022PowerSpectrumBAOFilter`.
 

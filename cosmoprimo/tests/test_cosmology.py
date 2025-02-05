@@ -1478,8 +1478,16 @@ def test_rs():
         print(params, cosmo_camb.rs_drag, cosmo_class.rs_drag / cosmo_camb.rs_drag, rs / cosmo_camb.rs_drag)
 
 
-if __name__ == '__main__':
+def test_bbn():
+    from cosmoprimo.fiducial import DESI
+    fiducial = DESI(extra_params={'sBBN file': 'bbn/sBBN.dat'})
+    cosmo = DESI(extra_params={'sBBN file': 'bbn/sBBN_2017.dat'})
+    test = DESI()
+    assert test.rs_drag == cosmo.rs_drag
+    print(fiducial.rs_drag / cosmo.rs_drag - 1.)
 
+
+if __name__ == '__main__':
 
     #test_precompute_ncdm()
     #test_interp()

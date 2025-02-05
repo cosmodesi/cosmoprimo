@@ -4,7 +4,7 @@ from .emulated import EmulatedEngine
 from .hybrid import CAPSEEngine
 
 
-def get_calculator(cosmo, xoperation=None, section=None):
+def get_calculator(cosmo, section=None):
 
     """
     Turn input cosmology into calculator:
@@ -34,15 +34,14 @@ def get_calculator(cosmo, xoperation=None, section=None):
             clone = cosmo.clone(**params)
             for section_name in section_names:
                 section = getattr(clone, 'get_{}'.format(section_name))()
-                getstate = getattr(section, '__getstate__', None)
-                if getstate is not None:
+                #getstate = getattr(section, '__getstate__', None)
+                if False: #getstate is not None:  Python3.12 defines __getstate__()...
                     state = getstate()
                 else:  # fallback to emulated' __getstate__
-                    getstate = getattr(getattr(emulated, section_name.capitalize(), None), '__getstate__', None)
-                    if getstate is not None:
+                    Section = getattr(emulated, section_name.capitalize(), None)
+                    if Section is not None:
+                        getstate = Section.__getstate__
                         state = getstate(section)
-                    else:
-                        continue
                 for name, value in state.items():
                     toret['{}.{}'.format(section_name, name)] = value
         except CosmologyError as exc:
@@ -56,8 +55,8 @@ class Emulator(tools.Emulator):
 
     """Subclass :class:`tools.Emulator` to be able to provide a cosmology as calculator."""
 
-    def set_calculator(self, calculator, params=None):
-        super(Emulator, self).set_calculator(get_calculator(calculator), params=params)
+    def _get_calculator(self, calculator, params=None):
+        return super(Emulator, self)._get_calculator(get_calculator(calculator), params=params)
 
 
 class BaseSampler(tools.samples.BaseSampler):
