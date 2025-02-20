@@ -15,6 +15,14 @@ class AxiClassEngine(classy.ClassEngine):
     _default_cosmological_parameters = dict()
 
     def _set_classy(self, params):
+        # Enable passing scf_parameters individually, works only for scf_parameters = [theta_i, tehta_dot_i]
+        if 'scf_parameters__1' in params:
+            if 'scf_parameters__2' not in params:
+                raise CosmologyInputError('scf_parameters__2 not found in params')
+            params['scf_parameters'] = [params['scf_parameters__1'], params['scf_parameters__2']]
+            # _ClassEngine do not expect scf_parameters__X to be in params
+            del params['scf_parameters__1']
+            del params['scf_parameters__2']
 
         class _ClassEngine(axiclass.ClassEngine):
 
