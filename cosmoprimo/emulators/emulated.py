@@ -127,11 +127,12 @@ class EmulatedEngine(BaseEngine):
     def load(cls, filename):
         """Load class from disk."""
 
-        class EmulatedEngine(cls):
+        class _EmulatedEngine(cls):
 
             path = filename
+            __module__ = cls.__module__
 
-        return EmulatedEngine
+        return _EmulatedEngine
 
     def _rescale_sigma8(self):
         """Rescale perturbative quantities to match input sigma8 or A_s."""

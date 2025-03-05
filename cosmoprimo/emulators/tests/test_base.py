@@ -5,14 +5,15 @@ import jax
 from jax import numpy as jnp
 
 from cosmoprimo.fiducial import DESI
-from cosmoprimo.emulators import Emulator, QMCSampler, MLPEmulatorEngine, EmulatedEngine, setup_logging
+from cosmoprimo.emulators import Emulator, QMCSampler, MLPEmulatorEngine, EmulatedEngine, get_calculator, setup_logging
 
 
 emulator_dir = '_tests'
-emulator_fn = os.path.join(emulator_dir, 'emu.npy')
 
 
 def test_base():
+    emulator_fn = os.path.join(emulator_dir, 'emu.npy')
+
     cosmo = DESI()
 
     params = {'Omega_cdm': (0.25, 0.26), 'h': (0.6, 0.8)}
@@ -44,8 +45,24 @@ def test_base():
     emulator.set_samples(samples=samples, engine=MLPEmulatorEngine(nhidden=(10, 10)))
 
 
-def test_jax():
+def test_custom():
+    emulator_fn = os.path.join(emulator_dir, 'emu2.npy')
 
+    from custom import CustomEngine
+
+    cosmo = DESI()
+    params = {'Omega_cdm': (0.25, 0.26), 'h': (0.6, 0.8)}
+    emulator = Emulator(get_calculator(cosmo, emulated_engine=CustomEngine), params=params, engine='point')
+    emulator.set_samples()
+    emulator.fit()
+    emulator.save(emulator_fn)
+
+    cosmo = DESI(engine=CustomEngine.load(emulator_fn))
+    cosmo.get_fourier().sigma8_m_custom
+
+
+def test_jax():
+    emulator_fn = os.path.join(emulator_dir, 'emu.npy')
     engine = EmulatedEngine.load(emulator_fn)
 
     def test(Omega_m=0.3):
@@ -78,5 +95,6 @@ if __name__ == '__main__':
     setup_logging()
 
     test_base()
+    test_custom()
     #test_jax()
     #test_interpax()

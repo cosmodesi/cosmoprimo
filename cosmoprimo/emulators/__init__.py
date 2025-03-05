@@ -1,10 +1,12 @@
+import sys
+
 from .tools import *
-from . import tools, emulated
+from . import tools
 from .emulated import EmulatedEngine
 from .hybrid import CAPSEEngine
 
 
-def get_calculator(cosmo, section=None):
+def get_calculator(cosmo, section=None, emulated_engine=None):
 
     """
     Turn input cosmology into calculator:
@@ -26,6 +28,9 @@ def get_calculator(cosmo, section=None):
         if section_name not in sorted_section_names:
             sorted_section_names.append(section_name)
     section_names = [section for section in sorted_section_names if section in section_names]
+    if emulated_engine is None:
+        emulated_engine = EmulatedEngine
+    emulated_module = sys.modules[emulated_engine.__module__]
 
     def calculator(**params):
         from cosmoprimo import CosmologyError
@@ -34,14 +39,16 @@ def get_calculator(cosmo, section=None):
             clone = cosmo.clone(**params)
             for section_name in section_names:
                 section = getattr(clone, 'get_{}'.format(section_name))()
+                state = {}
                 #getstate = getattr(section, '__getstate__', None)
                 if False: #getstate is not None:  Python3.12 defines __getstate__()...
                     state = getstate()
                 else:  # fallback to emulated' __getstate__
-                    Section = getattr(emulated, section_name.capitalize(), None)
+                    Section = getattr(emulated_module, section_name.capitalize(), None)
                     if Section is not None:
-                        getstate = Section.__getstate__
-                        state = getstate(section)
+                        getstate = getattr(Section, '__getstate__', None)
+                        if getstate is not None:
+                            state = getstate(section)
                 for name, value in state.items():
                     toret['{}.{}'.format(section_name, name)] = value
         except CosmologyError as exc:
