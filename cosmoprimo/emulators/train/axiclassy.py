@@ -12,9 +12,9 @@ from cosmoprimo.fiducial import DESI
 logger = logging.getLogger('classy')
 
 this_dir = Path(__file__).parent
-train_dir = Path(os.getenv('SCRATCH', '')) / 'emulators/train/classy/base_mnu_w_wa/'
-samples_fn = {name: train_dir / 'samples_{}'.format(name) for name in ['background', 'thermodynamics', 'fourier', 'harmonic']}
-emulator_dir = this_dir / 'classy_base_mnu_w_wa'
+train_dir = Path('/pscratch/sd/e/edmondc/emulators/train/classy/base_ede_config_4')
+samples_fn = {name: train_dir / 'samples' for name in ['background', 'thermodynamics', 'fourier', 'harmonic']}
+emulator_dir = this_dir / 'axiclassy_base_w_wa'
 emulator_fn = emulator_dir / 'emulator.npy'
 
 
@@ -102,7 +102,7 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
     #engine['fourier.*'] = MLPEmulatorEngine(nhidden=(512,) * 3)
     #engine['fourier.pk.delta_cb.delta_cb'] = MLPEmulatorEngine(nhidden=(512,) * 3, yoperation=[ChebyshevOperation(axis=0, order=100)])
     #engine['fourier.*'] = MLPEmulatorEngine(nhidden=(64,) * 3, yoperation=PCAOperation(npcs=30), activation='silu')
-    engine['harmonic.*'] = MLPEmulatorEngine(nhidden=(64,) * 6, yoperation=[Operation("v / jnp.exp(X['logA'] - 3.) / jnp.exp(-2 * X['tau_reio'])", inverse="v * jnp.exp(X['logA'] - 3.) * jnp.exp(-2 * X['tau_reio'])")]) #, yoperation=[ChebyshevOperation(axis=0, order=50)])
+    engine['harmonic.*'] = MLPEmulatorEngine(nhidden=(64,) * 4, yoperation=[Operation("v / jnp.exp(X['logA'] - 3.) / jnp.exp(-2 * X['tau_reio'])", inverse="v * jnp.exp(X['logA'] - 3.) * jnp.exp(-2 * X['tau_reio'])")]) #, yoperation=[ChebyshevOperation(axis=0, order=50)])
 
     if emulator_fn.exists():
         emulator = Emulator.load(emulator_fn)
@@ -168,14 +168,17 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
         emulator.save(emulator_fn)
     if 'harmonic' in section:
         samples = load_samples(samples_fn, include=['X.*', 'Y.harmonic.*'])
+        for name in samples.columns('X.*'):
+            print(name, samples[name].min(), samples[name].max())
         emulator.set_samples(samples=samples.select(['X.*', 'Y.harmonic.*']))
-        emulator.fit(name='harmonic.lensed_cl.tt', batch_frac=[0.2, 0.3, 0.3, 0.4, 0.5, 1.], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], patience=1000, epochs=50000)
+        #emulator.fit(name='harmonic.lensed_cl.tt', batch_frac=[0.2, 0.3, 0.3, 0.4, 0.5, 1.], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], patience=1000, epochs=5000)
+        emulator.fit(name='harmonic.lensed_cl.tt', batch_frac=[0.5, 0.7, 1., 1.], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5], validation_frac=0.2, patience=1000, epochs=5000)
         emulator.save(emulator_fn)
 
 
 def plot(samples_fn, section=('background', 'thermodynamics', 'primordial', 'fourier', 'harmonic')):
 
-    cosmo = DESI(engine=EmulatedEngine.load(emulator_fn))
+    cosmo = DESI(engine=EmulatedEngine.load(emulator_fn), ellmax_cl=3500)
     #cosmo = DESI(engine=EmulatedEngine.load({Path(__file__).parent / 'cosmopower_jense2024_base_w_wa/emulator_{}.npy'.format(section): 'https://github.com/adematti/cosmoprimo-emulators/raw/refs/heads/main/cosmopower_jense2024_base_w_wa/emulator_{}.npy'.format(section) for section in ['thermodynamics']}))
 
     if 'background' in section:
@@ -193,340 +196,53 @@ def plot(samples_fn, section=('background', 'thermodynamics', 'primordial', 'fou
         samples = load_samples(samples_fn, include=['X.*', 'Y.harmonic.lensed_cl.tt'])
         plot_residual_harmonic(samples, emulated_samples=cosmo, subsample=0.01, fsky=None, fn=emulator_dir / 'harmonic.png')
 
+def plot_cl():
+    from cosmoprimo.emulators import mask_subsample, InputSampler, get_calculator
 
-def plot_compression(samples_fn, section=('background', 'thermodynamics', 'primordial', 'fourier', 'harmonic')):
-
-    if 'background' in section:
-        quantities = ['rho_ncdm', 'p_ncdm', 'time', 'comoving_radial_distance']
-        samples = load_samples(samples_fn, include=['Y.background.{}'.format(name) for name in quantities])
-        samples_compression = samples.deepcopy()
-        operation = PCAOperation(npcs=30)
-        import jax
-        for quantity in quantities:
-            quantity = 'Y.background.' + quantity
-            operation.initialize(samples[quantity])
-            samples_compression[quantity] = jax.vmap(operation.inverse)(jax.vmap(operation)(samples[quantity]))
-        plot_residual_background(samples, emulated_samples=samples_compression, quantities=quantities, subsample=0.01, fn=emulator_dir / 'compression_background.png')
-
-    if 'fourier' in section:
-        quantities = ['pk.delta_cb.delta_cb']
-        samples = load_samples(samples_fn, include=['Y.fourier.{}'.format(name) for name in quantities])
-        samples_compression = samples.deepcopy()
-        operation = PCAOperation(npcs=30)
-        import jax
-        for quantity in quantities:
-            quantity = 'Y.fourier.' + quantity
-            operation.initialize(samples[quantity])
-            samples_compression[quantity] = jax.vmap(operation.inverse)(jax.vmap(operation)(samples[quantity]))
-        plot_residual_background(samples, emulated_samples=samples_compression, quantities=quantities, subsample=0.01, fn=emulator_dir / 'compression_background.png')
-
-
-def test():
-    from cosmoprimo.cosmology import Cosmology, DefaultBackground
-    from cosmoprimo.jax import vmap
-    from cosmoprimo.emulators.tools.base import batch_vmap
-
-    if 1:
-        ref = DESI(engine='class')
-        emu = DESI(engine='cosmopower_bolliet2023')
-        print(emu.rs_drag, ref.rs_drag)
-
-    if 0:
-        fiducial = DESI(engine='class', neutrino_hierarchy='degenerate')
-        ref = {name: getattr(fiducial, name) for name in ['z_drag']}
-        params = {'w0_fld': (-2., 0.)}
-        for param, limits in params.items():
-            test = {name: [] for name in ref}
-            values = np.linspace(*limits, 50)
-            for value in values:
-                cosmo = fiducial.clone(**{param: value})
-                for name in test: test[name].append(getattr(cosmo, name))
-            for name in test:
-                ratio = np.abs(np.array(test[name]) / ref[name] - 1.)
-                print(param, name, ratio)
-                plt.plot(values, ratio)
-                plt.savefig('{}.png'.format(name))
-
-    if 0:
-        fiducial = DESI(w0_fld=0., engine='class', neutrino_hierarchy='degenerate')
-        ref = {name: getattr(fiducial, name) / fiducial['h'] for name in ['rs_drag']}
-        params = {'wa_fld': (-3., 0.)}
-        for param, limits in params.items():
-            test = {name: [] for name in ref}
-            values = np.linspace(*limits, 50)
-            for value in values:
-                cosmo = fiducial.clone(**{param: value})
-                for name in test: test[name].append(getattr(cosmo, name) / cosmo['h'])
-            for name in test:
-                ratio = np.abs(np.array(test[name]) / ref[name] - 1.)
-                print(param, name, ratio)
-                #plt.plot(values, ratio)
-                
-                def func(x, a, b):
-                    return test[name] * (1. + a * np.exp(b * (x - 1. / 3.)))
-                    #return test[name] * (1. + a * np.abs(x - 1. / 3.)**b)
-
-                import scipy
-                popt = scipy.optimize.curve_fit(func, values, ref[name])[0]
-                print(popt)
-                plt.plot(values, func(values, 0., 0.) / ref[name])
-                plt.plot(values, func(values, *popt) / ref[name])
-                #plt.plot(values, func(values, 400, 20) / ref[name])
-                plt.savefig('{}.png'.format(name))
-    
-    if 0:
-        fiducial = DESI(engine='class', neutrino_hierarchy='degenerate')
-        ref = {name: getattr(fiducial, name) / fiducial['h'] for name in ['rs_drag']}
-        #params = {'w0_fld': (-3., 1.)}
-        #params = {'h': (0.2, 1.), 'w0_fld': (-3., 1.), 'wa_fld': (-3., 2.)}
-        params = {'omega_b': (0.005, 0.05)}
-        for param, limits in params.items():
-            test = {name: [] for name in ref}
-            for value in np.linspace(*limits, 4):
-                try:
-                    cosmo = fiducial.clone(**{param: value})
-                    for name in test: test[name].append(getattr(cosmo, name) / cosmo['h'])
-                except:
-                    continue
-            for name in test:
-                print(param, name, np.abs(np.array(test[name]) / ref[name] - 1.))
-
-    if 0:
-        cosmo = DESI(engine='class', m_ncdm=0., lensing=True)
-        params = {'h': (0.7, 0.7001), 'omega_cdm': (0.02, 0.02001), 'omega_b': (0.005, 0.005001), 'm_ncdm': (0.06, 0.06001), 'logA': (3., 3.0001), 'w0_fld': (-3., 1.), 'wa_fld': (-3., 2.)}
-        calculator = get_calculator(cosmo, section=['harmonic'])
-        sampler = QMCSampler(calculator, params, engine='lhs', seed=42)
-        samples = sampler.run(niterations=4)
-        samples = samples[samples.isfinite()]
-        X = {name[2:]: samples[name] for name in samples.columns('X.*')}
-        Y = {name[2:]: samples[name] for name in samples.columns('Y.*')}
-        Yref = dict(Y)
-        operation = HarmonicNormOperation()
-        operation.initialize(Y)
+    cosmo = DESI(engine=EmulatedEngine.load(emulator_fn))
+    #cosmo = DESI(engine=EmulatedEngine.load('classy_base_mnu_w_wa/emulator.npy'))
+    #cosmo = DESI(engine='capse')
+    samples = load_samples(samples_fn['harmonic'], include=['X.*', 'Y.harmonic.lensed_cl.tt'])
+    if True:
+        values = samples['Y.harmonic.lensed_cl.tt']
+        ells = np.arange(values.shape[-1])
+        values /= np.median(values, axis=0)
         ax = plt.gca()
-        ax.plot(operation.wells['unlensed_cl'], operation.windows['unlensed_cl'])
-        ax.set_xscale('log')
-        plt.savefig('tmp.png')
-        plt.close(plt.gcf())
-        Y = batch_vmap(operation, (0, 0))(Y, X)
+        qs = [0., 0.001, 0.01, 0.1, 0.9, 0.99, 0.999, 1.]
+        for q in qs:
+            ax.plot(ells, np.quantile(values, q=q, axis=0), label='quantile {:.1f}%'.format(100 * q))
+        ax.set_xlabel(r'$\ell$')
+        ax.set_ylabel(r'$C_\ell$ / median($C_\ell$)')
+        ax.legend(frameon=False, ncols=2, loc=2)
+        ax.set_yscale('log')
+        plt.savefig('cl.png')
+        
+    else:
+        samples = samples[mask_subsample(samples.size, factor=0.01, seed=42)][:2]
+        print(samples.size)
+        sampler = InputSampler(get_calculator(cosmo, section='harmonic'), samples=samples)
+        emulated_samples = sampler.run()
+        values = emulated_samples['Y.harmonic.lensed_cl.tt']
+        ells = np.arange(values.shape[-1])
         ax = plt.gca()
-        for i, cl in enumerate(Y['harmonic.unlensed_cl.tt']):
-            ell = np.arange(cl.shape[-1])
-            factor = ell * (ell + 1)
-            print(i, cl)
-            ax.plot(ell, factor * cl)
-        ax.set_xscale('log')
-        plt.savefig('tmp1.png')
-        plt.close(plt.gcf())
-        Y = batch_vmap(operation.inverse, (0, 0))(Y, X)
-        ax = plt.gca()
-        name = 'harmonic.unlensed_cl.tt'
-        for i, cl in enumerate(Y[name]):
-            ax.plot(ell, cl / Yref[name][i])
-        ax.set_xscale('log')
-        plt.savefig('tmp2.png')
-        plt.close(plt.gcf())
-        return
-
-    if 0:
-        cosmo = DESI(engine='class', m_ncdm=0.)
-        #params = {'h': (0.7, 0.9), 'logA': (3., 4.)} #, 'w0_fld': (-3., 1.), 'wa_fld': (-3., 2.)}
-        params = {'h': (0.7, 0.7001), 'omega_cdm': (0.02, 0.02001), 'omega_b': (0.005, 0.005001), 'm_ncdm': (0.06, 0.06001), 'logA': (3., 3.0001), 'w0_fld': (-3., 1.), 'wa_fld': (-3., 2.)}
-        calculator = get_calculator(cosmo, section=['fourier'])
-        sampler = QMCSampler(calculator, params, engine='lhs', seed=42)
-        samples = sampler.run(niterations=4)
-        samples = samples[samples.isfinite()]
-        X = {name[2:]: samples[name] for name in samples.columns('X.*')}
-        Y = {name[2:]: samples[name] for name in samples.columns('Y.*')}
-        Yref = dict(Y)
-        operation = FourierNormOperation()
-        operation.initialize(Y)
-        Y = batch_vmap(operation, (0, 0))(Y, X)
-        k = Y['fourier.k'][0]
-        ax = plt.gca()
-        for i, pk in enumerate(Y['fourier.pk.delta_cb.delta_cb']):
-            ax.loglog(k, pk)
-        plt.savefig('tmp.png')
-        plt.close(plt.gcf())
-        Y = batch_vmap(operation.inverse, (0, 0))(Y, X)
-        ax = plt.gca()
-        name = 'fourier.pk.delta_cb.delta_cb'
-        for i, pk in enumerate(Y[name]):
-            k = Y['fourier.k'][i]
-            ax.plot(k, pk[..., 0] / Yref[name][i][..., 0])
-        ax.set_xscale('log')
-        plt.savefig('tmp2.png')
-        plt.close(plt.gcf())
-        return
-
-    if 0:
-        engine = Emulator.load(emulator_fn)
-        engine.yoperations = engine.yoperations[:-1]
-        pkname ='Y.fourier.pk.delta_cb.delta_cb'
-        engine.engines = {name: engine for name, engine in engine.engines.items() if name in [pkname[2:]]}
-        predict = batch_vmap(engine.predict)
-
-        def load_samples(**kwargs):
-            samples = Samples.concatenate([Samples.load(fn, **kwargs) for fn in glob.glob(str(samples_fn['fourier']) + '*')[:1]])
-            mask = samples.isfinite()
-            return samples[mask]
-
-        samples = load_samples(include=['X.*', 'Y.fourier.k', 'Y.fourier.z', 'Y.fourier.z_non_linear', pkname], exclude=['X.tau_reio'])[:10]
-        X = {name[2:]: samples[name] for name in samples.columns('X.*')}
-        Y = {name[2:]: samples[name] for name in samples.columns('Y.*')}
-        operation = FourierNormOperation()
-        operation.initialize(Y)
-        Y = batch_vmap(operation, (0, 0))(Y, X)
-        emulated_Y = predict(X)
-        samples = Samples({**{'X.' + name: value for name, value in X.items()}, **{'Y.' + name: value for name, value in Y.items()}})
-        emulated_samples = Samples({**{'X.' + name: value for name, value in X.items()}, **{'Y.' + name: value for name, value in emulated_Y.items()}})
-        samples[pkname] = samples[pkname][..., None]
-        emulated_samples[pkname] = emulated_samples[pkname][..., None]
-        plot_residual_fourier(samples, emulated_samples=emulated_samples, quantities=[pkname[len('Y.fourier.'):]], volume=None, fn='tmp3.png')
-
-    if 0:
-        def load_samples(**kwargs):
-            samples = Samples.concatenate([Samples.load(fn, **kwargs) for fn in glob.glob(str(samples_fn['fourier']) + '*')[:1]])
-            mask = samples.isfinite()
-            return samples[mask]
-
-        #samples = load_samples(include=['X.*', 'Y.thermodynamics.*'], exclude=['X.logA', 'X.n_s', 'X.tau_reio'])
-        samples = load_samples(include=['X.*', 'Y.thermodynamics.*'])
-        #params = [name[2:] for name in samples.columns('X.*')]
-
-        def get_default_k_callable():
-            k = np.concatenate([np.array([1e-6]),
-                                np.logspace(-5, -4, num=20, endpoint=False),
-                                np.logspace(-4, -3, num=40, endpoint=False),
-                                np.logspace(-3, -2, num=60, endpoint=False),
-                                np.logspace(-2, -1, num=80, endpoint=False),
-                                np.logspace(-1, 0, num=100, endpoint=False),
-                                np.logspace(0, 1, num=120, endpoint=True),
-                                np.array([1e2])])
-            return k
-
-        k = get_default_k_callable()
-
-        def test(X):
-            cosmo = Cosmology(**X)
-            #return cosmo.get_background(engine='bbks').comoving_radial_distance(1.)
-            h = cosmo['h']
-            return cosmo.get_primordial(engine='eisenstein_hu').pk_k(k=k * h) / h**3
-
-        """
-        def test(params):
-            #cosmo = Cosmology(**params, engine=None)
-            cosmo = DESI(**params, engine=None)
-            background = DefaultBackground(cosmo)
-            #background = BaseBackground(cosmo)
-            return background.comoving_radial_distance(1.)
-        """
-        import time, jax
-        test = jax.jit(test)
-        size = 100
-        X = {name[2:]: samples[name][:size] for name in samples.columns('X.*')}
-        t0 = time.time()
-        for i in range(size): test({name: X[name][i] for name in X})
-        print(time.time() - t0)
-        test = jax.jit(jax.vmap(test))
-        X = {name[2:]: samples[name][:size] for name in samples.columns('X.*')}
-        t0 = time.time()
-        test(X)
-        print(time.time() - t0)
-        t0 = time.time()
-        test(X)
-        print(time.time() - t0)
-        return
-        X = np.column_stack([samples['X.' + param] for param in samples])
-        Y = samples['Y.thermodynamics.rs_drag']
-        from cosmoprimo.emulators import MLPEmulatorEngine
-
-        fn = 'tmp.npy'
-        if True:
-            engine = MLPEmulatorEngine(nhidden=(10,) * 3)
-            engine.initialize(params=params)
-            engine.fit(X, Y, batch_frac=[0.02, 0.05, 0.1, 0.2, 0.4, 0.5], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], epochs=1000, verbose=True)
-            engine.save(fn)
-        if True:
-            engine = MLPEmulatorEngine.load(fn)
-            from jax import vmap
-            Y_pred = vmap(engine.predict)(X)
-            diff = np.max(Y / Y_pred - 1.)
-            print(diff.mean(), diff.max())
-
-
-def test_pk():
-    cosmo = DESI()
-
-    k = np.logspace(-2., 1., 1000)
-    ax = plt.gca()
-
-    #list_params = [{'w0_fld': -1., 'wa_fld': 0., 'h': 0.6, 'Omega_k': -0.3}, {'w0_fld': -2., 'wa_fld': -1., 'h': 0.8, 'Omega_k': 0.3}]
-    list_params = [{'h': 0.6}, {'h': 0.8}]
-
-    for ip, params in enumerate(list_params):
-        cosmo = DESI(**params, m_ncdm=0.)
-        pk = cosmo.get_fourier().pk_interpolator(of='delta_m').to_1d(z=10.)
-        s = cosmo['h']
-        tmp = pk(k / s) / s**3 #pk(0.1 / s)
-        if ip == 0:
-            ref = tmp
-        else:
-            ax.plot(k, tmp / ref)
-            ax.set_xscale('log')
-            #ax.set_yscale('log')
-
-    plt.show()
-
-
-def test_cl():
-    cosmo = DESI()
-
-    k = np.logspace(-2., 1., 1000)
-    ax = plt.gca()
-
-    #list_params = [{'w0_fld': -1., 'wa_fld': 0., 'h': 0.6, 'Omega_k': -0.3}, {'w0_fld': -2., 'wa_fld': -1., 'h': 0.8, 'Omega_k': 0.3}]
-    #list_params = [{'w0_fld': -3., 'wa_fld': -3.}, {'w0_fld': 1., 'wa_fld': 2.}]
-    #list_params = [{'w0_fld': -0.78606431, 'wa_fld': 1.83985796}]
-    list_params = [{'w0_fld': -1.37079802, 'wa_fld': -0.40845624}]
-    ref = DESI()
-
-    if 1:
-        for ip, params in enumerate(list_params):
-            cosmo = DESI(**params)
-            cl = cosmo.get_harmonic().unlensed_cl()
-            ell = cl['ell']
-            factor = (ell + 1) * ell
-            s = (ref.comoving_angular_distance(cosmo.z_star) / ref.rs_star) / (cosmo.comoving_angular_distance(cosmo.z_star) / cosmo.rs_star)
-            ax.plot(ell * s, factor * cl['tt'])
-            ax.set_xscale('log')
-        plt.savefig('tmp3.png')
-        plt.close(plt.gcf())
-    if 1:
-        from cosmoprimo.jax import Interpolator1D
-        for ip, params in enumerate(list_params):
-            cosmo = DESI(**params)
-            cl = cosmo.get_harmonic().unlensed_cl()
-            ell = cl['ell']
-            factor = (ell + 1) * ell
-            s = (ref.comoving_angular_distance(cosmo.z_star) / ref.rs_star) / (cosmo.comoving_angular_distance(cosmo.z_star) / cosmo.rs_star)
-            ax.plot(ell, Interpolator1D(ell, Interpolator1D(ell, cl['tt'])(ell / s))(ell * s))
-            ax.set_xscale('log')
-        plt.savefig('tmp4.png')
-        plt.close(plt.gcf())
-    plt.show()
+        for value in values:
+            mask = ells > 1
+            ax.plot(ells[mask], (ells * (1 + ells) * value)[mask], color='k')
+        plt.savefig('cl.png')
 
 
 if __name__ == '__main__':
 
     """Uncomment to run."""
 
-    todo = ['sample']
-    #todo = ['fit']
+    #todo = ['sample']
+    todo = ['fit']
     #todo = ['plot']
     #todo = ['plot_compression']
     #todo = ['test']
     setup_logging()
+    plot_cl()
+    exit()
 
     if todo:
         from desipipe import Queue, Environment, TaskManager, spawn, setup_logging
