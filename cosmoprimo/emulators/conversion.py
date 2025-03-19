@@ -276,6 +276,7 @@ if __name__ == '__main__':
     convert = ['cosmopower_bolliet2023_base', 'cosmopower_bolliet2023_base_mnu', 'cosmopower_bolliet2023_base_w',
                'cosmopower_jense2024_base', 'cosmopower_jense2024_base_mnu', 'cosmopower_jense2024_base_w_wa']
     test = convert
+    convert = []
 
     def get_source_jaxcapse(name, return_params=False):
         if 'jaxcapse' in name:

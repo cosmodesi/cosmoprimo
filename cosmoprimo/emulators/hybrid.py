@@ -2,7 +2,7 @@ import os
 
 from pathlib import Path
 
-from .emulated import EmulatedEngine, Thermodynamics, Harmonic
+from .emulated import EmulatedEngine, Thermodynamics, Harmonic, Fourier
 
 
 def get_train_dir():
