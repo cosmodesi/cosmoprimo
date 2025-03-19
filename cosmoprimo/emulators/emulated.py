@@ -1,10 +1,8 @@
 """Emulated cosmological calculation."""
 
 import os
-from pathlib import Path
 
 import numpy as np
-from scipy import interpolate
 
 from cosmoprimo.interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 from cosmoprimo.cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyInputError, CosmologyComputationError, find_conflicts
@@ -51,6 +49,8 @@ class EmulatedEngine(BaseEngine):
                 self.path = {str(self.path): None}
             for path, url in self.path.items():
                 if not os.path.exists(path):
+                    import warnings
+                    warnings.warn('Downloading the emulator data. You can set the directory with the environment variable COSMOPRIMO_EMULATOR_DIR')
                     from cosmoprimo.emulators.tools.utils import download
                     download(url, path)
                 emulator.update(Emulator.load(path))

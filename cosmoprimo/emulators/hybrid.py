@@ -9,7 +9,7 @@ def get_train_dir():
     dirname = os.getenv('COSMOPRIMO_EMULATOR_DIR', '')
     if not dirname:
         dirname = Path(__file__).parent
-    return dirname / 'train'
+    return Path(dirname) / 'train'
 
 
 from cosmoprimo.cosmology import DefaultBackground
