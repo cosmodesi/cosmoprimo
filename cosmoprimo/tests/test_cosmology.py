@@ -779,6 +779,37 @@ def test_isitgr(plot=False):
         plt.show()
 
 
+def test_mgcamb(plot=False):
+    cosmo_camb = Cosmology(engine='camb')
+    try:
+        cosmo = Cosmology(engine='mgcamb')
+    except ImportError:
+        return
+
+    k = np.linspace(0.01, 1., 200)
+    z = np.linspace(0., 2., 10)
+    assert np.allclose(cosmo_camb.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=5e-3)
+
+    cosmo = Cosmology(engine='mgcamb', MG_flag=1, **{'mu0': -0.5, 'sigma0': 1.}, extra_params=dict(AccuracyBoost=1.1))
+    assert not np.allclose(cosmo_camb.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=5e-3)
+    cosmo.comoving_radial_distance(z)
+
+    from cosmoprimo.fiducial import DESI
+    cosmo = DESI(engine='mgcamb')
+
+    if plot:
+        z = 1.
+        k = np.linspace(0.001, 0.2, 100)
+        from matplotlib import pyplot as plt
+        ax = plt.gca()
+        for kwargs in [{}, {'mu0': -0.5, 'sigma0': 0.}, {'mu0': -0.5, 'sigma0': 1.}]:
+            pk = Cosmology(engine='mgcamb', MG_flag=1, **kwargs).get_fourier().pk_interpolator(of='delta_cb').to_1d(z=z)
+            #ax.plot(k,  k * pk(k), label=str(kwargs))
+            k = pk.k; ax.loglog(k,  pk(k), label=str(kwargs))
+        ax.legend()
+        plt.show()
+
+
 def test_axiclass():
 
     cosmo_class = Cosmology(engine='class')
@@ -1517,6 +1548,7 @@ if __name__ == '__main__':
     test_external_pyccl()
     test_bisect()
     test_isitgr()
+    test_mgcamb()
     test_axiclass()
     test_mochiclass()
     test_negnuclass()
