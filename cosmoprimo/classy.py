@@ -16,25 +16,24 @@ class ClassEngine(BaseEngine):
         super().__init__(*args, **kwargs)
         params = self._params.copy()
         extra_params = self._extra_params.copy()
-        params = {**extra_params, **params}
+        params = extra_params | params
         lensing = params.pop('lensing')
-        params['k_pivot'] = params['k_pivot']
         params['lensing'] = 'yes' if lensing else 'no'
         params['modes'] = ','.join(params['modes'])
         if 't' not in params['modes']: del params['r']
-        params['z_max_pk'] = max(params.pop('z_pk'))
-        params['P_k_max_h/Mpc'] = params.pop('kmax_pk')
-        params['l_max_scalars'] = params.pop('ellmax_cl')
+        params.setdefault('z_max_pk', max(params.pop('z_pk')))
+        params.setdefault('P_k_max_h/Mpc', params.pop('kmax_pk'))
+        params.setdefault('l_max_scalars', params.pop('ellmax_cl'))
         if params['non_linear']:
             # Seems fixed
             #params['z_max_pk'] = min(params['z_max_pk'], 2.)  # otherwise error
             non_linear = params['non_linear']
             if non_linear in ['mead', 'hmcode']:
                 params['non_linear'] = 'hmcode'
-                params['hmcode_min_k_max'] = params['P_k_max_h/Mpc']
+                params.setdefault('hmcode_min_k_max', params['P_k_max_h/Mpc'])
             elif non_linear in ['halofit']:
                 params['non_linear'] = 'halofit'
-                params['halofit_min_k_max'] = params['P_k_max_h/Mpc']
+                params.setdefault('halofit_min_k_max', params['P_k_max_h/Mpc'])
             else:
                 raise CosmologyInputError('Unknown non-linear code {}'.format(non_linear))
             # As we cannot rescale sigma8 for the non-linear power spectrum
@@ -49,7 +48,7 @@ class ClassEngine(BaseEngine):
             params.pop('m_ncdm')
             params.pop('T_ncdm')
         params['use_ppf'] = 'yes' if params['use_ppf'] else 'no'
-        params['fluid_equation_of_state'] = 'CLP'
+        params.setdefault('fluid_equation_of_state', 'CLP')
         if self._has_fld:
             params['Omega_Lambda'] = 0.  # will force non-zero Omega_fld
         else:
