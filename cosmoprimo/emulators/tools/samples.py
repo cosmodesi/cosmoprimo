@@ -369,22 +369,28 @@ class BaseSampler(BaseClass):
             nsplits = (samples.size + save_every - 1) // save_every
         nsplits = self.mpicomm.bcast(nsplits if self.mpicomm.rank == 0 else None, root=0)
         default_params = self.mpicomm.bcast(default_params if self.mpicomm.rank == 0 else None, root=0)
-
         try:
-            default_state = self.calculator(**default_params)
+            default_X = self.reparam(default_params)
+            default_state = self.calculator(**default_X)
         except Exception as exc:
             raise ValueError('error when running calculator with params {}, could not obtain default state'.format(default_params)) from exc
+        default_X = {name: np.full_like(value, np.nan) for name, value in default_X.items()}
         default_state = {name: np.full_like(value, np.nan) for name, value in default_state.items()}
         for isplit in range(nsplits):
             isample_min, isample_max = self.mpicomm.bcast((isplit * samples.size // nsplits, (isplit + 1) * samples.size // nsplits) if self.mpicomm.rank == 0 else None, root=0)
             scatter_samples = Samples.scatter(samples[isample_min:isample_max] if self.mpicomm.rank == 0 else None, mpicomm=self.mpicomm, mpiroot=0)
+            for name, value in default_X.items():
+                scatter_samples.setdefault('X.' + name, np.repeat(value[None, ...], scatter_samples.size, axis=0))
             for name, value in default_state.items():
                 scatter_samples['Y.' + name] = np.repeat(value[None, ...], scatter_samples.size, axis=0)
             for ivalue in range(scatter_samples.size):
                 try:
-                    state = self.calculator(**{name: scatter_samples['X.' + name][ivalue] for name in default_params})
+                    X = self.reparam({name: scatter_samples['X.' + name][ivalue] for name in default_params})
+                    state = self.calculator(**X)
                 except CalculatorComputationError:
                     continue
+                for name, value in X.items():
+                    scatter_samples['X.' + name][ivalue] = value
                 for name, value in state.items():
                     scatter_samples['Y.' + name][ivalue] = value
             gather_samples = Samples.gather(scatter_samples, mpicomm=self.mpicomm, mpiroot=0)
@@ -410,7 +416,7 @@ class BaseSampler(BaseClass):
     def points(self, **kwargs):
         # Return Samples instance containing points to use evaluate calculator against.
         points = self._points(**kwargs)
-        return Samples(self.reparam(points), attrs=points.attrs)
+        return Samples(points, attrs=points.attrs)
 
 
 class InputSampler(BaseSampler):

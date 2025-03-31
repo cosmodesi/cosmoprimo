@@ -130,6 +130,7 @@ class CambEngine(BaseEngine):
                 non_linear = {'halofit_version': halofit_version} | {kk: all_params.pop(kk) for kk in getfullargspec(self._camb_params.NonLinearModel.set_params).args[1:] if kk in all_params}
                 #all_params['nonlinear'] = True   # this activates a warning on halofit precision if (kmax < 5 or kmax < 20 and np.max(zs) > 4)
                 if base_params['Want_CMB_lensing']: all_params.setdefault('lens_potential_accuracy', 1)
+
             self.camb.set_params(self._camb_params, **all_params)
 
             # Parameter not included in set_params

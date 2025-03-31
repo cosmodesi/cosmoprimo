@@ -17,6 +17,7 @@ doc/_build/
 **/_sbatch
 **/*.png
 **/*.npy
+**/nb
 
 # Unit test / coverage reports
 **/.coverage

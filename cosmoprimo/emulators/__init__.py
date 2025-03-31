@@ -364,6 +364,7 @@ def plot_residual_harmonic(ref_samples, emulated_samples, quantities=None, fsky=
             ax.scatter(ells[mask], diff[mask], color=color, marker='.', alpha=0.1)
         ax.set_ylabel(ylabel)
         ax.set_yscale('log')
+        ax.set_ylim(1e-5, 1.)
         ax.set_title(name)
         ax.grid(True)
     ax.set_xlabel(r'$\ell$')
