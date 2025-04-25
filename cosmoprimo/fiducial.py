@@ -8,7 +8,7 @@ from . import constants
 _dir_data = os.path.join(os.path.dirname(__file__), 'data')
 
 
-def Uchuu_Planck2015(engine=None, extra_params=None, **params):
+def UchuuPlanck2015(engine=None, extra_params=None, **params):
     """
     Initialize :class:`Cosmology` based on Table 4 Planck2015 TT,TE,EE+lowP+lensing.
     
