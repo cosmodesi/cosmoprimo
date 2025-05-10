@@ -116,14 +116,15 @@ def test_jax():
     def fun(x, a=0.):
         return x**3 + a
 
-    limits = jnp.array([-1., 1.])
+    limits = jnp.array([-1.02, 2.01])
     for atol in [1e-3, 1e-6]:
-        assert np.allclose(bisect(fun, *limits, xtol=atol), 0., atol=atol)
+        tmp = bisect(fun, limits, xtol=atol)
+        assert np.allclose(tmp, 0., atol=atol)
 
     def fun(x, a=0.):
         return x**3 - a
 
-    print(jax.jacfwd(lambda a: bisect(lambda x: fun(x, a=a), *limits, xtol=atol))(0.1))
+    print(jax.jacrev(lambda a: bisect(lambda x: fun(x, a=a), limits, xtol=atol))(1.))
 
     def fun(x):
         return x
@@ -141,8 +142,6 @@ def test_jax():
         return z
 
     print(odeint(integrand, 0., jnp.linspace(0., 1., 100)))
-
-
 
 
 if __name__ == '__main__':

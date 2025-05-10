@@ -741,7 +741,7 @@ def test_bisect():
     from cosmoprimo.fiducial import DESI
     cosmo = clone(DESI(engine='class'), dict(theta_star=0.0104))
     print(cosmo.get_thermodynamics().theta_star)
-    cosmo2 = DESI(engine='class').solve('h', lambda cosmo: 100. * cosmo.get_thermodynamics().theta_star, target=100. * 0.0104, limits=[0.6, 0.9], xtol=1e-6, rtol=1e-6)
+    cosmo2 = DESI(engine='class').solve('h', lambda cosmo: 100. * cosmo.get_thermodynamics().theta_star, target=100. * 0.0104, limits=[0.6, 0.9], xtol=1e-6)
     assert np.allclose(cosmo2['h'], cosmo['h'])
 
 
@@ -1497,6 +1497,48 @@ def test_emu():
     print(cosmo.rs_drag)
 
 
+def test_bisect_emu():
+    import time
+
+    import jax
+    from jax import numpy as jnp
+    from cosmoprimo.fiducial import DESI
+
+    from cosmoprimo.fiducial import DESI
+
+    def test(value):
+        cosmo = DESI(Omega_ncdm=value, engine='capse')
+        return cosmo['theta_MC_100']
+
+    test = jax.jit(test)
+    jax.block_until_ready(test(1.1 * 1e-4))
+    t0 = time.time()
+
+    for i in range(3):
+        tmp = test(i * 1e-4)
+        jax.block_until_ready(tmp)
+        print(tmp)
+
+    print('time', time.time() - t0)
+
+    def test(target):
+        cosmo = DESI(engine='capse', m_ncdm=0.)
+        target = jnp.array(target)
+        cosmo = cosmo.solve('h', 'theta_MC_100', target=target)
+        return cosmo['h']
+
+    test = jax.jit(test)
+    jax.block_until_ready(test(1.04))
+
+    t0 = time.time()
+
+    for i in range(3):
+        tmp = test(1.04 + 0.0001 * i)
+        jax.block_until_ready(tmp)
+
+    print(time.time() - t0)
+
+
 def test_rs():
 
     from cosmoprimo.fiducial import DESI
@@ -1520,6 +1562,9 @@ def test_bbn():
 
 if __name__ == '__main__':
 
+
+    #test_bisect_emu()
+    #test_jax()
     #test_precompute_ncdm()
     #test_interp()
     test_jax()

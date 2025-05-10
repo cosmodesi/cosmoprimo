@@ -902,33 +902,21 @@ class Cosmology(BaseCosmoParams):
         else:
             engine = BaseEngine
 
-        from .jax import use_jax
+        from .jax import use_jax, exception_or_nan
 
         if use_jax(*params.values()):
             from jax import numpy as jnp
             from .jax import array_types as jax_array_types
             from .jax import for_cond_loop_jax as for_cond_loop
-            from .jax import exception_jax as exception
             from jax.lax import cond
         else:
             from .jax import for_cond_loop_numpy as for_cond_loop
-            from .jax import exception_numpy as exception
             from .jax import cond_numpy as cond
             jnp = np
             jax_array_types = ()
 
         def _make_float(value):
             return jnp.array(value, dtype='f8')
-
-        def exception_or_nan(value, cond, error):
-            if use_jax(cond, tracer_only=True):
-                value = jnp.where(cond, jnp.nan, value)
-            else:
-                def raise_error(cond, value):
-                    if cond: error(value)
-
-                exception(raise_error, cond, value)
-            return value
 
         if 'H0' in params:
             params['h'] = params.pop('H0') / 100.
@@ -1299,9 +1287,10 @@ class Cosmology(BaseCosmoParams):
             new.set_engine(engine, **extra_params)
         return new
 
-    def solve(self, param, func, target=0., limits=None, xtol=1e-6, rtol=1e-6, maxiter=100):
+    def solve(self, param, func, target=0., limits=None, init=None, xtol=1e-6, maxiter=25):
         """
         Return cosmology ``cosmo`` that verifies ``func(cosmo) == target``, by varying parameter ``param``.
+        TODO: implement multi-dimensional matching.
 
         Parameters
         ----------
@@ -1317,47 +1306,68 @@ class Cosmology(BaseCosmoParams):
             Target value.
 
         limits : tuple, list, default=None
-            Variation range for ``param``.
+            Limits for ``param``. An error (or nan with JAX) will be raised if a root cannot be found within limits.
+
+        init : float, tuple, default=None
+            Initial value x0 to bracket the solution.
+            One can provide the tuple (x0, dx) = (initial value, typical variation).
 
         xtol : float, default=1e-6
-            Absolute tolerance on the value of ``param``. See :func:`scipy.optimize.bisect`.
+            Absolute tolerance on the value of ``param``.
 
-        rtol : float, default=1e-6
-            Relative tolerance on the value of ``param``. See :func:`scipy.optimize.bisect`.
-
-        maxiter : int, default=100
+        maxiter : int, default=25
             If convergence is not achieved in ``maxiter`` iterations, an error is raised. Must be >= 0.
 
         Returns
         -------
         new : Cosmology
         """
-        default_limits = {'h': [0.1, 2.], 'H0': [10., 200.]}
-        default_tol = {'h': (1e-6, 1e-6), 'H0': (1e-4, 1e-6)}
+        default_delta = {'h': [0.6, 0.8], 'H0': [60., 80.]}
+        default_tol = {'h': 1e-6, 'H0': 1e-4}
+
+        def f(value):
+            try:
+                new = self.clone(base='input', **{param: value})
+                toret = func(new) - target
+            except CosmologyError:
+                raise ValueError
+            return toret
 
         if func == 'theta_MC_100':
-            func = lambda cosmo: 100. * cosmo['theta_cosmomc']
+            func = lambda cosmo: cosmo['theta_MC_100']
+            if init is None and param in ['h', 'H0']:
+                # From class_public
+                init = 3.54 * target**2 - 5.455 * target + 2.548
+                f1 = f(init)
+                init = (init, f1, f1 * (2 * 3.54 * target - 5.455))
+                if param == 'H0': init = (100 * init[0], init[1], 100 * init[2])
         if func is None:
             raise CosmologyInputError('Provide func')
-        if limits is None:
-            limits = default_limits.get(param, None)
-            if limits is None:
-                raise CosmologyInputError('Provide limits')
+        if init is None:
+            init = self[param]
+        if not is_sequence(init):
+            delta = default_delta.get(param, None)
+            if delta is not None:
+                dx = (delta[1] - delta[0]) / 2.
+                f1 = f(init)
+                dfdx = f(init + dx) - f1
+                init = (init, f1 / dfdx, f1)
+            elif limits is None:
+                raise ValueError('provide either init tuple (x0, dx) = (initial value, typical variation), or parameter limits')
         if xtol is None:
-            xtol = default_tol.get(param, [1e-6] * 2)[0]
-        if rtol is None:
-            rtol = default_tol.get(param, [1e-6] * 2)[1]
+            xtol = default_tol.get(param, 1e-6)
 
         value = self[param]
 
-        def f(value):
-            new = self.clone(base='input', **{param: value})
-            return func(new) - target
-
-        from .jax import bisect
+        from .jax import bracket, bisect
+        if init is not None:
+            try:
+                limits = bracket(f, init=init, maxiter=maxiter)
+            except ValueError as exc:
+                raise CosmologyInputError('Could not find proper {} value in the interval that matches target = {:.4f} with [f({:.3f}), f({:.3f})] = [{:.4f}, {:.4f}]'.format(param, target, *limits, *[f(x) + target for x in limits])) from exc
 
         try:
-            value = bisect(f, *limits, xtol=xtol, rtol=rtol, maxiter=maxiter, disp=True)
+            value = bisect(f, limits=limits, xtol=xtol, maxiter=maxiter)
         except ValueError as exc:
             raise CosmologyInputError('Could not find proper {} value in the interval that matches target = {:.4f} with [f({:.3f}), f({:.3f})] = [{:.4f}, {:.4f}]'.format(param, target, *limits, *[f(x) + target for x in limits])) from exc
 

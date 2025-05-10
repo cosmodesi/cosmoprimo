@@ -66,6 +66,9 @@ class ClassEngine(BaseEngine):
             if name in ['N_ncdm']: continue
             try: params[name] = float(value)
             except: continue
+        #for name in ['theta_s_100']:
+        #    if name in params: params.pop('h')
+
         self._set_classy(params=params)
 
     def _set_classy(self, params):

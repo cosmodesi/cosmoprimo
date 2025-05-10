@@ -88,7 +88,7 @@ try:
     from interpax import Interpolator2D as _Interpolator2D
     from equinox import field
 
-    #@register_pytree_node_class
+    @register_pytree_node_class
     class _JAXInterpolator1D(_Interpolator1D):
 
         method: str = field(static=True)
@@ -96,7 +96,7 @@ try:
         period: None | float = field(static=True)
         axis: int = field(static=True)
 
-    #@register_pytree_node_class
+    @register_pytree_node_class
     class _JAXInterpolator2D(_Interpolator2D):
 
         method: str = field(static=True)
@@ -509,6 +509,15 @@ def simpson(y, x=None, dx=1, axis=-1, even='avg'):
     return result
 
 
+def exception_or_nan(value, cond, error):
+    """Raise error if not JAX-traced, else set nan."""
+    if use_jax(cond, tracer_only=True):
+        value = numpy.where(cond, numpy.nan, value)
+    else:
+        if np.any(cond): error(value)
+    return value
+
+
 def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return_error=False):
     """
     Romberg integration of a callable function or method.
@@ -652,11 +661,11 @@ def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return
 
     result = last_row[i]
 
-    def raise_error(err, result):
-        if not (numpy.all(err < epsabs) or numpy.all(err < numpy.abs(result) * epsrel)):
-            raise ValueError('precision not achieved: abs={:.3e} (vs {:.3e}), rel={:.3e} (vs {:.3e})', err.max(), epsabs, (err / numpy.abs(result)).max(), epsrel)
+    def error(*args):
+        raise ValueError('precision not achieved: abs={:.3e} (vs {:.3e}), rel={:.3e} (vs {:.3e})'.format(err.max(), epsabs, (err / numpy.abs(result)).max(), epsrel))
 
-    exception(raise_error, err, result)
+    cond = (err < epsabs) & (err < numpy.abs(result) * epsrel)
+    result = exception_or_nan(result, ~cond, error)
     if return_error:
         return result, err
     return result
@@ -709,33 +718,209 @@ def odeint(fun, y0, t, args=(), method='rk4'):
     return toret.reshape(shape + np.shape(tmp))
 
 
-def bisect(f, a, b, xtol=1e-6, rtol=1e-6, maxiter=100, **kwargs):
-    fa = f(a)
+def bracket(f, init, maxiter=15, maxtries=3):
+    """
+    Find a bracket (interval) where the function `f` changes sign.
+
+    This function attempts to locate two points, `x1` and `x2`, such that `f(x1)` and `f(x2)` have opposite signs,
+    indicating the presence of a root in the interval `[x1, x2]`. The search starts from an initial point and expands
+    the interval iteratively.
+
+    Parameters:
+    ----------
+    f : callable
+        The function for which the bracket is to be found. It must accept a single argument and return a scalar value.
+    init : tuple
+        Initial guess for the bracket. If `len(init) == 2`, it should contain `(x1, dx)`, where `x1` is the starting
+        point and `dx` is the initial step size. If `len(init) == 3`, it should contain `(x1, dx, f1)`, where `f1` is
+        the value of `f(x1)`.
+    maxiter : int, default=15
+        Maximum number of iterations to expand the bracket.
+    maxtries : int, default=3
+        Maximum number of attempts to compute `f(x2)` in case of errors (e.g., `ValueError`).
+
+    Returns:
+    -------
+    xs : numpy.ndarray
+        A sorted array containing the two points `[x1, x2]` that form the bracket where `f(x1)` and `f(x2)` have
+        opposite signs.
+    """
+    # Taken from class_public
+
+    if len(init) == 2:
+        x1, dx = init
+        f1 = f(x1)
+    else:
+        x1, dx, f1 = init
+    dx = 1.5 * dx  # dx = y * dxdy
+
+    if use_jax(f1):
+
+        def body_fun(i, state):
+            (x1, f1), cond, (x1, x2) = state
+            x2 = x1 - dx
+            f2 = f(x2)
+            cond = f1 * f2 > 0
+            x1 = numpy.where(cond, x2, x1)
+            f1 = numpy.where(cond, f2, f1)
+            return (x1, f1), cond, (x1, x2)
+
+        def cond_fun(i, state):
+            cond = state[1]
+            return cond
+
+        xs = for_cond_loop_jax(0, maxiter, cond_fun, body_fun, ((x1, f1), f1**2 > 0, (x1, x1 - dx)))[-1]
+        xs = numpy.sort(numpy.array(xs))
+        return xs
+
+    else:
+
+        for iter in range(maxiter):
+            x2 = x1 - dx
+            for itry in range(maxtries):
+                try:
+                    f2 = f(x2)
+                except ValueError:
+                    if itry == maxtries - 1:
+                        raise
+                    dx = 0.5 * dx
+                    x2 = x1 - dx
+                else:
+                    break
+            if f1 * f2 < 0: break
+            x1 = x2
+            f1 = f2
+        xs = np.sort([x1, x2])
+        return xs
+
+
+def bisect(f, limits, flimits=None, xtol=1e-6, maxiter=100, method='ridders'):
+    """
+    Find the root of a function `f` within a given interval using the bisection or Ridders' method.
+
+    This function attempts to locate a root of the function `f` within the interval `[a, b]` where `f(a)` and `f(b)`
+    have opposite signs. The method used can be either the standard bisection method or Ridders' method for faster
+    convergence.
+
+    Parameters:
+    ----------
+    f : callable
+        The function for which the root is to be found. It must accept a single argument and return a scalar value.
+    limits : tuple
+        A tuple `(a, b)` specifying the interval within which to search for the root.
+    flimits : tuple, optional
+        A tuple `(fa, fb)` specifying the values of `f(a)` and `f(b)`. If not provided, these will be computed.
+    xtol : float, optional
+        The absolute tolerance for the root. The algorithm stops when the interval width is less than `xtol`.
+        Default is `1e-6`.
+    maxiter : int, optional
+        The maximum number of iterations to perform. Default is `100`.
+    method : {'bisection', 'ridders'}, optional
+        The method to use for root finding. Options are:
+        - `'bisection'`: Standard bisection method.
+        - `'ridders'`: Ridders' method for faster convergence. Default is `'ridders'`.
+
+    Returns:
+    -------
+    root : float
+        The estimated root of the function `f` within the interval `[a, b]`.
+        If `f(a)` and `f(b)` do not have opposite signs, raise a `ValueError` if not JAX-traced, else set to `nan`.
+
+    Examples:
+    --------
+    >>> def f(x):
+    ...     return x**2 - 4
+    >>> bisect(f, (1, 3))
+    2.0
+
+    >>> bisect(f, (1, 3), method='bisection')
+    2.0
+    """
+    # Taken from class_public
+
+    a, b = limits
+    fa, fb = (flimits if flimits is not None else (f(a), f(b)))
+
+    def error(*args):
+        raise ValueError('f({}), f({}) = {}, {} are not of different signs', a, b, fa, fb)
+
     if use_jax(fa):
-        # FIXME: gradients look unreliable
-        fb = f(b)
         sign = numpy.where((fa < 0) & (fb >= 0), 1, numpy.where((fa > 0) & (fb <= 0), -1, 0))
 
-        nintervals = (b - a) / xtol
-        if rtol:
-            nintervals += (b - a) / (rtol * np.max(np.abs([a, b])))
-        niter = np.minimum(int(np.log2(nintervals + 1)), maxiter)
+        if method == 'ridders':
 
-        def solve(f, initial_guess):
+            def body_fun(i, state):
+                (xflow, xfhigh), _, _ = state
+                mid = 0.5 * (xflow[0] + xfhigh[0])
+                xfmid = numpy.array([mid, f(mid)])
+                s = numpy.sqrt(xfmid[1] * xfmid[1] - xflow[1] * xfhigh[1])
+                sign = numpy.where(xflow[1] >= 0., 1, -1.)
+                new = xfmid[0] + (xfmid[0] - xflow[0]) * sign * xfmid[1] / s
+                xfnew = numpy.array([new, f(new)])
+                #xf = numpy.array([xflow, xfhigh])
+                xf = numpy.where(xfmid[1] * xfnew[1] <= 0, numpy.array([xfmid, xfnew]),
+                                 numpy.where(xflow[1] * xfnew[1] < 0, numpy.array([xflow, xfnew]), numpy.array([xfnew, xfhigh])))
+                return (xf, xfhigh[0] - xflow[0], new)
 
-            def one_step(state, i):
-                low, high, sign = state
-                x = 0.5 * (low + high)
+            state = numpy.array([[a, fa], [b, fb]])
+
+        else:
+
+            def body_fun(i, state):
+                (low, high, sign), _, x = state
                 value = f(x)
                 too_large = sign * value > 0
                 high = numpy.where(too_large, x, high)
                 low = numpy.where(too_large, low, x)
-                return (low, high, sign), x
+                new = 0.5 * (low + high)
+                return ((low, high, sign), high - low, new)
 
-            return jax.lax.scan(one_step, (a, b, sign), length=niter)[-1][-1] * numpy.where(sign == 0., numpy.nan, 1.)
+            state = (a, b, sign)
 
-        return jax.lax.custom_root(f, 0.5 * (a + b), solve, tangent_solve=lambda g, y: y / g(1.0), has_aux=False)
+        def cond_fun(i, state):
+            diff = state[1]
+            return numpy.abs(diff) > xtol
+
+        new = for_cond_loop_jax(0, maxiter, cond_fun, body_fun, (state, 1 + xtol, (a + b) / 2.))[-1]
+        return exception_or_nan(new, sign == 0., error)
 
     else:
-        from scipy import optimize
-        return optimize.bisect(f, a, b, xtol=xtol, rtol=rtol, maxiter=maxiter, **kwargs)
+        sign = np.where((fa < 0) & (fb >= 0), 1, np.where((fa > 0) & (fb <= 0), -1, 0))
+
+        def solve(f):
+
+            if method == 'ridders':
+
+                low, high = a, b
+                flow, fhigh = fa, fb
+
+                for i in range(maxiter):
+                    mid = 0.5 * (low + high)
+                    fmid = f(mid)
+                    s = np.sqrt(fmid * fmid - flow * fhigh)
+                    sign = 1. if flow >= 0 else -1.
+                    new = mid + (mid - low) * sign * fmid / s
+                    fnew = f(new)
+                    if (fmid * fnew <= 0):
+                        low, flow = mid, fmid
+                        high, fhigh = new, fnew
+                    elif (flow * fnew < 0):
+                        high, fhigh = new, fnew
+                    elif (fhigh * fnew < 0):
+                        low, flow = new, fnew
+                    if np.abs(high - low) < xtol:
+                        return new
+
+            else:
+
+                low, high = a, b
+                for i in range(maxiter):
+                    x = 0.5 * (low + high)
+                    value = f(x)
+                    too_large = sign * value > 0
+                    high = np.where(too_large, x, high)
+                    low = np.where(too_large, low, x)
+                    if np.abs(high - low) < xtol: break
+                return x
+
+        return exception_or_nan(solve(f), sign == 0., error)
