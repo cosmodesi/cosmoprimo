@@ -133,7 +133,7 @@ def _mask_bounds(x, xlim, bounds_error=False):
     return masks
 
 
-@register_pytree_node_class
+#@register_pytree_node_class
 class Interpolator1D(object):
 
     """Wrapper for 1D interpolation (along axis 0); use :mod:`interpax` if :mod:`jax` input, else :func:`scipy.interpolate.interp1d`."""
@@ -211,7 +211,7 @@ class Interpolator1D(object):
         return new
 
 
-@register_pytree_node_class
+#@register_pytree_node_class
 class Interpolator2D(object):
 
     """Wrapper for 2D interpolation; use :mod:`interpax` if :mod:`jax` input, else :func:`scipy.interpolate.interp1d`."""
