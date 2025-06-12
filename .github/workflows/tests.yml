@@ -40,7 +40,7 @@ jobs:
     - name: Lint with ruff
       run: |
         # TODO: Ultimately, all checks should work.
-        ruff check desilike --ignore E701,E721,F401,E711,F811,E402,F841,E714,E731,F541,F405,F403,E722,F523,E741,F601,E401,E713,F524
+        ruff check cosmoprimo --ignore E701,E721,F401,E711,F811,E402,F841,E714,E731,F541,F405,F403,E722,F523,E741,F601,E401,E713,F524
     - name: Test with pytest
       run: |
         if [ "$RUNNER_OS" == "Linux" ]; then
