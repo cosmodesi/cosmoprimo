@@ -6,7 +6,7 @@ from pathlib import Path
 from matplotlib import pyplot as plt
 import numpy as np
 from cosmoprimo.emulators import Emulator, EmulatedEngine, MLPEmulatorEngine, Samples, FourierNormOperation, Log10Operation, ArcsinhOperation, PCAOperation, ChebyshevOperation, Operation, setup_logging
-from cosmoprimo.emulators import plot_residual_background, plot_residual_thermodynamics, plot_residual_fourier, plot_residual_harmonic
+from cosmoprimo.emulators import plot_residual_background, plot_residual_thermodynamics, plot_residual_fourier, plot_residual_harmonic, plot_residual_primordial
 from cosmoprimo.fiducial import DESI
 
 logger = logging.getLogger('axiclassy')
@@ -45,7 +45,7 @@ def sample(samples_fn, section='background', start=0, stop=100000):
     if section == 'harmonic':
         #extra_params = {'nonlinear_min_k_max': 20, 'accurate_lensing': 1, 'delta_l_max': 800}
         extra_params = {'non_linear': 'hmcode', 'hmcode_version': '2020', 'recombination': 'HyRec', 'l_max_scalars': 9500, 'delta_l_max': 1800, 'P_k_max_h/Mpc': 100.0, 'l_logstep': 1.025, 'l_linstep': 20, 'perturbations_sampling_stepsize': 0.05, 'l_switch_limber': 30.0, 'hyper_sampling_flat': 32.0, 'l_max_g': 40, 'l_max_ur': 35, 'l_max_pol_g': 60, 'ur_fluid_approximation': 2, 'ur_fluid_trigger_tau_over_tau_k': 130.0, 'radiation_streaming_approximation': 2, 'radiation_streaming_trigger_tau_over_tau_k': 240.0, 'hyper_flat_approximation_nu': 7000.0, 'transfer_neglect_delta_k_S_t0': 0.17, 'transfer_neglect_delta_k_S_t1': 0.05, 'transfer_neglect_delta_k_S_t2': 0.17, 'transfer_neglect_delta_k_S_e': 0.17, 'accurate_lensing': True, 'start_small_k_at_tau_c_over_tau_h': 0.0004, 'start_large_k_at_tau_h_over_tau_k': 0.05, 'tight_coupling_trigger_tau_c_over_tau_h': 0.005, 'tight_coupling_trigger_tau_c_over_tau_k': 0.008, 'start_sources_at_tau_c_over_tau_h': 0.006, 'l_max_ncdm': 30, 'tol_ncdm_synchronous': 1e-06}
-        cosmo = cosmo.clone(lensing=True, non_linear='hmcode', YHe='BBN', extra_params=extra_params, scf_potential='axion', n_axion=3.0, log10_axion_ac=-3.562, fraction_axion_ac=0.122, scf_parameters__1=2.83, scf_parameters__2=0.0, scf_evolve_as_fluid=False, scf_evolve_like_axionCAMB=False, scf_has_perturbations=True, attractor_ic_scf=False, compute_phase_shift=False, include_scf_in_delta_m=True, include_scf_in_delta_cb=True}
+        cosmo = cosmo.clone(lensing=True, non_linear='hmcode', YHe='BBN', extra_params=extra_params, scf_potential='axion', n_axion=3.0, log10_axion_ac=-3.562, fraction_axion_ac=0.122, scf_parameters__1=2.83, scf_parameters__2=0.0, scf_evolve_as_fluid=False, scf_evolve_like_axionCAMB=False, scf_has_perturbations=True, attractor_ic_scf=False, compute_phase_shift=False, include_scf_in_delta_m=True, include_scf_in_delta_cb=True)
         params = {'logA': (2.5, 3.5), 'n_s': (0.88, 1.06), 'h': (0.4, 1.), 'omega_b': (0.019, 0.025), 'omega_cdm': (0.08, 0.2), 'tau_reio': (0.02, 0.12), 'log10_axion_ac': (-3.9, -3.2), 'fraction_axion_ac': (0.0, 0.3), 'scf_parameters__1': (0, 3.2)}
         calculator = get_calculator(cosmo, section=['background', 'thermodynamics', 'primordial', 'harmonic'])
         sampler = QMCSampler(calculator, params=params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.npz'.format(samples_fn, start, stop))
@@ -274,9 +274,11 @@ if __name__ == '__main__':
             for section in ['thermodynamics', 'fourier', 'harmonic'][2:]:
                 plot(samples_fn[section], section=section)
 
-        if 'plot_compression' in todo:
-            for section in ['fourier', 'harmonic'][:1]:
-                plot_compression(samples_fn[section], section=section)
+        # Plot Compression is not defined 
+        # if 'plot_compression' in todo:
+        #     for section in ['fourier', 'harmonic'][:1]:
+        #         plot_compression(samples_fn[section], section=section)
 
-        if 'test' in todo:
-            test()
+        # Test is not defined
+        # if 'test' in todo:
+        #     test()

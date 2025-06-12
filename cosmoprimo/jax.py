@@ -793,7 +793,7 @@ def bracket(f, init, maxiter=15, maxtries=3):
         xs = np.sort([x1, x2])
         return xs
 
-
+## Fix bisect to treat the edgecases 
 def bisect(f, limits, flimits=None, xtol=1e-6, maxiter=100, method='ridders'):
     """
     Find the root of a function `f` within a given interval using the bisection or Ridders' method.

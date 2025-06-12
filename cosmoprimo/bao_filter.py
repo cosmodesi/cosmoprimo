@@ -91,7 +91,8 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
 
     def set_pk(self, pk_interpolator, cosmo=None):
         """Set input power spectrum to remove BAO wiggles from."""
-        if cosmo is not None: self._cosmo = cosmo
+        if cosmo is not None: 
+            self._cosmo = cosmo
         self.pk_interpolator = pk_interpolator
         if isinstance(self.pk_interpolator, PowerSpectrumInterpolator2D):
             self.pk = self.pk_interpolator(self.k, self.pk_interpolator.z, ignore_growth=True)
@@ -614,7 +615,8 @@ class BSplinePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
             ts = np.log10((kmax - kmin) * ts + kmin)
             bsplines = []
             for ii in range(nknots - degree):
-                cn = np.zeros(len(ts) - degree - 1); cn[ii] = 1
+                cn = np.zeros(len(ts) - degree - 1)
+                cn[ii] = 1
                 bsplines.append(interpolate.BSpline(ts, cn, degree))
             gradient = np.array([bspline(logk_fid) for bspline in bsplines])
             constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0], gradient[..., -1], gradient[..., -2] - gradient[..., -1]])

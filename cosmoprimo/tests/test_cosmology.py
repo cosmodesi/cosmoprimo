@@ -495,13 +495,14 @@ def test_external_camb():
     print(tr.get_lens_potential_cls(lmax=100, CMB_unit=None, raw_cl=True))
 
     params = camb.CAMBparams(H0=70, omch2=0.15, ombh2=0.02)
-    #params.WantCls = False
-    params.Want_CMB = False
-    # params.WantTransfer = True
+    ## Using False flag for WantCls doesn't throw and error but doing same for Want_CMB does!
+    params.WantCls = False
+    # params.Want_CMB = False
+    params.WantTransfer = True
     tr = camb.get_transfer_functions(params)
     params.Want_CMB = True
     tr.calc_power_spectra(params)
-    print(tr.get_unlensed_scalar_cls(lmax=100, CMB_unit=None, raw_cl=True))
+    # print(tr.get_unlensed_scalar_cls(lmax=100, CMB_unit=None, raw_cl=True))
     # print(tr.get_total_cls(lmax=100, CMB_unit=None, raw_cl=True))
 
 
@@ -774,7 +775,8 @@ def test_isitgr(plot=False):
         for kwargs in [{}, {'mu0': -0.5, 'Sigma0': 0.}, {'mu0': -0.5, 'Sigma0': 1.}]:
             pk = Cosmology(engine='isitgr', MG_parameterization='muSigma', **kwargs).get_fourier().pk_interpolator(of='delta_cb').to_1d(z=z)
             #ax.plot(k,  k * pk(k), label=str(kwargs))
-            k = pk.k; ax.loglog(k,  pk(k), label=str(kwargs))
+            k = pk.k
+            ax.loglog(k,  pk(k), label=str(kwargs))
         ax.legend()
         plt.show()
 
@@ -805,7 +807,8 @@ def test_mgcamb(plot=False):
         for kwargs in [{}, {'mu0': -0.5, 'sigma0': 0.}, {'mu0': -0.5, 'sigma0': 1.}]:
             pk = Cosmology(engine='mgcamb', MG_flag=1, **kwargs).get_fourier().pk_interpolator(of='delta_cb').to_1d(z=z)
             #ax.plot(k,  k * pk(k), label=str(kwargs))
-            k = pk.k; ax.loglog(k,  pk(k), label=str(kwargs))
+            k = pk.k
+            ax.loglog(k,  pk(k), label=str(kwargs))
         ax.legend()
         plt.show()
 
@@ -907,7 +910,7 @@ def test_precompute_ncdm():
         T_eff = constants.TCMB * constants.TNCDM_OVER_CMB * 0.9
         z = np.linspace(0., 10., 100)
         for out in ['p', 'rho', 'drhodm']:
-            assert np.allclose(cache[out](m_ncdm, z, T_eff=T_eff), _compute_ncdm_momenta(T_eff, m_ncdm, z, out=out), rtol=1e-5, atol=0.)
+            assert np.allclose(cache[out](T_eff, m_ncdm, z), _compute_ncdm_momenta(T_eff, m_ncdm, z, out=out), rtol=1e-5, atol=0.)
 
 
 def plot_z_sampling():
@@ -1012,6 +1015,8 @@ def test_jax():
         test_jit(dict(m_ncdm=value))
     print((time.time() - t0) / n)
 
+
+    ## I don't see Einstein-Hu has a method to solve for theta_MC_100
     def test(theta_MC_100):
         cosmo = DESI(engine='eisenstein_hu').solve('h', 'theta_MC_100', target=theta_MC_100)
         return cosmo.comoving_radial_distance(1.)
@@ -1068,7 +1073,7 @@ def test_jax():
     test_jacfwd = jacfwd(test)
     assert not np.allclose(test_jacfwd(dict(Omega_m=0.3, logA=3.))['logA'], 0.)
 
-
+## Not sure what this test is supposed to be doing, need to fix it!!
 def test_interp():
     from matplotlib import pyplot as plt
     from jax import numpy as jnp
@@ -1136,7 +1141,7 @@ def test_interp():
         ba = DefaultBackground(cosmo)
 
         ax = plt.gca()
-        print(np.abs(age_1(ba) / time_ref(ba, 0) - 1.))
+        print(np.abs(age_1(ba,0.0) / time_ref(ba, 0) - 1.))
         ax.plot(z, jnp.abs(time_1(ba, z) / time_ref(ba, z) - 1.), label='cubic')
         ax.set_xscale('log')
         ax.set_yscale('log')
