@@ -6,7 +6,7 @@ from pathlib import Path
 from matplotlib import pyplot as plt
 import numpy as np
 from cosmoprimo.emulators import Emulator, EmulatedEngine, MLPEmulatorEngine, Samples, FourierNormOperation, Log10Operation, ArcsinhOperation, PCAOperation, ChebyshevOperation, Operation, setup_logging
-from cosmoprimo.emulators import plot_residual_background, plot_residual_thermodynamics, plot_residual_fourier, plot_residual_harmonic
+from cosmoprimo.emulators import plot_residual_background, plot_residual_thermodynamics, plot_residual_fourier, plot_residual_harmonic, plot_residual_primordial
 from cosmoprimo.fiducial import DESI
 
 logger = logging.getLogger('classy')
@@ -225,6 +225,7 @@ def test():
     from cosmoprimo.cosmology import Cosmology, DefaultBackground
     from cosmoprimo.jax import vmap
     from cosmoprimo.emulators.tools.base import batch_vmap
+    from cosmoprimo.emulators import get_calculator, QMCSampler, HarmonicNormOperation
 
     if 1:
         ref = DESI(engine='class')

@@ -8,7 +8,7 @@ def test_cobaya():
 
         params = {'Omega_m': {'prior': {'min': 0.1, 'max': 1.},
                           'ref': {'dist': 'norm', 'loc': 0.3, 'scale': 0.01},
-                          'latex': '\Omega_{m}'}} | {name: float(cosmo[name]) for name in ['omega_b', 'H0', 'A_s', 'n_s', 'tau_reio']}
+                          'latex': r'\Omega_{m}'}} | {name: float(cosmo[name]) for name in ['omega_b', 'H0', 'A_s', 'n_s', 'tau_reio']}
 
         extra_args = {'m_ncdm': list(map(float, cosmo['m_ncdm'])), 'N_ur': float(cosmo['N_ur'])}
 
