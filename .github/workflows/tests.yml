@@ -1,9 +1,9 @@
 name: Run Pytests
 on:
   push:
-    paths: ['.github/**', 'desilike/**', 'tests/**', 'pyproject.toml']
+    paths: ['.github/**', 'cosmoprimo/**', 'tests/**', 'pyproject.toml']
   pull_request:
-    paths: ['.github/**', 'desilike/**', 'tests/**', 'pyproject.toml']
+    paths: ['.github/**', 'cosmoprimo/**', 'tests/**', 'pyproject.toml']
   schedule:
     - cron: '0 0 1 * *'
   workflow_dispatch:
