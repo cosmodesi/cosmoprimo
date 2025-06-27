@@ -1,5 +1,6 @@
 import functools
 import logging
+import warnings
 
 logging.getLogger('jax._src.lib.xla_bridge').addFilter(logging.Filter('No GPU/TPU found, falling back to CPU.'))
 
@@ -20,12 +21,14 @@ try:
         try:
             array_types.append(eval(line))
         except AttributeError:
-            pass
+            warnings.warn(f"Could not detect JAX array type: {line}. Some JAX functionality may be limited.")
+            
     array_types = tuple(array_types)
 except ImportError:
     jax = None
     import numpy
     import scipy
+    warnings.warn("JAX is not available. cosmoprimo.jax module will default to NumPy. ")
 
 
 def jit(*args, **kwargs):
@@ -48,8 +51,8 @@ def jit(*args, **kwargs):
 def use_jax(*arrays, tracer_only=False):
     """Whether to use jax.numpy depending on whether array is jax's object."""
     if tracer_only:
-        return any(isinstance(array, array_types[-1:]) for array in arrays)
-    return any(isinstance(array, array_types) for array in arrays)
+        return any(isinstance(array, array_types[-1:]) for array in arrays) # type: ignore
+    return any(isinstance(array, array_types) for array in arrays) # type: ignore
 
 
 def numpy_jax(*args, return_use_jax=False):
@@ -672,7 +675,27 @@ def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return
 
 
 def odeint(fun, y0, t, args=(), method='rk4'):
-
+    """
+    Solve ordinary differential equations using Runge-Kutta methods.
+    
+    Parameters
+    ----------
+    fun : callable
+        Function f(y, t, *args) that returns dy/dt
+    y0 : array_like
+        Initial condition
+    t : array_like
+        Time points to evaluate solution
+    args : tuple, optional
+        Additional arguments to pass to fun
+    method : {'rk1', 'rk2', 'rk4'}, optional
+        Integration method to use
+        
+    Returns
+    -------
+    array
+        Solution at time points t
+    """
     jnp = numpy_jax(t)
     t = jnp.asarray(t)
     shape = t.shape
@@ -681,7 +704,6 @@ def odeint(fun, y0, t, args=(), method='rk4'):
     func = lambda y, t: fun(y, t, *args)
 
     if method == 'rk1':
-
         def integrator(carry, t):
             y, t_last = carry
             h = t - t_last
@@ -690,7 +712,6 @@ def odeint(fun, y0, t, args=(), method='rk4'):
             return (y, t), y
 
     if method == 'rk2':
-
         def integrator(carry, t):
             y, t_last = carry
             h = t - t_last
@@ -700,7 +721,6 @@ def odeint(fun, y0, t, args=(), method='rk4'):
             return (y, t), y
 
     if method == 'rk4':
-
         def integrator(carry, t):
             y, t_last = carry
             h = t - t_last
@@ -750,8 +770,11 @@ def bracket(f, init, maxiter=15, maxtries=3):
     if len(init) == 2:
         x1, dx = init
         f1 = f(x1)
-    else:
+    elif len(init) == 3:
         x1, dx, f1 = init
+    else:
+        raise ValueError("init must be a tuple of length 2 or 3")
+
     dx = 1.5 * dx  # dx = y * dxdy
 
     if use_jax(f1):
@@ -787,7 +810,7 @@ def bracket(f, init, maxiter=15, maxtries=3):
                     x2 = x1 - dx
                 else:
                     break
-            if f1 * f2 < 0: break
+            if f1 * f2 <= 0: break
             x1 = x2
             f1 = f2
         xs = np.sort([x1, x2])
@@ -841,8 +864,16 @@ def bisect(f, limits, flimits=None, xtol=1e-6, maxiter=100, method='ridders'):
     a, b = limits
     fa, fb = (flimits if flimits is not None else (f(a), f(b)))
 
+    ## Check if a or b
+    if fa == 0:
+        return a
+    if fb == 0:
+        return b
+
     def error(*args):
         raise ValueError('f({}), f({}) = {}, {} are not of different signs', a, b, fa, fb)
+
+
 
     if use_jax(fa):
         sign = numpy.where((fa < 0) & (fb >= 0), 1, numpy.where((fa > 0) & (fb <= 0), -1, 0))
