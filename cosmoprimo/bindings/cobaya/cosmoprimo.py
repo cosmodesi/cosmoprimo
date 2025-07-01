@@ -8,12 +8,10 @@ from typing import NamedTuple, Sequence, Union, Optional, Callable, Any
 # Local
 from cobaya.theories.cosmo import BoltzmannBase
 from cobaya.log import LoggedError, get_logger
-from cobaya.install import download_github_release, pip_install, check_gcc_version
+from cobaya.install import download_github_release
 from cobaya.component import ComponentNotInstalledError, load_external_module
 from cobaya.tools import Pool1D, Pool2D, PoolND, combine_1d, get_compiled_import_path, \
     VersionCheckError
-
-from cobaya.theories.cosmo import BoltzmannBase
 
 
 # Result collector
@@ -156,6 +154,8 @@ class cosmoprimo(BoltzmannBase):
                 self.collectors[k] = Collector(section="fourier", method="sigma_rz", args=[v["R"], v["z"]], args_names=["R", "z"])
             elif k in [f"get_{q}" for q in ["background", "thermodynamics", "primordial", "perturbations"]]:
                 # Get direct cosmoprimo results
+                # Remove get_ from the string
+                q = k[4:]
                 self.collectors[k] = Collector(section=q)
             elif v is None:
                 k_translated = self.translate_param(k)

@@ -172,10 +172,11 @@ class LeastSquareSolver(BaseClass):
         if constraint_gradient is None:
             self.nconstraints = 0
         else:
-            constraint_gradient = jnp.atleast_2d(constraint_gradient)
-            self.nconstraints = constraint_gradient.shape[-1]
             if constraint_gradient.ndim != 2 or constraint_gradient.shape[0] != self.gradient.shape[0]:
                 raise ValueError('constraint_gradient must be 2D, of first dimension the number of model parameters (gradient first dimension)')
+            constraint_gradient = jnp.atleast_2d(constraint_gradient)
+            self.nconstraints = constraint_gradient.shape[-1]
+            
             dtype = constraint_gradient.dtype
             # Possible improvement: block-inverse
             invfisher = jnp.bmat([[invfisher, - constraint_gradient],
@@ -202,7 +203,7 @@ class LeastSquareSolver(BaseClass):
             self.projector = fisher.dot(hv).T
 
     def tree_flatten(self):
-        children = ({name: getattr(self, name) for name in ['precision', 'gradient_precision', 'projector', 'inverse_fisher', 'delta', 'params'] if hasattr(self, name)},)
+        children = ({name: getattr(self, name) for name in ['precision', 'constraint_gradient', 'compute_inverse', 'gradient_precision', 'projector', 'inverse_fisher', 'delta', 'params'] if hasattr(self, name)},)
         return children, {}
 
     @classmethod
