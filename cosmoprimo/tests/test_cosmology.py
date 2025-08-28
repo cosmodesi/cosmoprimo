@@ -176,7 +176,6 @@ def test_primordial(params, seed=42):
         for name in ['A_s', 'ln_1e10_A_s']:
             # Tolerance is a bit looser here because of the different treatment of massive neutrinos in camb vs class
             # Typically, the difference between camb vs class is < 10% of the suppression effect due to massive neutrinos
-            print(getattr(pm, name) / getattr(pm_class, name))
             assert np.allclose(getattr(pm, name), getattr(pm_class, name), atol=0, rtol=4e-3)
         k = rng.uniform(1e-3, 10., 100)
         for mode in ['scalar', 'tensor']:
