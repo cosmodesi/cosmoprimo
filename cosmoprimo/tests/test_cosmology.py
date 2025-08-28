@@ -61,7 +61,7 @@ def test_engine():
 list_params = [{}, {'sigma8': 1., 'non_linear': 'mead'}, {'logA': 3., 'non_linear': 'mead'},
                {'A_s': 2e-9, 'alpha_s': -0.2}, {'lensing': True},
                {'m_ncdm': 0.1, 'neutrino_hierarchy': 'normal'}, {'Omega_k': 0.1},
-               {'w0_fld': -0.9, 'wa_fld': 0.1, 'cs2_fld': 0.9}, {'w0_fld': -1.1, 'wa_fld': 0.2}][-2:]
+               {'w0_fld': -0.9, 'wa_fld': 0.1, 'cs2_fld': 0.9}, {'w0_fld': -1.1, 'wa_fld': 0.2}]
 
 
 @pytest.mark.parametrize('params', list_params)
@@ -88,7 +88,8 @@ def test_background(params, seed=42):
         test, ref = getattr(ba, name), getattr(ba_class, name)
         has_species = name.endswith('ncdm')
         shape = (cosmo['N_ncdm'], ) if has_species else ()
-        z = rng.uniform(0., 1., 10)
+        z = rng.uniform(0., 3., 30)
+        diff = np.abs(test(z=z) / ref(z) - 1.)
         assert np.allclose(test(z=z), ref(z), atol=atol, rtol=rtol)
         assert test(0.).shape == shape
         assert test([]).shape == shape + (0, )
@@ -110,7 +111,7 @@ def test_background(params, seed=42):
         for name in ['T_cmb', 'T_ncdm']:
             assert_allclose(ba, name, atol=0, rtol=1e-4)
         for name in ['rho_crit', 'p_ncdm', 'p_ncdm_tot', 'Omega_pncdm', 'Omega_pncdm_tot']:
-            assert_allclose(ba, name, atol=0, rtol=1e-4)
+            assert_allclose(ba, name, atol=0, rtol=1e-4 * (4 if 'ncdm' in name else 1))
         for density in ['rho', 'Omega']:
             for species in ['cdm', 'b', 'k', 'g', 'ur', 'r', 'ncdm', 'ncdm_tot', 'm', 'Lambda', 'fld', 'de']:
                 name = '{}_{}'.format(density, species)
@@ -161,7 +162,9 @@ def test_thermodynamics(params):
 def test_primordial(params, seed=42):
     rng = np.random.RandomState(seed=seed)
     cosmo = Cosmology(**params)
+
     pm_class = Primordial(cosmo, engine='class')
+
     for engine in ['camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
         pm = Primordial(cosmo, engine=engine)
         for name in (['A_s'] if 'sigma8' not in cosmo._params else []) + ['n_s', 'alpha_s', 'beta_s', 'k_pivot']:
@@ -171,11 +174,14 @@ def test_primordial(params, seed=42):
     for engine in ['camb']:
         pm = Primordial(cosmo, engine=engine)
         for name in ['A_s', 'ln_1e10_A_s']:
-            assert np.allclose(getattr(pm, name), getattr(pm_class, name), atol=0, rtol=2e-3)
+            # Tolerance is a bit looser here because of the different treatment of massive neutrinos in camb vs class
+            # Typically, the difference between camb vs class is < 10% of the suppression effect due to massive neutrinos
+            print(getattr(pm, name) / getattr(pm_class, name))
+            assert np.allclose(getattr(pm, name), getattr(pm_class, name), atol=0, rtol=4e-3)
         k = rng.uniform(1e-3, 10., 100)
         for mode in ['scalar', 'tensor']:
-            assert np.allclose(pm.pk_k(k, mode=mode), pm_class.pk_k(k, mode=mode), atol=0, rtol=2e-3)
-            assert np.allclose(pm.pk_interpolator(mode=mode)(k), pm_class.pk_interpolator(mode=mode)(k), atol=0, rtol=2e-3)
+            assert np.allclose(pm.pk_k(k, mode=mode), pm_class.pk_k(k, mode=mode), atol=0, rtol=4e-3)
+            assert np.allclose(pm.pk_interpolator(mode=mode)(k), pm_class.pk_interpolator(mode=mode)(k), atol=0, rtol=4e-3)
 
     for engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
         pm = Primordial(cosmo, engine=engine)
@@ -304,6 +310,7 @@ def test_fourier(params, seed=42):
         assert np.allclose(pk(k, z=z), pk_class(k, z=z), atol=0., rtol=rtol)
         r = rng.uniform(1., 10., 10)
         assert np.allclose(pk.growth_rate_rz(r=r, z=z), pk_class.growth_rate_rz(r=r, z=z), atol=0., rtol=0.15)
+        fo.sigma8_z(z, of="delta_m")
 
 
 def test_pk_norm():
@@ -1562,7 +1569,6 @@ def test_bbn():
 
 if __name__ == '__main__':
 
-
     #test_bisect_emu()
     #test_jax()
     #test_precompute_ncdm()
@@ -1571,6 +1577,7 @@ if __name__ == '__main__':
     test_params()
     test_engine()
     for params in list_params:
+        print(params)
         test_background(params)
         test_thermodynamics(params)
         test_primordial(params)

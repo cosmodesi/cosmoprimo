@@ -88,7 +88,7 @@ try:
     from interpax import Interpolator2D as _Interpolator2D
     from equinox import field
 
-    #@register_pytree_node_class
+    @register_pytree_node_class
     class _JAXInterpolator1D(_Interpolator1D):
 
         method: str = field(static=True)
@@ -96,7 +96,7 @@ try:
         period: None | float = field(static=True)
         axis: int = field(static=True)
 
-    #@register_pytree_node_class
+    @register_pytree_node_class
     class _JAXInterpolator2D(_Interpolator2D):
 
         method: str = field(static=True)

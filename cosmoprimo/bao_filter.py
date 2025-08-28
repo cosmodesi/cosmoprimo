@@ -435,11 +435,22 @@ class Brieden2022PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     """
     Filter BAO wiggles by averaging the minima and maxima of the wiggles.
 
+    Note
+    ----
+    Fiducial cosmology ``cosmo_fid`` must be provided, with an engine.
+
     References
     ----------
     https://arxiv.org/abs/2204.11868, Appendix D (thanks to Samuel Brieden for the reference)
     """
     name = 'brieden2022'
+
+    @property
+    def cosmo_fid(self):
+        """Reference cosmology."""
+        if self._cosmo_fid is None:
+            raise ValueError('cosmo_fid must be provided, with an engine')
+        return self._cosmo_fid
 
     def tree_flatten(self):
         children, aux_data = super().tree_flatten()
@@ -503,11 +514,22 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
     Filter BAO wiggles by averaging the minima and maxima of the wiggles at the fiducial positions rescaled by :math:`r_{\mathrm{drag}} / r_{\mathrm{drag}}^{\mathrm{fid}}`.
     A simpler version of :class:`Brieden2022PowerSpectrumBAOFilter`.
 
+    Note
+    ----
+    Fiducial cosmology ``cosmo_fid`` must be provided, with an engine.
+
     References
     ----------
     https://arxiv.org/abs/2204.11868, Appendix D (thanks to Samuel Brieden for the reference)
     """
     name = 'peakaverage'
+
+    @property
+    def cosmo_fid(self):
+        """Reference cosmology."""
+        if self._cosmo_fid is None:
+            raise ValueError('cosmo_fid must be provided, with an engine')
+        return self._cosmo_fid
 
     def tree_flatten(self):
         children, aux_data = super().tree_flatten()

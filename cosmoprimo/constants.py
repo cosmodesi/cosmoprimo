@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from scipy import constants
 from scipy.constants import *
+from scipy import constants
 
 
 electronvolt_over_joule = 1.602176634e-19

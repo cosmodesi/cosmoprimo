@@ -1911,6 +1911,21 @@ class BaseBackground(BaseSection):
 from .jax import Interpolator1D, odeint
 
 
+
+def get_default_z_interp(name):
+    if name in ['rho_ncdm', 'p_ncdm']:
+        zm = 1.
+        return np.concatenate([np.linspace(0., zm, 20)[:-1], 1. / np.geomspace(1e-8, 1. / (1 + zm), 100)[::-1] - 1.])
+        #return 1. / np.logspace(-8, 0., 120)[::-1] - 1.  # enough for 1e-6 relative precision
+    elif name in ['time', 'age']:
+        return 1. / np.logspace(-8, 0., 400)[::-1] - 1.
+    elif name in ['comoving_radial_distance']:
+        zm = 0.3
+        return np.concatenate([np.linspace(0., zm, 20)[:-1], 1. / np.geomspace(1e-4, 1. / (1 + zm), 100)[::-1] - 1.])
+    else:
+        raise ValueError('No default z interpolation grid for {}'.format(name))
+
+
 class DefaultBackground(BaseBackground):
 
     def __init__(self, engine):
@@ -1930,7 +1945,7 @@ class DefaultBackground(BaseBackground):
             species = np.arange(self.N_ncdm)
 
         if name not in self._cache:
-            zc = 1. / np.logspace(-8, 0., 120)[::-1] - 1.  # enough for 1e-6 relative precision
+            zc = get_default_z_interp(name)
             self._cache[name] = Interpolator1D(zc, func(self, zc).T)  # interpolation along axis = 0
 
         return self._cache[name](z).T[species]
@@ -1948,7 +1963,7 @@ class DefaultBackground(BaseBackground):
             species = np.arange(self.N_ncdm)
 
         if name not in self._cache:
-            zc = 1. / np.logspace(-8, 0., 120)[::-1] - 1.   # enough for 1e-6 relative precision
+            zc = get_default_z_interp(name)
             self._cache[name] = Interpolator1D(zc, func(self, zc).T)  # interpolation along axis = 0
 
         return self._cache[name](z).T[species]
@@ -1975,7 +1990,7 @@ class DefaultBackground(BaseBackground):
             def integrand(y, z):
                 return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
 
-            zc = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
+            zc = get_default_z_interp(name)
             tmp = odeint(integrand, 0., zc)
             self._cache[name] = (tmp[-1] - tmp[0]) / self.h / constants.gigayear_over_megaparsec
         return self._cache[name]
@@ -1992,9 +2007,7 @@ class DefaultBackground(BaseBackground):
             def integrand(y, z):
                 return constants.c / 1e3 / (100. * self.efunc(z))
 
-            #zc = 1. / np.logspace(-4, 0., 400)[::-1] - 1.
-            zm = 0.3
-            zc = np.concatenate([np.linspace(0., zm, 20)[:-1], 1. / np.geomspace(1e-4, 1. / (1 + zm), 100)[::-1] - 1.])
+            zc = get_default_z_interp(name)
             tmp = odeint(integrand, 0., zc)
             self._cache[name] = Interpolator1D(zc, tmp)  # cubic interpolation takes a lot of time, but is very efficient
         return self._cache[name](z)

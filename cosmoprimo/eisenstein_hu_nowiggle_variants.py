@@ -78,7 +78,7 @@ class Transfer(BaseSection):
     def __init__(self, engine):
         super().__init__(engine)
         self._h = engine['h']
-        for name in ['omega_m', 'theta_cmb', 'N_ncdm', 'frac_ncdm', 'z_eq', 'p_cb', 'gamma_ncdm', 'rs_drag', 'beta_c']:
+        for name in ['omega_m', 'theta_cmb', 'N_ncdm', 'frac_ncdm', 'z_eq', 'p_cb', 'frac_cb', 'gamma_ncdm', 'rs_drag', 'beta_c']:
             setattr(self, '_' + name, getattr(engine, name))
         self.ba = engine.get_background()
 
