@@ -54,3 +54,4 @@ renames:
   yhe: YHe
   yheused: YHe  # used by Planck when YHe is derived
   T_cmb: T0_cmb
+  cosmomc_theta: theta_cosmomc

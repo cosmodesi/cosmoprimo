@@ -248,8 +248,15 @@ class cosmoprimo(BoltzmannBase):
         args.update(self.extra_args)
         # Generate and save
         self.log.debug("Setting parameters: %r", args)
+        theta = args.pop('theta_cosmomc', None)
+        if theta is None:
+            theta = args.pop('theta_MC_100', None)
+        else:
+            theta = 100 * theta
         try:
             self.cosmo = self.cosmoprimo_module.Cosmology(**args, engine=self.engine)
+            if theta is not None:
+                self.cosmo = self.cosmo.solve('h', 'theta_MC_100', theta)
         except self.cosmoprimo_module.CosmologyError as e:
             self.log.error("Serious error setting parameters. The parameters passed were %r. "
                            "To see the original cosmoprimo error traceback, make 'debug: True'.", args)
