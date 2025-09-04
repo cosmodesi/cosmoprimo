@@ -85,7 +85,7 @@ def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e
     """
     jnp = numpy_jax(T_eff, m, z)
 
-    z = jnp.asarray(z)
+    z = jnp.asarray(z) #type: ignore
     shape = z.shape
     z = z.ravel()
     a = 1. / (1. + z)

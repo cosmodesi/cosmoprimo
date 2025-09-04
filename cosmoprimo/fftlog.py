@@ -30,7 +30,7 @@ except ImportError:
 @register_pytree_node_class
 class FFTlog(object):
     r"""
-    Implementation of the FFTlog algorithm presented in https://jila.colorado.edu/~ajsh/FFTLog/, which computes the generic integral:
+    Implementation of the FFTlog algorithm presented in https://jila.colorado.edu/~ajsh/FFTLog/index.html, which computes the generic integral:
 
     .. math::
 
