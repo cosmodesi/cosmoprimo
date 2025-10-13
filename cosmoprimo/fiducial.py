@@ -7,6 +7,7 @@ from . import constants
 
 _dir_data = os.path.join(os.path.dirname(__file__), 'data')
 
+
 def Uchuu(name='Planck2015', engine=None, extra_params=None, **params):
     """
     Initialize :class:`Cosmology` for Uchuu simulations.
@@ -31,13 +32,15 @@ def Uchuu(name='Planck2015', engine=None, extra_params=None, **params):
     """
     common = dict(Omega_k=0., m_ncdm=[0.06], neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF, A_L=1.0, k_pivot=0.05)
     if name == 'Planck2015':
+        # Reference: https://www.skiesanduniverses.org/Simulations/Uchuu/
         default_params = dict(h=0.6774, Omega_m=0.3089, Omega_b=0.0486, sigma8=0.8159, n_s=0.9667, tau_reio=0.063, **common)
     elif name == 'Planck2018':
+        # Reference: Table I of https://arxiv.org/pdf/2503.19352
         default_params = dict(h=0.6766, Omega_m=0.3111, Omega_b=0.048975, sigma8=0.8102, n_s=0.9665, tau_reio=0.063, **common)
     elif name == 'Planck2018DDE':
         default_params = dict(h=0.6766, Omega_m=0.3111, Omega_b=0.048975, sigma8=0.8102, n_s=0.9665, tau_reio=0.063, w0_fld=-0.45, wa_fld=-1.79, **common)
     elif name == 'DESIY1DDE':
-        default_params = dict(h=0.6470, Omega_m=0.3440, Omega_b=0.048975, sigma8=0.8102,  n_s=0.9665, tau_reio=0.063, w0_fld=-0.45, wa_fld=-1.79, **common)
+        default_params = dict(h=0.6470, Omega_m=0.3440, Omega_b=0.048975, sigma8=0.8102, n_s=0.9665, tau_reio=0.063, w0_fld=-0.45, wa_fld=-1.79, **common)
     else:
         raise NotImplementedError('Uchuu cosmology {} not implemented; available cosmologies are Planck2015, Planck2018, Planck2018DDE, DESIY1DDE')
     return Cosmology(engine=engine, extra_params=extra_params, **default_params).clone(**params)
