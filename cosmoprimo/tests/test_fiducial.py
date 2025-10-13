@@ -18,6 +18,13 @@ def test_boss():
     assert cosmo['h'] == 0.676
 
 
+def test_uchuu():
+    cosmo = fiducial.Uchuu(engine='class')
+    ref = {'Omega_m': 0.3089, 'h': 0.6774, 'sigma8': 0.8159, 'Omega_b': 0.0486, 'n_s': 0.9667}
+    for name in ref:
+        assert cosmo[name] == ref[name], f'{name}: {cosmo[name]} vs {ref[name]}'
+
+
 def test_abacus():
     from cosmoprimo.fiducial import AbacusSummit_params, AbacusSummit
     dcosmos = AbacusSummit_params(params=['root', 'omega_b', 'omega_cdm', 'h', 'A_s', 'n_s', 'alpha_s', 'N_ur', 'omega_ncdm', 'w0_fld', 'wa_fld'])
@@ -132,5 +139,6 @@ if __name__ == '__main__':
 
     test_planck()
     test_boss()
+    test_uchuu()
     test_abacus()
     test_desi(plot=False)

@@ -68,7 +68,6 @@ class ClassEngine(BaseEngine):
             except: continue
         #for name in ['theta_s_100']:
         #    if name in params: params.pop('h')
-
         self._set_classy(params=params)
 
     def _set_classy(self, params):
