@@ -8,7 +8,7 @@ from . import constants
 _dir_data = os.path.join(os.path.dirname(__file__), 'data')
 
 
-def Uchuu(name='Planck2015', engine=None, extra_params=None, **params):
+def Uchuu(name='Planck2015', engine='class', extra_params=None, **params):
     """
     Initialize :class:`Cosmology` for Uchuu simulations.
 
