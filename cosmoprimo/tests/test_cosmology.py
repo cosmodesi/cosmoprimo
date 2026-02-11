@@ -888,6 +888,31 @@ def test_negnuclass():
         ax.loglog(pk.k, pk(pk.k, z=1.))
     plt.show()
 
+def test_decnuclass():
+    cosmo_class = Cosmology(engine='class')
+    try:
+        cosmo = Cosmology(engine='decnuclass')
+    except ImportError:
+        return
+
+    k = np.linspace(0.01, 1., 200)
+    z = np.linspace(0., 2., 10)
+    assert np.allclose(cosmo_class.get_fourier().pk_interpolator()(k=k, z=z), cosmo.get_fourier().pk_interpolator()(k=k, z=z), atol=0., rtol=1e-4)
+
+    params = {'m_ncdm': 0.4, 'Gamma_ncdm': 1e2}
+    cosmo = Cosmology(engine='decnuclass', **params)
+    assert not np.allclose(cosmo_class.get_fourier().pk_interpolator(of='theta_cb')(k=k, z=z), cosmo.get_fourier().pk_interpolator(of='theta_cb')(k=k, z=z), atol=0., rtol=1e-4)
+    cosmo.comoving_radial_distance(z)
+
+    from cosmoprimo.fiducial import DESI
+    from matplotlib import pyplot as plt
+    ax = plt.gca()
+    for Gamma_ncdm in [1e2,1e3,1e4]:
+        params.update(m_ncdm=m_ncdm)
+        cosmo = DESI(engine='decnuclass', **params)
+        pk = cosmo.get_fourier().pk_interpolator(of='theta_cb')
+        ax.loglog(pk.k, pk(pk.k, z=1.))
+    plt.show()
 
 def test_neff():
     for m_ncdm in [[], [0.] * 3]:
