@@ -84,9 +84,18 @@ class CambEngine(BaseEngine):
             de_params = {}
             for name, rename in {'w0_fld': 'w', 'wa_fld': 'wa', 'cs2_fld': 'cs2'}.items():
                 de_params[rename] = base_params.pop(name)
+            # modifying for the IDE models (Nisha)
             if self._has_fld:
-                base_params['dark_energy_model'] = self.camb.dark_energy.DarkEnergyPPF if self['use_ppf'] and self['cs2_fld'] == 1. else self.camb.dark_energy.DarkEnergyFluid
+                # base_params['dark_energy_model'] = self.camb.dark_energy.DarkEnergyPPF if self['use_ppf'] and self['cs2_fld'] == 1. else self.camb.dark_energy.DarkEnergyFluid
+                # base_params.update(de_params)
+                if 'dark_energy_model' not in base_params:
+                    base_params['dark_energy_model'] = (
+                        self.camb.dark_energy.DarkEnergyPPF
+                        if self['use_ppf'] and self['cs2_fld'] == 1. else
+                            self.camb.dark_energy.DarkEnergyFluid)
                 base_params.update(de_params)
+            # modification for IDE ends    
+            
 
             base_params['Want_CMB_lensing'] = base_params['DoLensing'] = base_params.pop('lensing')
             base_params['lmax'] = base_params.pop('ellmax_cl')
