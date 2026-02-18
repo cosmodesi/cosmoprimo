@@ -16,12 +16,12 @@ class Background(CambBackground):
     """Implementing functions for IDE growth rates"""
 
     @utils.flatarray(dtype=np.float64)
-    def get_IDE_growth_rate_z(self, z):
+    def growth_rate(self, z):
         r"""Growth rate :math:`f(z) = d\ln D / d\ln a`, where :math:`D` is the growth factor"""
         return self.ba.get_growth_rate(z=z)
     
     @utils.flatarray(dtype=np.float64)
-    def get_IDE_growth_factor_z(self, z):
+    def growth_factor(self, z):
         r"""Growth factor :math:`D(z)` normalized to D(0)=1"""
         return self.ba.get_growth_factor(z=z)
 
