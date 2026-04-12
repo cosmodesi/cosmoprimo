@@ -18,7 +18,7 @@ class Background(CambBackground):
     @utils.flatarray(dtype=np.float64)
     def growth_rate(self, z):
         r"""Growth rate :math:`f(z) = d\ln D / d\ln a`, where :math:`D` is the growth factor"""
-        return self.ba.get_growth_rate(z=z)
+        return self.ba.get_fQ_growth_rate(z=z)
     
     @utils.flatarray(dtype=np.float64)
     def growth_factor(self, z):
