@@ -50,7 +50,7 @@ class IsitgrEngine(CambEngine):
         gamma_a=0.0, 
         t_k=10.0, 
         d_s=2.0,
-
+        r_c=0.0,
     )
 
     _default_calculation_parameters = dict(
@@ -60,6 +60,7 @@ class IsitgrEngine(CambEngine):
         use_BZ_form=False,
         redshift_bins=None,
         scale_bins=None,
+        use_nDGP=False,
     )
 
     def _set_camb(self):
