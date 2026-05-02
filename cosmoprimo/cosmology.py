@@ -604,6 +604,8 @@ def get_engine(engine):
             from . import camb
         elif engine == 'isitgr':
             from . import isitgr
+        elif engine == 'heftcamb':
+            from . import heftcamb
         elif engine == 'mgcamb':
             from . import mgcamb
         elif engine == 'eisenstein_hu':
