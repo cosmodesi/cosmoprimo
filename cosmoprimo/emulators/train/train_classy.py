@@ -6,7 +6,13 @@ from pathlib import Path
 from matplotlib import pyplot as plt
 import numpy as np
 from cosmoprimo.emulators import Emulator, EmulatedEngine, MLPEmulatorEngine, Samples, FourierNormOperation, Log10Operation, ArcsinhOperation, PCAOperation, ChebyshevOperation, Operation, setup_logging
-from cosmoprimo.emulators import plot_residual_background, plot_residual_thermodynamics, plot_residual_fourier, plot_residual_harmonic
+from cosmoprimo.emulators.plotting import (
+    plot_residual_background,
+    plot_residual_fourier,
+    plot_residual_harmonic,
+    plot_residual_primordial,
+    plot_residual_thermodynamics,
+)
 from cosmoprimo.fiducial import DESI
 
 logger = logging.getLogger('classy')

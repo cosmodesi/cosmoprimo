@@ -23,6 +23,7 @@ mgcamb = ["mgcamb @ git+https://github.com/adematti/MGCAMB"]
 astropy = ["astropy"]
 extras = ["pyfftw"]
 jax = ["jax", "interpax"]
+plotting = ["matplotlib"]
 
 [tool.setuptools]
 packages = ["cosmoprimo"]
