@@ -54,6 +54,23 @@ def is_sequence(item):
     return isinstance(item, (tuple, list))
 
 
+def _make_phase_space_integrand(jnp, out, exp_sign):
+
+    if out == 'rho':
+        def pahse_space_integrand(q, m_over_T2, m2_over_T2):
+            return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(exp_sign * q))
+    elif out == 'drhodm':
+        def phase_space_integrand(q, m_over_T2, m2_over_T2):
+            return m_over_T2 * q**2 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(exp_sign * q))
+    elif out == 'p':
+        def phase_space_integrand(q, m_over_T2, m2_over_T2):
+            return 1. / 3. * q**4 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(exp_sign * q))
+    else:
+        raise ValueError(f'Cannot compute ncdm momenta {out}; choices are ["rho", "drhodm", "p"]')
+
+    return phase_space_integrand
+
+
 def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e-7, out='rho'):
     r"""
     Return momenta of non-CDM components (massive neutrinos)
@@ -96,19 +113,8 @@ def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e
     if method == 'quad':
         # Upper bound of 100 enough (10^⁻16 error)
         limits = (0., 100.)
-
-        if out == 'rho':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
-        elif out == 'drhodm':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return m_over_T2 * q**2 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
-        elif out == 'p':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return 1. / 3. * q**4 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
-        else:
-            raise ValueError('Cannot compute ncdm momenta {}; choices are ["rho", "drhodm", "p"]', out)
-
+        phase_space_integrand = _make_phase_space_integrand(jnp, out, exp_sign=1.)
+        
         #if use_jax(T_eff, m, z):
         #    from quadax import quadgk
         #    quad = lambda fun, args: quadgk(fun, limits, args=args, epsabs=epsabs, epsrel=epsrel)[0]
@@ -119,18 +125,7 @@ def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e
         toret = jnp.array([quad(phase_space_integrand, (m_over_T2[iz], m2_over_T2[iz])) for iz in range(len(z))])
 
     else:
-
-        if out == 'rho':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(-q))
-        elif out == 'drhodm':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return m_over_T2 * q**2 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(-q))
-        elif out == 'p':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return 1. / 3. * q**4 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(-q))
-        else:
-            raise ValueError('Cannot compute ncdm momenta {}; choices are ["rho", "drhodm", "p"]', out)
+        phase_space_integrand = _make_phase_space_integrand(jnp, out, exp_sign=-1.)
 
         # With Laguerre, \int e^{-x} f(x) = \sum f(ti) wi
         # Accuracy ~1e-12
