@@ -407,7 +407,7 @@ class Background(BaseBackground):
         return np.sinh(np.sqrt(-K) * (chi2 - chi1)) / np.sqrt(-K) / (1 + z2)
 
     @utils.flatarray(dtype=np.float64)
-    def comoving_angular_distance(self, z):
+    def comoving_transverse_distance(self, z):
         r"""
         Comoving angular distance, in :math:`\mathrm{Mpc}/h`.
 

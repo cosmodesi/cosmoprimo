@@ -320,7 +320,7 @@ class PowerToCorrelation(FFTlog):
         # Convention is (-i)^ell/(2 pi^2)
         ell = np.atleast_1d(ell)
         if complex:
-            phase = (-1j) ** ell
+            phase = (-1j)**ell
         else:
             # Prefactor is (-i)^ell, but we take in the imaginary part of odd power spectra, hence:
             # (-i)^ell = (-1)^(ell/2) if ell is even
@@ -370,7 +370,7 @@ class CorrelationToPower(FFTlog):
         # Convention is 4 \pi i^ell, and we return imaginary part of odd poles
         ell = np.atleast_1d(ell)
         if complex:
-            phase = (-1j) ** ell
+            phase = (1j)**ell
         else:
             # We return imaginary part of odd poles
             phase = (-1)**(ell // 2)

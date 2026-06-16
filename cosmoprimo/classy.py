@@ -101,7 +101,7 @@ class BaseClassThermodynamics(object):
     def theta_cosmomc(self):
         from .cosmology import _compute_rs_cosmomc
         rs, zstar = _compute_rs_cosmomc(self.ba.Omega0_b * self.ba.h**2, self.ba.Omega0_m * self.ba.h**2, self.ba.hubble_function)
-        return rs * self.ba.h / self.ba.comoving_angular_distance(zstar)
+        return rs * self.ba.h / self.ba.comoving_transverse_distance(zstar)
 
 
 class BaseClassPrimordial(object):

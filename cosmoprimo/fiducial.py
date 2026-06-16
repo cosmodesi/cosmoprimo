@@ -46,113 +46,6 @@ def Uchuu(name='Planck2015', engine='class', extra_params=None, **params):
     return Cosmology(engine=engine, extra_params=extra_params, **default_params).clone(**params)
 
 
-# def UchuuPlanck2015(engine=None, extra_params=None, **params):
-#     """
-#     Initialize :class:`Cosmology` based on Table 4 Planck2015 TT,TE,EE+lowP+lensing.
-
-#     Parameters
-#     ----------
-#     engine : string, default=None
-#         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_no
-# wiggle', 'bbks'].
-#         If ``None``, returns current :attr:`Cosmology.engine`.
-
-#     extra_params : dict, default=None
-#         Extra engine parameters, typically precision parameters.
-
-#     params : dict
-#         Cosmological and calculation parameters which take priority over the default ones.
-
-#     Returns
-#     -------
-#     cosmology : Cosmology
-#     """
-#     default_params = dict(h=0.6751, omega_cdm=0.1193, omega_b=0.02226 , Omega_k=0., sigma8=0.8150, k_pivot=0.05, n_s=0.9653,
-#                           m_ncdm=[0.06], neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
-#                           tau_reio=0.063, A_L=1.0, w0_fld=-1., wa_fld=0.)
-#     return Cosmology(engine=engine, extra_params=extra_params, **default_params).clone(**params)
-
-
-# def UchuuPlanck2018(engine=None, extra_params=None, **params):
-#     """
-#     Initialize :class:`Cosmology` based on Table 4 Planck2015 TT,TE,EE+lowP+lensing.
-
-#     Parameters
-#     ----------
-#     engine : string, default=None
-#         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_no
-# wiggle', 'bbks'].
-#         If ``None``, returns current :attr:`Cosmology.engine`.
-
-#     extra_params : dict, default=None
-#         Extra engine parameters, typically precision parameters.
-
-#     params : dict
-#         Cosmological and calculation parameters which take priority over the default ones.
-
-#     Returns
-#     -------
-#     cosmology : Cosmology
-#     """
-#     default_params = dict(h=0.6766, Omega_b=0.048975, Omega_k=0., sigma8=0.8102, k_pivot=0.05, n_s=0.9665,
-#                           m_ncdm=[0.06], neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
-#                           tau_reio=0.063, A_L=1.0, w0_fld=-1., wa_fld=0.)
-#     return Cosmology(engine=engine, extra_params=extra_params, **default_params).clone(**params)
-
-
-# def UchuuPlanck2018DDE(engine=None, extra_params=None, **params):
-#     """
-#     Initialize :class:`Cosmology` based on Table 4 Planck2015 TT,TE,EE+lowP+lensing.
-
-#     Parameters
-#     ----------
-#     engine : string, default=None
-#         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_no
-# wiggle', 'bbks'].
-#         If ``None``, returns current :attr:`Cosmology.engine`.
-
-#     extra_params : dict, default=None
-#         Extra engine parameters, typically precision parameters.
-
-#     params : dict
-#         Cosmological and calculation parameters which take priority over the default ones.
-
-#     Returns
-#     -------
-#     cosmology : Cosmology
-#     """
-#     default_params = dict(h=0.6766, Omega_b=0.048975, Omega_k=0., sigma8=0.8102, k_pivot=0.05, n_s=0.9665,
-#                           m_ncdm=[0.06], neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
-#                           tau_reio=0.063, A_L=1.0, w0_fld=-0.45, wa_fld=-1.79)
-#     return Cosmology(engine=engine, extra_params=extra_params, **default_params).clone(**params)
-
-# def UchuuDESIY1DDE(engine=None, extra_params=None, **params):
-#     """
-#     Initialize :class:`Cosmology` based on Table 4 Planck2015 TT,TE,EE+lowP+lensing.
-
-#     Parameters
-#     ----------
-#     engine : string, default=None
-#         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_no
-# wiggle', 'bbks'].
-#         If ``None``, returns current :attr:`Cosmology.engine`.
-
-#     extra_params : dict, default=None
-#         Extra engine parameters, typically precision parameters.
-
-#     params : dict
-#         Cosmological and calculation parameters which take priority over the default ones.
-
-#     Returns
-#     -------
-#     cosmology : Cosmology
-#     """
-#     default_params = dict(h=0.6470, Omega_m=0.3440, Omega_b=0.048975, Omega_k=0., sigma8=0.8102, k_pivot=0.05, n_s=0.9665,
-#                           m_ncdm=[0.06], neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
-#                           tau_reio=0.063, A_L=1.0, w0_fld=-0.45, wa_fld=-1.79)
-#     return Cosmology(engine=engine, extra_params=extra_params, **default_params).clone(**params)
-
-
 def Planck2018FullFlatLCDM(engine=None, extra_params=None, **params):
     """
     Initialize :class:`Cosmology` based on Planck2018 TT, TE, EE, lowE, lensing and BAO data.
@@ -396,3 +289,40 @@ def save_TabulatedDESI():
     array = np.array([z, cosmo.efunc(z), cosmo.comoving_radial_distance(z)]).T
     header = 'z = [0] + {}\nz efunc(z) comoving_radial_distance(z) [Mpc/h]'.format(bins_log)
     np.savetxt(_DESI_filename, array, fmt='%.18e', header=header, comments='# ')
+
+
+
+def DESIDR2Flatw0waCDM(engine='class', precision=None, extra_params=None, **params):
+    """
+    Initialize :class:`Cosmology` with the best fit values for a flat, w0wa, CDM cosmology from CMB + DESI BAO DR2 + DESY5 (https://arxiv.org/pdf/2503.14738).
+
+    The best fit values are from: '/global/cfs/cdirs/desicollab/science/cpe/y3_bao_cosmo/bao_v1p2/bao/iminuit/camb/run1/base_w_wa/desi-bao-all_desy5sn_planck2018-lowl-TT-clik_planck2018-lowl-EE-clik_planck-NPIPE-highl-CamSpec-TTTEEE_planck-act-dr6-lensing'
+
+    Parameters
+    ----------
+    engine : string, default='class'
+        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+        If ``None``, returns current :attr:`Cosmology.engine`.
+
+    precision : string, default=None
+        Precision for computation; pass 'base' to get same precision as AbacusSummitBase (few minutes).
+
+    extra_params : dict, default=None
+        Extra engine parameters, typically precision parameters.
+
+    params : dict
+        Cosmological and calculation parameters which take priority over the default ones.
+
+    Returns
+    -------
+    cosmology : Cosmology
+    """
+
+    # Read from bestfit.minimum:
+    bestfit_params = {'Omega_m':0.3191980194, 'omega_b':0.02221485621, 'H0':66.73428704,
+                      'logA':3.038847745, 'n_s':0.9644215278, 'tau_reio':0.05271118001,
+                      'w0_fld':-0.7536302620, 'wa_fld':-0.8574714585}
+
+    cosmo = AbacusSummit(engine=engine, precision=precision, extra_params=extra_params, **bestfit_params)
+
+    return cosmo.clone(**params)
