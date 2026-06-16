@@ -23,12 +23,13 @@ mgcamb = ["mgcamb @ git+https://github.com/adematti/MGCAMB"]
 astropy = ["astropy"]
 extras = ["pyfftw"]
 jax = ["jax", "interpax"]
+plotting = ["matplotlib"]
 
 [tool.setuptools]
-packages = ["cosmoprimo"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["cosmoprimo*"]
 
 [tool.setuptools.package-data]
 cosmoprimo = ["data/*.dat", "data/*.csv", "bindings/*/*.yaml"]
-
-[tool.setuptools.dynamic]
-version = {attr = "cosmoprimo.__version__"}

@@ -19,10 +19,10 @@ class AstropyEngine(BaseEngine):
         kwargs = {'H0': self['H0'], 'Om0': self['Omega_b'] + self['Omega_cdm'],
                   'Tcmb0': self['T_cmb'], 'Neff': N_eff, 'm_nu': units.Quantity(m_nu, units.eV), 'Ob0': self['Omega_b']}
         name = 'CDM'
-        if self['wa_fld'] != -1:
+        if self['wa_fld'] != 0:
             name = 'wa{}'.format(name)
             kwargs['wa'] = self['wa_fld']
-        if self['w0_fld'] != 0:
+        if self['w0_fld'] != -1:
             kwargs['w0'] = self['w0_fld']
             if self['wa_fld'] != -1:
                 name = 'w0{}'.format(name)  # w0wa model
@@ -31,7 +31,7 @@ class AstropyEngine(BaseEngine):
         if self['Omega_k'] == 0:
             name = 'Flat{}'.format(name)
         else:
-            kwargs['Ode0'] = 1 - (self['Omega_b'] + self['Omega_cdm'])  # this is a first guess for OdeO because neutrino treatment...
+            kwargs['Ode0'] = 1 - (self['Omega_b'] + self['Omega_cdm'])  # this is a first guess for Ode0 because neutrino treatment...
             self._astropy = getattr(astropy_cosmology, name)(**kwargs)
             # now adjust Ode0 based on Omega_k
             kwargs['Ode0'] = 1.0 - self._astropy.Om0 - self['Omega_k'] - self._astropy.Ogamma0 - self._astropy.Onu0
@@ -56,7 +56,11 @@ class Background(BaseBackground):
 
     @property
     def age(self):
-        r"""The current age of the Universe, in :math:`\mathrm{Gy}`."""
+        r"""
+        The current age of the Universe, in :math:`\mathrm{Gy}`.
+
+        Equivalent to :math:time evaluated at :math:z = 0.
+        """
         return self.ba.age(0.).value
 
     @utils.flatarray()
@@ -105,7 +109,11 @@ class Background(BaseBackground):
 
     @utils.flatarray()
     def time(self, z):
-        r"""Proper time (age of universe), in :math:`\mathrm{Gy}`."""
+        r"""
+        Proper time (age of universe), in :math:`\mathrm{Gy}`.
+
+        See also :math:age for the current age at :math:z = 0.
+        """
         if z.size:  # required to avoid error in np.vectorize
             return self.ba.age(z).value
         return np.zeros_like(z)
@@ -113,7 +121,7 @@ class Background(BaseBackground):
     @utils.flatarray()
     def comoving_radial_distance(self, z):
         r"""
-        Comoving radial distance, in :math:`mathrm{Mpc}/h`.
+        Comoving radial distance, in :math:`\mathrm{Mpc}/h`.
 
         See eq. 15 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_C(z)`.
         """
@@ -147,7 +155,9 @@ class Background(BaseBackground):
     def angular_diameter_distance_2(self, z1, z2):
         r"""
         Angular diameter distance of object at :math:`z_{2}` as seen by observer at :math:`z_{1}`,
-        that is, :math:`S_{K}((\chi(z_{2}) - \chi(z_{1})) \sqrt{|K|}) / \sqrt{|K|} / (1 + z_{2})`,
+        in :math:`\mathrm{Mpc}/h`.
+
+        That is, :math:`S_{K}((\chi(z_{2}) - \chi(z_{1})) \sqrt{|K|}) / \sqrt{|K|} / (1 + z_{2})`,
         where :math:`S_{K}` is the identity if :math:`K = 0`, :math:`\sin` if :math:`K < 0`
         and :math:`\sinh` if :math:`K > 0`.
         """
