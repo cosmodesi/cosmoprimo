@@ -29,7 +29,7 @@ class isitideEngine(CambEngine):
 
     """Engine for the isitide version of the Boltzmann code CAMB."""
     name = 'isitide'
-    _default_cosmological_parameters = dict(w=-1.0, wa=0.0, beta=0.0)
+    _default_cosmological_parameters = dict(w=-1.0, wa=0.0)
     _default_calculation_parameters = dict(dark_energy_model='IDEModel1')  
 
     def _set_camb(self):

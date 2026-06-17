@@ -605,7 +605,9 @@ def get_engine(engine):
         elif engine == 'isitgr':
             from . import isitgr
         elif engine == 'isitide':
-            from . import isitide    
+            from . import isitide
+        elif engine == 'dsclass':
+            from . import dsclassy
         elif engine == 'mgcamb':
             from . import mgcamb
         elif engine == 'eisenstein_hu':
