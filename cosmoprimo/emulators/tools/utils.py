@@ -4,6 +4,7 @@ import sys
 import time
 import logging
 import traceback
+import warnings
 
 import numpy as np
 
@@ -140,18 +141,41 @@ class BaseClass(object, metaclass=BaseMetaClass):
         new.__setstate__(state)
         return new
 
-    def save(self, filename):
-        """Save to ``filename``."""
-        self.log_info('Saving {}.'.format(filename))
+    def write(self, filename):
+        """Write to ``filename``."""
+        self.log_info('Writing {}.'.format(filename))
+        filename = str(filename)
         mkdir(os.path.dirname(filename))
-        np.save(filename, self.__getstate__(), allow_pickle=True)
+        if filename.endswith(('.h5', '.hdf5')):
+            import h5py
+            with h5py.File(filename, 'w') as f:
+                _h5_write_state(f, self.__getstate__())
+        else:
+            np.save(filename, self.__getstate__(), allow_pickle=True)
+
+    def save(self, filename):
+        """Deprecated. Use :meth:`write`."""
+        warnings.warn('save() is deprecated, use write() instead.', DeprecationWarning, stacklevel=2)
+        return self.write(filename)
+
+    @classmethod
+    def read(cls, filename):
+        """Read from ``filename``."""
+        cls.log_info('Reading {}.'.format(filename))
+        filename = str(filename)
+        if filename.endswith(('.h5', '.hdf5')):
+            import h5py
+            with h5py.File(filename, 'r') as f:
+                state = _h5_read_state(f)
+        else:
+            state = np.load(filename, allow_pickle=True)[()]
+        return cls.from_state(state)
 
     @classmethod
     def load(cls, filename):
-        cls.log_info('Loading {}.'.format(filename))
-        state = np.load(filename, allow_pickle=True)[()]
-        new = cls.from_state(state)
-        return new
+        """Deprecated. Use :meth:`read`."""
+        warnings.warn('load() is deprecated, use read() instead.', DeprecationWarning, stacklevel=2)
+        return cls.read(filename)
 
 
 def find_names(allnames, name):
@@ -298,6 +322,61 @@ def subspace(X, precision=None, npcs=None, chi2min=None, fweights=None, aweights
 
 
 import ast
+import json
+
+from cosmoprimo.utils import _prepare_for_json, _restore_from_json
+
+
+_ENGINE_ATTRS = ('name', 'params', 'xshape', 'yshape')
+
+
+def _h5_write_engine_state(h5grp, state):
+    """Write engine state to h5 group. Saves name/params/xshape/yshape as individual attrs, arrays as datasets, rest as JSON __meta__ attr."""
+    for key in _ENGINE_ATTRS:
+        if key in state:
+            val = state[key]
+            h5grp.attrs[key] = val if isinstance(val, str) else json.dumps(_prepare_for_json(val))
+    arr_keys = {k for k, v in state.items() if isinstance(v, np.ndarray) and k not in _ENGINE_ATTRS}
+    for key in arr_keys:
+        h5grp.create_dataset(key, data=state[key])
+    meta_keys = [k for k in state if k not in _ENGINE_ATTRS and k not in arr_keys]
+    if meta_keys:
+        h5grp.attrs['__meta__'] = json.dumps(_prepare_for_json({k: state[k] for k in meta_keys}))
+
+
+def _h5_read_engine_state(h5grp):
+    """Read engine state from h5 group written by _h5_write_engine_state."""
+    state = {}
+    for key in _ENGINE_ATTRS:
+        if key in h5grp.attrs:
+            val = str(h5grp.attrs[key])
+            state[key] = val if key == 'name' else _restore_from_json(json.loads(val))
+    for key in h5grp.keys():
+        state[key] = h5grp[key][...]
+    meta_str = h5grp.attrs.get('__meta__', None)
+    if meta_str is not None:
+        state.update(_restore_from_json(json.loads(str(meta_str))))
+    return state
+
+
+def _h5_write_state(h5grp, state):
+    """Write a state dict to h5 group. Arrays become datasets, everything else becomes JSON __meta__ attr."""
+    arr_keys = {k for k, v in state.items() if isinstance(v, np.ndarray)}
+    for key in arr_keys:
+        h5grp.create_dataset(key, data=state[key])
+    meta = {k: v for k, v in state.items() if k not in arr_keys}
+    h5grp.attrs['__meta__'] = json.dumps(_prepare_for_json(meta))
+
+
+def _h5_read_state(h5grp):
+    """Read a state dict from h5 group written by _h5_write_state."""
+    state = {}
+    for key in h5grp.keys():
+        state[key] = h5grp[key][...]
+    meta_str = h5grp.attrs.get('__meta__', None)
+    if meta_str is not None:
+        state.update(_restore_from_json(json.loads(str(meta_str))))
+    return state
 
 
 def evaluate(value, type=None, locals=None, verbose=True):

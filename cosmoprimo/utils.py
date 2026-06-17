@@ -18,6 +18,36 @@ def mkdir(dirname):
         return
 
 
+def _prepare_for_json(obj):
+    """Recursively convert obj to JSON-serializable form, encoding tuples and numpy arrays."""
+    if isinstance(obj, np.ndarray):
+        return {'__ndarray__': obj.tolist(), '__dtype__': str(obj.dtype)}
+    if isinstance(obj, tuple):
+        return {'__tuple__': [_prepare_for_json(v) for v in obj]}
+    if isinstance(obj, list):
+        return [_prepare_for_json(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _prepare_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    return obj
+
+
+def _restore_from_json(obj):
+    """Inverse of _prepare_for_json."""
+    if isinstance(obj, dict):
+        if set(obj.keys()) == {'__ndarray__', '__dtype__'}:
+            return np.array(obj['__ndarray__'], dtype=obj['__dtype__'])
+        if set(obj.keys()) == {'__tuple__'}:
+            return tuple(_restore_from_json(v) for v in obj['__tuple__'])
+        return {k: _restore_from_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_restore_from_json(v) for v in obj]
+    return obj
+
+
 class BaseClass(object):
     """
     Base class to be used throughout the **cosmoprimo** package.

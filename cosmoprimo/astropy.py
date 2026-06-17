@@ -20,16 +20,17 @@ class AstropyEngine(BaseEngine):
                   'Tcmb0': self['T_cmb'], 'Neff': N_eff, 'm_nu': units.Quantity(m_nu, units.eV), 'Ob0': self['Omega_b']}
         name = 'CDM'
         if self['wa_fld'] != 0:
-            name = 'wa{}'.format(name)
             kwargs['wa'] = self['wa_fld']
         if self['w0_fld'] != -1:
             kwargs['w0'] = self['w0_fld']
             if self['wa_fld'] != -1:
-                name = 'w0{}'.format(name)  # w0wa model
+                name = f'w0wa{name}'  # w0wa model
             else:
-                name = 'w{}'.format(name)  # w model
+                name = f'w{name}'  # w model
+        else:
+            name = f'Lambda{name}'
         if self['Omega_k'] == 0:
-            name = 'Flat{}'.format(name)
+            name = f'Flat{name}'
         else:
             kwargs['Ode0'] = 1 - (self['Omega_b'] + self['Omega_cdm'])  # this is a first guess for Ode0 because neutrino treatment...
             self._astropy = getattr(astropy_cosmology, name)(**kwargs)

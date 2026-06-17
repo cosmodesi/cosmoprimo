@@ -10,9 +10,9 @@ def test_samples():
     print(list(samples))
     assert samples.size == size
     assert samples[:3].size == 3
-    for fn in ['_tests/samples.npy', '_tests/samples.npz']:
-        samples.save(fn)
-        samples2 = Samples.load(fn)
+    for fn in ['_tests/samples.h5', '_tests/samples.npz']:
+        samples.write(fn)
+        samples2 = Samples.read(fn)
         assert samples2 == samples
 
 

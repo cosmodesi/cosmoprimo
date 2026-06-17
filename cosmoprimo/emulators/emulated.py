@@ -53,7 +53,7 @@ class EmulatedEngine(BaseEngine):
                     warnings.warn('Downloading the emulator data. You can set the directory with the environment variable COSMOPRIMO_EMULATOR_DIR')
                     from cosmoprimo.emulators.tools.utils import download
                     download(url, path)
-                emulator.update(Emulator.load(path))
+                emulator.update(Emulator.read(path))
             self.__class__._emulator = emulator
 
         self._A_s = self._get_A_s_fid()
@@ -124,8 +124,8 @@ class EmulatedEngine(BaseEngine):
         self._predict = predict
 
     @classmethod
-    def load(cls, filename):
-        """Load class from disk."""
+    def read(cls, filename):
+        """Return an engine subclass that will load ``filename`` on first use."""
 
         class _EmulatedEngine(cls):
 
@@ -133,6 +133,13 @@ class EmulatedEngine(BaseEngine):
             __module__ = cls.__module__
 
         return _EmulatedEngine
+
+    @classmethod
+    def load(cls, filename):
+        """Deprecated. Use :meth:`read`."""
+        import warnings
+        warnings.warn('load() is deprecated, use read() instead.', DeprecationWarning, stacklevel=2)
+        return cls.read(filename)
 
     def _rescale_sigma8(self):
         """Rescale perturbative quantities to match input sigma8 or A_s."""

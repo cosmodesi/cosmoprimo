@@ -29,9 +29,9 @@ def test_params():
     Fourier(cosmo)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        fn = os.path.join(tmp_dir, 'cosmo.npy')
-        cosmo.save(fn)
-        cosmo = Cosmology.load(fn)
+        fn = os.path.join(tmp_dir, 'cosmo.json')
+        cosmo.write(fn)
+        cosmo = Cosmology.read(fn)
 
     assert np.allclose(cosmo['m_ncdm'], m_ncdm)
     assert cosmo.engine.__class__.__name__ == 'ClassEngine'

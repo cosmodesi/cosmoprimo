@@ -20,15 +20,15 @@ def test_samples():
 def test_taylor():
     cosmo = DESI()
     emulator_dir = '_tests'
-    fn = os.path.join(emulator_dir, 'emu.npy')
+    fn = os.path.join(emulator_dir, 'emu.h5')
     emulator = Emulator(samples=samples_fn, engine=TaylorEmulatorEngine())
     #ref_samples = emulator.samples['fourier.pk.delta_cb.delta_cb']
     emulator.fit()
-    emulator.save(fn)
+    emulator.write(fn)
 
-    ref_samples = Samples.load(samples_fn)
+    ref_samples = Samples.read(samples_fn)
 
-    cosmo = DESI(engine=EmulatedEngine.load(fn))
+    cosmo = DESI(engine=EmulatedEngine.read(fn))
     z = np.linspace(0., 3., 100)
     d1 = cosmo.comoving_radial_distance(z)
     d2 = cosmo.clone(Omega_cdm=0.25).comoving_radial_distance(z)

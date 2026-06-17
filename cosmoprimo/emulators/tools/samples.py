@@ -1,4 +1,5 @@
 import os
+import warnings
 from collections import UserDict
 
 import numpy as np
@@ -79,17 +80,26 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
     def __setstate__(self, state):
         super(Samples, self).__setstate__(state)
 
-    def save(self, filename):
+    def write(self, filename):
         """
-        Save to ``filename``.
-        If filename ends with '.npy', save as a unique file.
-        Else, save in this directory, with a '.npy' file for attrs and each name: array.
+        Write to ``filename``.
+        Supports ``.h5``/``.hdf5``, ``.npz``, and ``.npy`` (pickle) formats.
         """
+        import json
         filename = str(filename)
         state = self.__getstate__()
-        self.log_info('Saving {}.'.format(filename))
+        self.log_info('Writing {}.'.format(filename))
         utils.mkdir(os.path.dirname(filename))
-        if filename.endswith('.npz'):
+        if filename.endswith(('.h5', '.hdf5')):
+            import h5py
+            with h5py.File(filename, 'w') as f:
+                data_grp = f.create_group('data')
+                columns = list(state['data'].keys())
+                data_grp.attrs['columns'] = json.dumps(columns)
+                for col_name, arr in state['data'].items():
+                    data_grp.create_dataset(col_name, data=arr)
+                f.attrs['attrs'] = json.dumps(utils._prepare_for_json(state['attrs']))
+        elif filename.endswith('.npz'):
             statez = dict(state)
             statez.pop('data', None)
             statez['columns'] = []
@@ -100,12 +110,26 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
         else:
             np.save(filename, state, allow_pickle=True)
 
+    def save(self, filename):
+        """Deprecated. Use :meth:`write`."""
+        warnings.warn('save() is deprecated, use write() instead.', DeprecationWarning, stacklevel=2)
+        return self.write(filename)
+
     @classmethod
-    def load(cls, filename, include=None, exclude=None):
-        """Load samples."""
+    def read(cls, filename, include=None, exclude=None):
+        """Read samples from ``filename``, optionally selecting columns via ``include``/``exclude``."""
+        import json
         filename = str(filename)
-        cls.log_info('Loading {}.'.format(filename))
-        if filename.endswith('.npz'):
+        cls.log_info('Reading {}.'.format(filename))
+        if filename.endswith(('.h5', '.hdf5')):
+            import h5py
+            with h5py.File(filename, 'r') as f:
+                all_columns = json.loads(str(f['data'].attrs['columns']))
+                scolumns = set(_select_columns(all_columns, include=include, exclude=exclude))
+                data = {col: f['data'][col][...] for col in all_columns if col in scolumns}
+                attrs = utils._restore_from_json(json.loads(str(f.attrs.get('attrs', '{}'))))
+            return cls.from_state({'data': data, 'attrs': attrs})
+        elif filename.endswith('.npz'):
             with np.load(filename, allow_pickle=True) as data:
                 columns = data['columns']
                 scolumns = _select_columns(columns, include=include, exclude=exclude)
@@ -115,6 +139,12 @@ class Samples(UserDict, BaseClass, metaclass=BaseMetaClass):
             state = np.load(filename, allow_pickle=True)[()]
         new = cls.from_state(state).select(include=include, exclude=exclude)
         return new
+
+    @classmethod
+    def load(cls, filename, include=None, exclude=None):
+        """Deprecated. Use :meth:`read`."""
+        warnings.warn('load() is deprecated, use read() instead.', DeprecationWarning, stacklevel=2)
+        return cls.read(filename, include=include, exclude=exclude)
 
     def __copy__(self):
         """Shallow copy."""
@@ -393,6 +423,8 @@ class BaseSampler(BaseClass):
                     scatter_samples['X.' + name][ivalue] = value
                 for name, value in state.items():
                     scatter_samples['Y.' + name][ivalue] = value
+            for name in set(default_params) - set(default_X):
+                scatter_samples.pop('X.' + name, None)
             gather_samples = Samples.gather(scatter_samples, mpicomm=self.mpicomm, mpiroot=0)
             if self.mpicomm.rank == 0:
                 gather_samples.attrs['params'] = dict(self.params)

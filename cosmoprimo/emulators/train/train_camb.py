@@ -65,7 +65,7 @@ def sample(samples_fn, start=0, stop=100000, config='base_w_wa'):
                 return toret
 
     calculator = get_calculator(cosmo, section=['background', 'thermodynamics', 'primordial', 'harmonic', 'fourier'])
-    sampler = QMCSampler(calculator, params=params, engine='lhs', seed=5, reparam=reparam, save_fn='{}_{:d}_{:d}.npz'.format(samples_fn, start, stop))
+    sampler = QMCSampler(calculator, params=params, engine='lhs', seed=5, reparam=reparam, save_fn='{}_{:d}_{:d}.h5'.format(samples_fn, start, stop))
     sampler.run(save_every=10, niterations=stop - start, nstart=start)
 
 
@@ -75,7 +75,7 @@ def load_samples(samples_fn, sl=slice(None), **kwargs):
     list_samples = []
     ngood, ntotal = 0, 0
     for fn in sorted(glob.glob(str(samples_fn) + '*'))[sl]:
-        samples = Samples.load(fn, **kwargs)
+        samples = Samples.read(fn, **kwargs)
         if 'X.w0_fld' in samples.columns('X.*'):
             if 'X.wa_fld' in samples.columns('X.*'):
                 samples = samples[samples['X.w0_fld'] + samples['X.wa_fld'] < 0.]
@@ -115,7 +115,7 @@ def fit(samples_fn, emulator_fn, section=None, name=None, load_samples=load_samp
     engine['fourier.*'] = MLPEmulatorEngine(nhidden=(64,) * 5, yoperation=[Log10Operation()], model_yoperation=[], activation='silu')
 
     if emulator_fn.exists():
-        emulator = Emulator.load(emulator_fn)
+        emulator = Emulator.read(emulator_fn)
     else:
         emulator = Emulator()
     emulator.set_engine(engine)
@@ -134,19 +134,19 @@ def fit(samples_fn, emulator_fn, section=None, name=None, load_samples=load_samp
         emulator.set_engine(engine)
         emulator.set_samples(samples=samples)
         emulator.fit(name='background.*', batch_frac=[0.5, 0.8, 0.8], learning_rate=[1e-2, 1e-3, 1e-4], patience=1000, epochs=50000)
-        emulator.save(emulator_fn)
+        emulator.write(emulator_fn)
 
     if 'thermodynamics' in section:
         samples = load_samples(samples_fn, include=['X.*', 'Y.thermodynamics.*'], exclude=['X.logA', 'X.n_s', 'X.tau_reio'])
         emulator.set_samples(samples=samples)
         emulator.fit(name='thermodynamics.*', batch_frac=[0.5, 0.8, 0.8, 1.], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5], patience=1000, epochs=50000)
-        emulator.save(emulator_fn)
+        emulator.write(emulator_fn)
         
     if 'primordial' in section:
         samples = load_samples(samples_fn, include=['X.*', 'Y.primordial.*'])
         emulator.set_samples(samples=samples.select(['X.logA', 'X.n_s', 'Y.primordial.*']))
         emulator.fit(name='primordial.*', batch_frac=(0.2, 0.4, 1.), learning_rate=(1e-2, 1e-4, 1e-6), epochs=1000)
-        emulator.save(emulator_fn)
+        emulator.write(emulator_fn)
 
     if 'fourier' in section:
         samples = load_samples(samples_fn, include=['X.*', 'Y.fourier.k', 'Y.fourier.z', 'Y.fourier.z_non_linear', 'Y.fourier.pk.delta_m.delta_m'], exclude=['X.tau_reio'])
@@ -162,7 +162,7 @@ def fit(samples_fn, emulator_fn, section=None, name=None, load_samples=load_samp
             yoperation = emulator.engines['fourier.pk.delta_cb.delta_cb'].yoperations[-1]
             emulator.engines['fourier.pk.delta_cb.delta_cb'].yoperations = emulator.engines['fourier.pk.delta_cb.delta_cb'].yoperations[:-1]
 
-        emulator.save(emulator_fn)
+        emulator.write(emulator_fn)
 
     if 'harmonic' in section:
         samples = load_samples(samples_fn, include=['X.*', f'Y.harmonic.{name}'])
@@ -172,7 +172,7 @@ def fit(samples_fn, emulator_fn, section=None, name=None, load_samples=load_samp
         print(section, name)
         emulator.fit(name=f'{section}.{name}', batch_frac=[0.8, 0.8, 1.], learning_rate=[1e-2, 1e-3, 1e-3], patience=1000, epochs=5000)
         #emulator.fit(name=f'{section}.{name}', batch_frac=[0.8, 0.8, 1.], learning_rate=[1e-2, 1e-3, 1e-3], patience=2, epochs=5)
-        emulator.save(emulator_fn)
+        emulator.write(emulator_fn)
 
 
 def plot(samples_fn, emulator_fn, emulator_dir, section=('background', 'thermodynamics', 'harmonic')):
@@ -243,8 +243,8 @@ if __name__ == '__main__':
 
     def get_emulator_fn(section, name):
         if name is not None:
-            return emulator_dir / f'emulator_{section}_{name}.npy'
-        return emulator_dir / f'emulator_{section}.npy'
+            return emulator_dir / f'emulator_{section}_{name}.h5'
+        return emulator_dir / f'emulator_{section}.h5'
 
     if 'fit' in args.todo:
         from desipipe import Queue, Environment, TaskManager, spawn, setup_logging
@@ -277,10 +277,10 @@ if __name__ == '__main__':
                 paths = [get_emulator_fn(section, name) for name in names]
             for path in paths:
                 if os.path.exists(path):
-                    emulator_section.update(Emulator.load(path))
-                    emulator.update(Emulator.load(path))
-            emulator_section.save(get_emulator_fn(section, None))
-        emulator.save(emulator_dir / 'emulator.npy')
+                    emulator_section.update(Emulator.read(path))
+                    emulator.update(Emulator.read(path))
+            emulator_section.write(get_emulator_fn(section, None))
+        emulator.write(emulator_dir / 'emulator.h5')
 
     if 'plot' in args.todo:
-        plot(samples_fn, emulator_dir / 'emulator.npy', emulator_dir, section=(args.section,))
+        plot(samples_fn, emulator_dir / 'emulator.h5', emulator_dir, section=(args.section,))

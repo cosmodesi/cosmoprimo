@@ -54,10 +54,10 @@ def is_sequence(item):
     return isinstance(item, (tuple, list))
 
 
-def _make_phase_space_integrand(jnp, out, exp_sign):
+def _make_phase_space_integrand(jnp, out, exp_sign=1.):
 
     if out == 'rho':
-        def pahse_space_integrand(q, m_over_T2, m2_over_T2):
+        def phase_space_integrand(q, m_over_T2, m2_over_T2):
             return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(exp_sign * q))
     elif out == 'drhodm':
         def phase_space_integrand(q, m_over_T2, m2_over_T2):
@@ -114,7 +114,7 @@ def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e
         # Upper bound of 100 enough (10^⁻16 error)
         limits = (0., 100.)
         phase_space_integrand = _make_phase_space_integrand(jnp, out, exp_sign=1.)
-        
+
         #if use_jax(T_eff, m, z):
         #    from quadax import quadgk
         #    quad = lambda fun, args: quadgk(fun, limits, args=args, epsabs=epsabs, epsrel=epsrel)[0]
@@ -1398,17 +1398,40 @@ class Cosmology(BaseCosmoParams):
         return new
 
     @classmethod
+    def read(cls, filename):
+        """Read class from disk."""
+        import json
+        filename = str(filename)
+        if filename.endswith('.json'):
+            with open(filename, 'r') as f:
+                state = utils._restore_from_json(json.load(f))
+        else:
+            state = np.load(filename, allow_pickle=True)[()]
+        return cls.from_state(state)
+
+    @classmethod
     def load(cls, filename):
-        """Load class from disk."""
-        state = np.load(filename, allow_pickle=True)[()]
-        new = cls.from_state(state)
-        return new
+        """Deprecated. Use :meth:`read`."""
+        import warnings
+        warnings.warn('load() is deprecated, use read() instead.', DeprecationWarning, stacklevel=2)
+        return cls.read(filename)
+
+    def write(self, filename):
+        """Write class to disk."""
+        import json
+        filename = str(filename)
+        utils.mkdir(os.path.dirname(filename))
+        if filename.endswith('.json'):
+            with open(filename, 'w') as f:
+                json.dump(utils._prepare_for_json(self.__getstate__()), f)
+        else:
+            np.save(filename, self.__getstate__())
 
     def save(self, filename):
-        """Save class to disk."""
-        dirname = os.path.dirname(filename)
-        utils.mkdir(dirname)
-        np.save(filename, self.__getstate__())
+        """Deprecated. Use :meth:`write`."""
+        import warnings
+        warnings.warn('save() is deprecated, use write() instead.', DeprecationWarning, stacklevel=2)
+        return self.write(filename)
 
     def __dir__(self):
         """

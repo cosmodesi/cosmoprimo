@@ -13,6 +13,6 @@ doc/_build/
 **/eggs
 **/build
 **/.ipynb_checkpoints
-
+**/*.zip
 # Unit test / coverage reports
 **/.coverage

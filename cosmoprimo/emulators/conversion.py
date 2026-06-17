@@ -53,7 +53,7 @@ def convert_jaxcapse_to_cosmoprimo(fn, params=None, include_quantities=None):
     state = {'engines': {}, 'xoperations': [], 'yoperations': [], 'defaults': {}, 'fixed': {}}
 
     for quantity in quantities:
-        emu = jaxcapse.load_emulator(get_fn(fn, quantity) + '/')
+        emu = jaxcapse.read_emulator(get_fn(fn, quantity) + '/')
         model_operations = operations(emu.NN_params['params'], emu.activations, len(emu.features))
         xoperations = [Operation('(v - limits[0]) / (limits[1] - limits[0])', locals={'limits': np.asarray(emu.in_MinMax.T)})]
         limits = np.asarray(emu.out_MinMax.T)
@@ -278,6 +278,7 @@ if __name__ == '__main__':
     test = convert
     convert = []
 
+
     def get_source_jaxcapse(name, return_params=False):
         if 'jaxcapse' in name:
             base_dir = Path(jaxcapse.__file__).parent.parent
@@ -305,8 +306,8 @@ if __name__ == '__main__':
             import jaxcapse
             source_fn, params = get_source_jaxcapse(name, return_params=True)
             emulator = convert_jaxcapse_to_cosmoprimo(source_fn, params=params)
-            emulator_fn = train_dir / name / 'emulator.npy'
-            emulator.save(emulator_fn)
+            emulator_fn = train_dir / name / 'emulator.h5'
+            emulator.write(emulator_fn)
         if 'cosmopower' in name:
             #from cosmopower import YAMLParser
             #parser = YAMLParser('../../../cosmopower-organization/jense_2024_emulators/jense_2023_cmb_camb_mnu.yaml')
@@ -314,8 +315,8 @@ if __name__ == '__main__':
             source_fn = get_source_cosmopower(name)
             for section in ['thermodynamics', 'harmonic', 'fourier']:
                 emulator = convert_cosmopower_to_cosmoprimo(source_fn, include_quantities=[section + '.*'])
-                emulator_fn = train_dir / name / 'emulator_{}.npy'.format(section)
-                emulator.save(emulator_fn)
+                emulator_fn = train_dir / name / 'emulator_{}.h5'.format(section)
+                emulator.write(emulator_fn)
 
     if test:
         from matplotlib import pyplot as plt
@@ -327,7 +328,7 @@ if __name__ == '__main__':
         for name in test:
 
             if 'capse' in name:
-                emulator_fn = train_dir / name / 'emulator.npy'
+                emulator_fn = train_dir / name / 'emulator.h5'
 
                 import jaxcapse
                 source_fn, params = get_source_jaxcapse(name, return_params=True)
@@ -336,7 +337,7 @@ if __name__ == '__main__':
                     return {name: array[name] for name in array.dtype.names}
 
                 kw = dict(logA=3., tau_reio=0.06, m_ncdm=0.2)
-                cosmo = DESI(**kw, kmax_pk=10., engine=EmulatedEngine.load(emulator_fn))
+                cosmo = DESI(**kw, kmax_pk=10., engine=EmulatedEngine.read(emulator_fn))
                 test = to_dict(cosmo.get_harmonic().lensed_cl())
                 test.update(to_dict(cosmo.get_harmonic().lens_potential_cl()))
 
@@ -353,7 +354,7 @@ if __name__ == '__main__':
 
                 for name in ['TT', 'TE', 'EE', 'PP', 'BB']:
                     name = name.lower()
-                    tt = jaxcapse.load_emulator(str(source_fn / name.upper()) + '/')
+                    tt = jaxcapse.read_emulator(str(source_fn / name.upper()) + '/')
                     test2 = np.insert(tt.get_Cl(np.array([cosmo[name] for name in params])), 0, [0.] * 2)
 
                     ellmax = min(len(test[name]), len(ref_camb[name]))
@@ -378,8 +379,11 @@ if __name__ == '__main__':
                 ellmax = 2000
                 kw = dict()
                 cosmo_emu = DESI(**kw, kmax_pk=10., ellmax_cl=ellmax,
-                                 engine=EmulatedEngine.load({train_dir / name / 'emulator_{}.npy'.format(section): None for section in ['thermodynamics', 'harmonic', 'fourier']}))
-                cosmo_emu.rs_star
+                                 engine=EmulatedEngine.read({train_dir / name / 'emulator_{}.h5'.format(section): None for section in ['thermodynamics', 'harmonic', 'fourier']}))
+                try:
+                    print(name, 'rs_star =', cosmo_emu.rs_star)
+                except AttributeError:
+                    print(name, 'rs_star not available (no thermodynamics emulator)')
                 cosmo_camb = DESI(**kw, lensing=True, kmax_pk=10., engine='camb', ellmax_cl=ellmax, non_linear='mead',
                             #extra_params=dict(AccuracyBoost=2, lSampleBoost=2, lAccuracyBoost=2, DoLateRadTruncation=False), non_linear='mead2016')
                             extra_params=dict(lens_margin=1250, lens_potential_accuracy=4, AccuracyBoost=1, lSampleBoost=1, lAccuracyBoost=1, DoLateRadTruncation=False))

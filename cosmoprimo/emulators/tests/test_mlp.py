@@ -19,9 +19,9 @@ def test_samples():
 
 
 def test_mlp():
-    fn = '_tests/emu.npy'
+    fn = '_tests/emu.h5'
 
-    ref_samples = Samples.load(samples_fn)
+    ref_samples = Samples.read(samples_fn)
     k1d, z = ref_samples['Y.fourier.k'][0], ref_samples['Y.fourier.z'][0]
     k2d = np.meshgrid(k1d, z, indexing='ij')[0].ravel()
     k2d_non_linear = np.meshgrid(k1d, ref_samples['Y.fourier.z_non_linear'][0], indexing='ij')[0].ravel()
@@ -70,11 +70,11 @@ k2d_non_linear**2, dtype=y_true.dtype)))
     if 'fourier' in tofit:
         emulator.set_samples(samples=ref_samples.select(['X.*', 'Y.fourier.*']))
         emulator.fit(name='fourier.pk*', batch_frac=(0.2, 1.), learning_rate=(1e-2, 1e-4), epochs=1000)
-        emulator.save(fn)
+        emulator.write(fn)
     """
-    emulator = Emulator.load(fn)
+    emulator = Emulator.read(fn)
 
-    cosmo = DESI(engine=EmulatedEngine.load(fn))
+    cosmo = DESI(engine=EmulatedEngine.read(fn))
     z = np.linspace(0., 3., 100)
     cosmo.comoving_radial_distance(z)
 
@@ -91,10 +91,10 @@ k2d_non_linear**2, dtype=y_true.dtype)))
 
 def test_fourier_z():
 
-    fn = '_tests/emu_z.npy'
+    fn = '_tests/emu_z.h5'
 
     tofit = False
-    ref_samples = Samples.load(samples_fn)
+    ref_samples = Samples.read(samples_fn)
 
     emulator = Emulator()
 
@@ -112,11 +112,11 @@ def test_fourier_z():
         samples = samples_0.concatenate(list_samples)
         emulator.set_samples(samples=samples, engine=MLPEmulatorEngine(nhidden=(10,) * 3))
         emulator.fit(name='fourier.pk.*', batch_frac=(0.2, 1.), learning_rate=(1e-2, 1e-4), epochs=1000, verbose=1)
-        emulator.save(fn)
+        emulator.write(fn)
 
-    emulator = Emulator.load(fn)
+    emulator = Emulator.read(fn)
 
-    cosmo = DESI(engine=EmulatedEngine.load(fn))
+    cosmo = DESI(engine=EmulatedEngine.read(fn))
     z = np.linspace(0., 3., 100)
 
     cosmo = cosmo.clone(sigma8=0.8)

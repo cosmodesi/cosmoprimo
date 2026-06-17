@@ -21,7 +21,7 @@ this_dir = Path(__file__).parent
 train_dir = Path(os.getenv('SCRATCH', '')) / 'emulators/train/classy/base_mnu_w_wa/'
 samples_fn = {name: train_dir / 'samples_{}'.format(name) for name in ['background', 'thermodynamics', 'fourier', 'harmonic']}
 emulator_dir = this_dir / 'classy_base_mnu_w_wa'
-emulator_fn = emulator_dir / 'emulator.npy'
+emulator_fn = emulator_dir / 'emulator.h5'
 
 
 def sample(samples_fn, section='background', start=0, stop=100000):
@@ -35,7 +35,7 @@ def sample(samples_fn, section='background', start=0, stop=100000):
     if section == 'background':
         params = {'h': (0.2, 1.), 'omega_cdm': (0.01, 0.90), 'omega_b': (0.005, 0.05), 'm_ncdm': (0., 5.), 'w0_fld': (-3., 1.), 'wa_fld': (-3., 2.)}
         calculator = get_calculator(cosmo, section=[section])
-        sampler = QMCSampler(calculator, params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.npz'.format(samples_fn, start, stop))
+        sampler = QMCSampler(calculator, params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.h5'.format(samples_fn, start, stop))
         sampler.run(save_every=100, niterations=stop - start, nstart=start)
 
     if section == 'thermodynamics':
@@ -45,7 +45,7 @@ def sample(samples_fn, section='background', start=0, stop=100000):
         #params = {'h': (0.4, 1.0), 'omega_cdm': (0.08, 0.20), 'omega_b': (0.01933, 0.02533)}
         #params = {'h': (0.4, 1.0), 'omega_cdm': (0.09, 0.15), 'omega_b': (0.015, 0.030), 'w0_fld': (-1.5, 0.), 'wa_fld': (-2., 1.5)}
         calculator = get_calculator(cosmo, section=[section])
-        sampler = QMCSampler(calculator, params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.npz'.format(samples_fn, start, stop))
+        sampler = QMCSampler(calculator, params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.h5'.format(samples_fn, start, stop))
         sampler.run(save_every=100, niterations=stop - start, nstart=start)
         
     # What makes classy run so slow: harmonic, lensing, Omega_k far from 1.
@@ -54,8 +54,8 @@ def sample(samples_fn, section='background', start=0, stop=100000):
         #params = {'logA': (2.5, 3.5), 'n_s': (0.88, 1.06), 'h': (0.4, 1.), 'omega_b': (0.019, 0.026), 'omega_cdm': (0.08, 0.2), 'm_ncdm': (0., 0.8), 'Omega_k': (-0.3, 0.3), 'w0_fld': (-1.5, -0.5), 'wa_fld': (-0.7, 0.7)}
         params = {'h': (0.5, 0.9), 'omega_cdm': (0.03, 0.3), 'logA': (1.5, 4.0), 'n_s': (0.8, 1.2), 'omega_b': (0.005, 0.04), 'm_ncdm': (0., 3.), 'w0_fld': (-2., 1.), 'wa_fld': (-3., 2.)}
         calculator = get_calculator(cosmo, section=['background', 'thermodynamics', 'primordial', 'fourier'])
-        #sampler = QMCSampler(calculator, params, engine='rqrs', seed=0.5, save_fn='{}_{:d}_{:d}.npz'.format(samples_fn, start, stop))
-        sampler = QMCSampler(calculator, params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.npz'.format(samples_fn, start, stop))
+        #sampler = QMCSampler(calculator, params, engine='rqrs', seed=0.5, save_fn='{}_{:d}_{:d}.h5'.format(samples_fn, start, stop))
+        sampler = QMCSampler(calculator, params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.h5'.format(samples_fn, start, stop))
         sampler.run(save_every=10, niterations=stop - start, nstart=start)
 
     if section == 'harmonic':
@@ -65,7 +65,7 @@ def sample(samples_fn, section='background', start=0, stop=100000):
         #cosmo = cosmo.clone(extra_params={'number_count_contributions': []})
         #cosmo = cosmo.clone(extra_params={'output': ['tCl', 'pCl', 'lCl']})
         calculator = get_calculator(cosmo, section=['background', 'thermodynamics', 'primordial', 'harmonic'])
-        sampler = QMCSampler(calculator, params=params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.npz'.format(samples_fn, start, stop))
+        sampler = QMCSampler(calculator, params=params, engine='lhs', seed=42, save_fn='{}_{:d}_{:d}.h5'.format(samples_fn, start, stop))
         sampler.run(save_every=2, niterations=stop - start, nstart=start)
 
 
@@ -74,7 +74,7 @@ def load_samples(samples_fn, **kwargs):
     list_samples = []
     ngood, ntotal = 0, 0
     for fn in glob.glob(str(samples_fn) + '*'):
-        samples = Samples.load(fn, **kwargs)
+        samples = Samples.read(fn, **kwargs)
         if 'X.w0_fld' in samples.columns('X.*'):
             if 'X.wa_fld' in samples.columns('X.*'):
                 samples = samples[samples['X.w0_fld'] + samples['X.wa_fld'] < 0.]
@@ -111,7 +111,7 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
     engine['harmonic.*'] = MLPEmulatorEngine(nhidden=(64,) * 6, yoperation=[Operation("v / jnp.exp(X['logA'] - 3.) / jnp.exp(-2 * X['tau_reio'])", inverse="v * jnp.exp(X['logA'] - 3.) * jnp.exp(-2 * X['tau_reio'])")]) #, yoperation=[ChebyshevOperation(axis=0, order=50)])
 
     if emulator_fn.exists():
-        emulator = Emulator.load(emulator_fn)
+        emulator = Emulator.read(emulator_fn)
     else:
         emulator = Emulator()
     emulator.set_engine(engine)
@@ -139,17 +139,17 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
         emulator.set_engine(engine)
         emulator.set_samples(samples=samples)
         emulator.fit(name='background.comoving_radial_distance', batch_frac=[1.] * 6, learning_rate=[1e-3, 1e-4, 1e-5, 1e-6, 1e-7], batch_norm=True, learning_rate_scheduling=False, epochs=50000, patience=10000)
-        emulator.save(emulator_fn)
+        emulator.write(emulator_fn)
     if 'thermodynamics' in section:
         samples = load_samples(samples_fn, include=['X.*', 'Y.thermodynamics.*'], exclude=['X.logA', 'X.n_s', 'X.tau_reio'])
         emulator.set_samples(samples=samples)
         #emulator.fit(name='thermodynamics.rs_drag', batch_frac=[0.02, 0.05, 0.1, 0.2, 0.4, 0.5], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], epochs=1000, verbose=True)
         emulator.fit(name='thermodynamics.*', batch_frac=[0.02, 0.05, 0.1, 0.2, 0.4, 0.5], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], patience=5000, epochs=50000)
-        emulator.save(emulator_fn)
+        emulator.write(emulator_fn)
     if 'primordial' in section:
         emulator.set_samples(samples=samples.select(['X.logA', 'X.n_s', 'Y.primordial.*']))
         emulator.fit(name='primordial.*', batch_frac=(0.2, 0.4, 1.), learning_rate=(1e-2, 1e-4, 1e-6), epochs=1000)
-        emulator.save(emulator_fn)
+        emulator.write(emulator_fn)
     if 'fourier' in section:
         names = ['fourier.pk.delta_cb.delta_cb', 'fourier.pk.delta_m.delta_m', 'fourier.pkz']
         samples = load_samples(samples_fn, include=['X.*', 'Y.fourier.k', 'Y.fourier.z', 'Y.fourier.z_non_linear'] + ['Y.' + name for name in names], exclude=['X.tau_reio'])
@@ -171,17 +171,17 @@ def fit(samples_fn, section=('background', 'thermodynamics', 'primordial', 'four
         yoperation = emulator.engines[pkname].yoperations[-1]
         emulator.engines[pkname].yoperations = emulator.engines[pkname].yoperations[:-1]
         X = {name: emulator._samples_operations[pkname]['X.' + name] for name in emulator.engines[pkname].params}
-        emulator.save(emulator_fn)
+        emulator.write(emulator_fn)
     if 'harmonic' in section:
         samples = load_samples(samples_fn, include=['X.*', 'Y.harmonic.*'])
         emulator.set_samples(samples=samples.select(['X.*', 'Y.harmonic.*']))
         emulator.fit(name='harmonic.lensed_cl.tt', batch_frac=[0.2, 0.3, 0.3, 0.4, 0.5, 1.], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], patience=1000, epochs=50000)
-        emulator.save(emulator_fn)
+        emulator.write(emulator_fn)
 
 
 def plot(samples_fn, section=('background', 'thermodynamics', 'primordial', 'fourier', 'harmonic')):
 
-    cosmo = DESI(engine=EmulatedEngine.load(emulator_fn))
+    cosmo = DESI(engine=EmulatedEngine.read(emulator_fn))
     #cosmo = DESI(engine=EmulatedEngine.load({Path(__file__).parent / 'cosmopower_jense2024_base_w_wa/emulator_{}.npy'.format(section): 'https://github.com/adematti/cosmoprimo-emulators/raw/refs/heads/main/cosmopower_jense2024_base_w_wa/emulator_{}.npy'.format(section) for section in ['thermodynamics']}))
 
     if 'background' in section:
@@ -366,14 +366,14 @@ def test():
         return
 
     if 0:
-        engine = Emulator.load(emulator_fn)
+        engine = Emulator.read(emulator_fn)
         engine.yoperations = engine.yoperations[:-1]
         pkname ='Y.fourier.pk.delta_cb.delta_cb'
         engine.engines = {name: engine for name, engine in engine.engines.items() if name in [pkname[2:]]}
         predict = batch_vmap(engine.predict)
 
         def load_samples(**kwargs):
-            samples = Samples.concatenate([Samples.load(fn, **kwargs) for fn in glob.glob(str(samples_fn['fourier']) + '*')[:1]])
+            samples = Samples.concatenate([Samples.read(fn, **kwargs) for fn in glob.glob(str(samples_fn['fourier']) + '*')[:1]])
             mask = samples.isfinite()
             return samples[mask]
 
@@ -392,7 +392,7 @@ def test():
 
     if 0:
         def load_samples(**kwargs):
-            samples = Samples.concatenate([Samples.load(fn, **kwargs) for fn in glob.glob(str(samples_fn['fourier']) + '*')[:1]])
+            samples = Samples.concatenate([Samples.read(fn, **kwargs) for fn in glob.glob(str(samples_fn['fourier']) + '*')[:1]])
             mask = samples.isfinite()
             return samples[mask]
 
@@ -447,14 +447,14 @@ def test():
         Y = samples['Y.thermodynamics.rs_drag']
         from cosmoprimo.emulators import MLPEmulatorEngine
 
-        fn = 'tmp.npy'
+        fn = 'tmp.h5'
         if True:
             engine = MLPEmulatorEngine(nhidden=(10,) * 3)
             engine.initialize(params=params)
             engine.fit(X, Y, batch_frac=[0.02, 0.05, 0.1, 0.2, 0.4, 0.5], learning_rate=[1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7], epochs=1000, verbose=True)
-            engine.save(fn)
+            engine.write(fn)
         if True:
-            engine = MLPEmulatorEngine.load(fn)
+            engine = MLPEmulatorEngine.read(fn)
             from jax import vmap
             Y_pred = vmap(engine.predict)(X)
             diff = np.max(Y / Y_pred - 1.)
