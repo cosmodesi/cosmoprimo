@@ -57,7 +57,7 @@ def is_sequence(item):
 def _make_phase_space_integrand(jnp, out, exp_sign):
 
     if out == 'rho':
-        def pahse_space_integrand(q, m_over_T2, m2_over_T2):
+        def phase_space_integrand(q, m_over_T2, m2_over_T2):
             return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(exp_sign * q))
     elif out == 'drhodm':
         def phase_space_integrand(q, m_over_T2, m2_over_T2):
