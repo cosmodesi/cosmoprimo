@@ -1,4 +1,5 @@
 import glob
+import json
 from pathlib import Path
 
 import numpy as np
@@ -7,9 +8,57 @@ from cosmoprimo.emulators.tools import utils
 from cosmoprimo.cosmology import Cosmology
 
 
+def _jaxace_load_emulator_files(path):
+    path = Path(path)
+    weights = np.load(path / "weights.npy")
+    inminmax = np.load(path / "nminmax.npy")
+    outminmax = np.load(path / "outminmax.npy")
+    with open(path / "nn_setup.json") as f:
+        nn_dict = json.load(f)
+    return nn_dict, weights, inminmax, outminmax
+
+
+def _jaxace_unpack_layers_params(nn_dict, weights):
+    """Pre-unpack flat weights into a list of (W, b, activation)."""
+    n_input = nn_dict["n_input_features"]
+    n_output = nn_dict["n_output_features"]
+    hidden = [v["n_neurons"] for v in nn_dict["layers"].values()]
+    sizes = [n_input] + hidden + [n_output]
+    params, offset = [], 0
+    for i in range(len(sizes) - 1):
+        n_in, n_out = sizes[i], sizes[i + 1]
+        W = weights[offset: offset + n_in * n_out].reshape(n_out, n_in, order='F')
+        offset += n_in * n_out
+        b = weights[offset: offset + n_out]
+        offset += n_out
+        activation = None
+        if i < len(sizes) - 2:
+            activation = nn_dict["layers"][f"layer_{i+1}"]["activation_function"]
+        params.append((W, b, activation))
+    return params
+
+
+def _jaxace_unpack_layers_operations(nn_dict, weights):
+    """Return list of operations."""
+    params = _jaxace_unpack_layers_params(nn_dict, weights)
+    operations = []
+    for W, b, activation in params:
+        # linear network operations
+        assert b.shape == W.shape[:1]
+        operations.append(Operation('kernel @ v + bias', locals={'kernel': W, 'bias': b}))
+        # non-linear activation function
+        if activation is not None:
+            if activation == 'silu':
+                operations.append(Operation('v / (1 + jnp.exp(-v))', locals={}))
+            elif activation == 'relu':
+                operations.append(Operation('jnp.maximum(v, 0.)', locals={}))
+            elif activation == 'tanh':
+                operations.append(Operation('jnp.tanh(v)', locals={}))
+    return operations
+
+
 def convert_jaxcapse_to_cosmoprimo(fn, params=None, include_quantities=None):
     # For Cl
-    import jaxcapse
     fn = Path(fn)
 
     def get_conversion():
@@ -33,31 +82,14 @@ def convert_jaxcapse_to_cosmoprimo(fn, params=None, include_quantities=None):
     if params is None:
         params = ['logA', 'n_s', 'H0', 'omega_b', 'omega_cdm', 'tau_reio']
 
-    def operations(params, activations, nlayers):
-        operations = []
-        for ilayer in range(nlayers):
-            # linear network operation
-            player = params['Dense_{:d}'.format(ilayer)]
-            operations.append(Operation('v @ kernel + bias', locals={name: np.asarray(player[name]) for name in ['kernel', 'bias']}))
-            # non-linear activation function
-            if ilayer < nlayers - 1:
-                activation = activations[ilayer]
-                if activation == 'silu':
-                    operations.append(Operation('v / (1 + jnp.exp(-v))', locals={}))
-                elif activation == 'relu':
-                    operations.append(Operation('jnp.maximum(v, 0.)', locals={}))
-                elif activation == 'tanh':
-                    operations.append(Operation('jnp.tanh(v)', locals={}))
-        return operations
-
     state = {'engines': {}, 'xoperations': [], 'yoperations': [], 'defaults': {}, 'fixed': {}}
 
     for quantity in quantities:
-        emu = jaxcapse.read_emulator(get_fn(fn, quantity) + '/')
-        model_operations = operations(emu.NN_params['params'], emu.activations, len(emu.features))
-        xoperations = [Operation('(v - limits[0]) / (limits[1] - limits[0])', locals={'limits': np.asarray(emu.in_MinMax.T)})]
-        limits = np.asarray(emu.out_MinMax.T)
-        ells = np.arange(emu.out_MinMax.shape[0] + 2)
+        nn_dict, weights, inminmax, outminmax = _jaxace_load_emulator_files(get_fn(fn, quantity) + '/')
+        model_operations = _jaxace_unpack_layers_operations(nn_dict, weights)
+        xoperations = [Operation('(v - limits[0]) / (limits[1] - limits[0])', locals={'limits': np.asarray(inminmax.T)})]
+        limits = np.asarray(outminmax.T)
+        ells = np.arange(outminmax.shape[0] + 2)
         # Conversion muK -> 1, ell * (ell + 1) / (2 pi) -> raw
         TCMB = 2.7255
         CMB_unit = TCMB * 1e6
@@ -74,9 +106,53 @@ def convert_jaxcapse_to_cosmoprimo(fn, params=None, include_quantities=None):
         else:
             yoperations.append(Operation("v / jnp.exp(X['logA'] - 3.)", inverse="v * jnp.exp(X['logA'] - 3.)"))
         yoperations.append(Operation('((v - limits[0]) / (limits[1] - limits[0]))[:2]', inverse='jnp.insert(v * (limits[1] - limits[0]) + limits[0], 0, jnp.zeros(2))', locals={'limits': limits}))
-        state['engines'][quantity] = {'name': 'mlp', 'params': params, 'xshape': (len(params),), 'yshape': (emu.out_MinMax.shape[0],), 'xoperations': [operation.__getstate__() for operation in xoperations], 'yoperations': [operation.__getstate__() for operation in yoperations], 'model_operations': [operation.__getstate__() for operation in model_operations], 'model_yoperations': []}
+        state['engines'][quantity] = {'name': 'mlp', 'params': params, 'xshape': (len(params),), 'yshape': (outminmax.shape[0],), 'xoperations': [operation.__getstate__() for operation in xoperations], 'yoperations': [operation.__getstate__() for operation in yoperations], 'model_operations': [operation.__getstate__() for operation in model_operations], 'model_yoperations': []}
         if 'harmonic' in quantity:
             state['fixed']['.'.join(quantity.split('.')[:2]) + '.ell'] = ells
+    for name in ['xoperations', 'yoperations']: state[name] = [operation.__getstate__() for operation in state[name]]
+    emulator = Emulator.from_state(state)
+    return emulator
+
+
+def convert_jaxmapse_to_cosmoprimo(fn, params=None, include_quantities=None):
+    # For Pk
+    fn = Path(fn)
+
+    def get_conversion():
+        conversion = {}
+        for name in ['plin']:
+            conversion['fourier.pk.delta_cb.delta_cb'] = name
+        for name in ['pnw']:
+            conversion['fourier.pknow.delta_cb.delta_cb'] = name
+        for name in ['scalars']:
+            conversion['fourier.scalars'] = name
+        return conversion
+
+    def get_fn(fn, quantity):
+        conversion = get_conversion()
+        fn = fn / conversion.get(quantity, quantity)
+        return str(fn)
+
+    quantities = list(get_conversion())
+    quantities = [quantity for quantity in quantities if glob.glob(get_fn(fn, quantity))]
+    if include_quantities is not None:
+        quantities = utils.find_names(quantities, include_quantities)
+
+    if params is None:
+        params = ['logA', 'n_s', 'H0', 'omega_b', 'omega_cdm']
+
+    state = {'engines': {}, 'xoperations': [], 'yoperations': [], 'defaults': {}, 'fixed': {}}
+    for quantity in quantities:
+        nn_dict, weights, inminmax, outminmax = _jaxace_load_emulator_files(get_fn(fn, quantity) + '/')
+        model_operations = _jaxace_unpack_layers_operations(nn_dict, weights)
+        xoperations = [Operation('(v - limits[0]) / (limits[1] - limits[0])', locals={'limits': np.asarray(inminmax.T)})]
+        limits = np.asarray(outminmax.T)
+        yoperations = [Operation('((v - limits[0]) / (limits[1] - limits[0]))', inverse='v * (limits[1] - limits[0]) + limits[0]', locals={'limits': limits})]
+        state['engines'][quantity] = {'name': 'mlp', 'params': params, 'xshape': (len(params),), 'yshape': (outminmax.shape[0],),
+                                      'xoperations': [operation.__getstate__() for operation in xoperations], 'yoperations': [operation.__getstate__() for operation in yoperations],
+                                      'model_operations': [operation.__getstate__() for operation in model_operations], 'model_yoperations': []}
+        state['fixed']['fourier.k'] = np.load(get_fn(fn, quantity) + '/k.npy')
+    yoperations.append(Operation(direct='v', inverse=["{name: jnp.maximum(v[name] * v['fourier.scalars'][0]**2) for name in v if name.startswith('fourier.pk')}; v"]))
     for name in ['xoperations', 'yoperations']: state[name] = [operation.__getstate__() for operation in state[name]]
     emulator = Emulator.from_state(state)
     return emulator
@@ -275,17 +351,31 @@ if __name__ == '__main__':
     #convert = ['jaxcapse']
     convert = ['cosmopower_bolliet2023_base', 'cosmopower_bolliet2023_base_mnu', 'cosmopower_bolliet2023_base_w',
                'cosmopower_jense2024_base', 'cosmopower_jense2024_base_mnu', 'cosmopower_jense2024_base_w_wa']
+    convert = ['jaxmapse']
+    #test = []
     test = convert
-    convert = []
-
 
     def get_source_jaxcapse(name, return_params=False):
+        import jaxcapse
         if 'jaxcapse' in name:
             base_dir = Path(jaxcapse.__file__).parent.parent
             if 'mnu_w_wa' in name:
                 toret = base_dir / 'batch_trained_desi', ['logA', 'n_s', 'H0', 'omega_b', 'omega_cdm', 'tau_reio', 'm_ncdm_tot', 'w0_fld', 'wa_fld']
             else:
                 toret = base_dir / 'trained_emu', ['logA', 'n_s', 'H0', 'omega_b', 'omega_cdm', 'tau_reio']
+        if not return_params:
+            del toret[1]
+        if len(toret) == 1:
+            return toret[0]
+        return tuple(toret)
+
+    def get_source_jaxmapse(name, return_params=None):
+        if 'jaxmapse' in name:
+            base_dir = Path('./emulators_jaxmapse')
+            if 'isitgr' in name:
+                toret = base_dir / 'training_isitgr_plin_pnw_mg_binned_500000', ['z', 'logA', 'n_s', 'H0', 'omega_b', 'omega_cdm', 'mu1', 'mu2', 'mu3', 'mu4', 'Sigma1', 'Sigma2', 'Sigma3', 'Sigma4']
+            else:
+                toret = base_dir / 'training_classy_plin_pnw_mnuw0wacdm_nk200v2_200000', ['z', 'logA', 'n_s', 'H0', 'omega_b', 'omega_cdm', 'm_ncdm', 'w0_fld', 'wa_fld']
         if not return_params:
             del toret[1]
         if len(toret) == 1:
@@ -303,10 +393,14 @@ if __name__ == '__main__':
 
     for name in convert:
         if 'capse' in name:
-            import jaxcapse
             source_fn, params = get_source_jaxcapse(name, return_params=True)
             emulator = convert_jaxcapse_to_cosmoprimo(source_fn, params=params)
             emulator_fn = train_dir / name / 'emulator.h5'
+            emulator.write(emulator_fn)
+        if 'mapse' in name:
+            source_fn, params = get_source_jaxmapse(name, return_params=True)
+            emulator = convert_jaxmapse_to_cosmoprimo(source_fn, params=params)
+            emulator_fn = train_dir / name / 'emulator_fourier.h5'
             emulator.write(emulator_fn)
         if 'cosmopower' in name:
             #from cosmopower import YAMLParser
@@ -374,6 +468,10 @@ if __name__ == '__main__':
                         ax.set_yscale('log')
                     ax.legend()
                     plt.show()
+
+            if 'mapse' in name:
+                cosmo_emu = DESI(engine=EmulatedEngine.read({train_dir / name / 'emulator_{}.h5'.format(section): None for section in ['fourier']}))
+                emu = cosmo_emu.get_fourier().pk_interpolator(of='delta_cb')(k=0.1, z=0.2)
 
             if 'cosmopower' in name:
                 ellmax = 2000

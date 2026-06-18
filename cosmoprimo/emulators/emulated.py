@@ -444,7 +444,6 @@ def _make_tuple(of, size=2):
     return tuple(sorted(of))
 
 
-@utils.addproperty('sigma8_m')
 class Fourier(BaseSection):
 
     def __init__(self, engine):
@@ -457,7 +456,12 @@ class Fourier(BaseSection):
             self.__setstate__(state)
         self._h = engine['h']
         self._rsigma8 = engine._rescale_sigma8()
-        self._sigma8_m = self.sigma8_z(0., of='delta_m')
+
+    @property
+    def sigma8_m(self):
+        if not hasattr(self, '_sigma8_m'):
+            self._sigma8_m = self.sigma8_z(0., of='delta_m')
+        return self._sigma8_m
 
     def sigma_rz(self, r, z, of='delta_m', **kwargs):
         r"""Return the r.m.s. of `of` perturbations in sphere of :math:`r \mathrm{Mpc}/h`."""
@@ -517,7 +521,7 @@ class Fourier(BaseSection):
             Arguments for :class:`PowerSpectrumInterpolator2D`.
         """
         from cosmoprimo.interpolator import _bcast_dtype
-        if self._callable:
+        if self._callable:  # z
 
             # TODO: if this is ever to be used, vectorize over z
 
