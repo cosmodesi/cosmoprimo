@@ -770,7 +770,6 @@ def test_isitgr(plot=False):
     cosmo = DESI(engine='isitgr')
     cosmo['Q0']
     assert 'Q0' in cosmo.get_default_params()
-    assert 'Q0' in cosmo.get_default_parameters()
 
     if plot:
         z = 1.

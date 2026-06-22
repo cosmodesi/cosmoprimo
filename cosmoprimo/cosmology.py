@@ -601,6 +601,10 @@ def get_engine(engine):
             from . import isitgr
         elif engine == 'heftcamb':
             from . import heftcamb
+        elif engine == 'isitide':
+            from . import isitide
+        elif engine == 'dsclass':
+            from . import dsclassy
         elif engine == 'mgcamb':
             from . import mgcamb
         elif engine == 'eisenstein_hu':
