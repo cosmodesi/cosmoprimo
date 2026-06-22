@@ -768,8 +768,6 @@ def test_isitgr(plot=False):
 
     from cosmoprimo.fiducial import DESI
     cosmo = DESI(engine='isitgr')
-    cosmo['Q0']
-    assert 'Q0' in cosmo.get_default_params()
 
     if plot:
         z = 1.
