@@ -433,7 +433,6 @@ class Background(BaseBackground):
         return self.ba.luminosity_distance(z) * self._h
 
 
-@utils.addproperty('rs_drag', 'z_drag', 'rs_star', 'z_star', 'tau_reio', 'z_reio', 'YHe')
 class Thermodynamics(BaseSection):
 
     def __init__(self, engine):
@@ -442,17 +441,76 @@ class Thermodynamics(BaseSection):
         self._engine.compute('thermodynamics')
         self.th = self._engine.th
         self.ba = self._engine.ba
-        # convert RHO to 1e10 Msun/h
         self._h = self.th.Params.H0 / 100
 
-        derived = self.th.get_derived_params()
-        self._rs_drag = derived['rdrag'] * self._h
-        self._z_drag = derived['zdrag']
-        self._rs_star = derived['rstar'] * self._h
-        self._z_star = derived['zstar']
-        self._z_reio = self.th.Params.get_zrei()
-        self._tau_reio = self.th.Params.Reion.optical_depth
-        self._YHe = self.th.Params.YHe
+    def _get_derived(self):
+        if not hasattr(self, '_derived'):
+            self._derived = self.th.get_derived_params()
+        return self._derived
+
+    @property
+    def z_drag(self):
+        if not hasattr(self, '_z_drag'):
+            self._z_drag = self._get_derived()['zdrag']
+        return self._z_drag
+
+    @property
+    def rs_drag(self):
+        if not hasattr(self, '_rs_drag'):
+            self._rs_drag = self._get_derived()['rdrag'] * self._h
+        return self._rs_drag
+
+    @property
+    def z_star_noreion(self):
+        """Redshift where optical depth excluding reionization = 1 (CAMB's native definition)."""
+        if not hasattr(self, '_z_star_noreion'):
+            self._z_star_noreion = self._get_derived()['zstar']
+        return self._z_star_noreion
+
+    @property
+    def rs_star_noreion(self):
+        """Comoving sound horizon at z_star_noreion, in Mpc/h."""
+        if not hasattr(self, '_rs_star_noreion'):
+            self._rs_star_noreion = self.th.sound_horizon(self.z_star_noreion) * self._h
+        return self._rs_star_noreion
+
+    @property
+    def z_star(self):
+        """Redshift where total optical depth (including reionization) = 1, matching CLASS."""
+        if not hasattr(self, '_z_star'):
+            self._z_star = self._compute_z_star_from_opacity()
+        return self._z_star
+
+    @property
+    def rs_star(self):
+        """Comoving sound horizon at z_star, in Mpc/h."""
+        if not hasattr(self, '_rs_star'):
+            self._rs_star = self.th.sound_horizon(self.z_star) * self._h
+        return self._rs_star
+
+    @property
+    def tau_reio(self):
+        return self.th.Params.Reion.optical_depth
+
+    @property
+    def z_reio(self):
+        return self.th.Params.get_zrei()
+
+    @property
+    def YHe(self):
+        return self.th.Params.YHe
+
+    def _compute_z_star_from_opacity(self):
+        """Find z where total optical depth (including reionization) = 1, matching CLASS."""
+        from scipy.integrate import cumulative_trapezoid
+        from scipy.interpolate import interp1d
+        from scipy.optimize import brentq
+        z_arr = np.linspace(0., 1300., 4000)
+        ev = self.th.get_background_redshift_evolution(z_arr, vars=['opacity'])
+        chi_arr = self.ba.comoving_radial_distance(z_arr)
+        dchi_dz = np.abs(np.gradient(chi_arr, z_arr))
+        tau = cumulative_trapezoid(ev['opacity'] * dchi_dz, z_arr, initial=0.)
+        return brentq(interp1d(z_arr, tau - 1., kind='cubic'), 1050., 1150.)
 
     @utils.flatarray(dtype=np.float64)
     def rs_z(self, z):
@@ -466,6 +524,10 @@ class Thermodynamics(BaseSection):
     @property
     def theta_star(self):
         return self.rs_star / (self.ba.angular_diameter_distance(self.z_star) * self._h) / (1 + self.z_star)
+
+    @property
+    def theta_star_noreion(self):
+        return self.rs_star_noreion / (self.ba.angular_diameter_distance(self.z_star_noreion) * self._h) / (1 + self.z_star_noreion)
 
 
 class Transfer(BaseSection):

@@ -103,6 +103,46 @@ class BaseClassThermodynamics(object):
         rs, zstar = _compute_rs_cosmomc(self.ba.Omega0_b * self.ba.h**2, self.ba.Omega0_m * self.ba.h**2, self.ba.hubble_function)
         return rs * self.ba.h / self.ba.comoving_transverse_distance(zstar)
 
+    @property
+    def z_star_noreion(self):
+        r"""Redshift at which the optical depth *excluding reionization* crosses one, unitless.
+
+        Derived from the CLASS thermodynamics table by finding the redshift where
+        the total optical depth equals ``1 + tau_reio``, i.e.
+        :math:`-\ln[\exp(-\kappa)](z) = 1 + \tau_\mathrm{reio}`.
+        This matches CAMB's definition of ``zstar``.
+        """
+        if not hasattr(self, '_z_star_noreion'):
+            from scipy.interpolate import interp1d
+            from scipy.optimize import brentq
+            data = self.table()
+            z = data['z']
+            ekappa = data['exp(-kappa)']
+            mask = (z > 100.) & (ekappa > 0.)
+            z_m = z[mask]
+            kappa_m = -np.log(ekappa[mask])
+            mono = np.concatenate(([True], np.diff(kappa_m) > 0))
+            z_m, kappa_m = z_m[mono], kappa_m[mono]
+            kappa_of_z = interp1d(z_m, kappa_m, kind='cubic')
+            target = 1. + self.tau_reio
+            self._z_star_noreion = float(brentq(lambda zz: kappa_of_z(zz) - target, z_m[0], z_m[-1]))
+        return self._z_star_noreion
+
+    @property
+    def rs_star_noreion(self):
+        r"""Comoving sound horizon at :attr:`z_star_noreion`, in :math:`\mathrm{Mpc}/h`."""
+        if not hasattr(self, '_rs_star_noreion'):
+            self._rs_star_noreion = self.ba.comoving_sound_horizon(self.z_star_noreion)
+        return self._rs_star_noreion
+
+    @property
+    def theta_star_noreion(self):
+        r"""Sound horizon angle at :attr:`z_star_noreion`, equal to :math:`r_s / D_\mathrm{A}`, in radians."""
+        if not hasattr(self, '_theta_star_noreion'):
+            z = self.z_star_noreion
+            self._theta_star_noreion = self.ba.comoving_sound_horizon(z) / self.ba.comoving_transverse_distance(z)
+        return self._theta_star_noreion
+
 
 class BaseClassPrimordial(object):
 
