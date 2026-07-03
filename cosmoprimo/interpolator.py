@@ -514,8 +514,9 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
                 toret_shape = k.shape
                 k = k.ravel()
                 mask_k, = _mask_bounds([k], [(self.extrap_kmin, self.extrap_kmax)], bounds_error=bounds_error)
-                toret = self._np.where(mask_k, self._interp(k, **kwargs), self._np.nan)
-                return toret.astype(dtype).reshape(toret_shape)
+                toret = self._interp(k, **kwargs)
+                toret = self._np.where(mask_k[(Ellipsis,) + (None,) * (toret.ndim - 1)], toret, self._np.nan)
+                return toret.astype(dtype).reshape(toret_shape + toret.shape[1:])
 
         return interp(k, **kwargs) * self._rsigma8sq
 

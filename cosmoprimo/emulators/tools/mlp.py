@@ -313,7 +313,7 @@ class MLPEmulatorEngine(BaseEmulatorEngine):
                     return state, metrics
 
                 state = best_state
-                best_loss = np.infty
+                best_loss = np.inf
                 best_metrics = {}
                 early_stopping_counter = 0
 

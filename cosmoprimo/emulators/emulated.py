@@ -53,7 +53,7 @@ class EmulatedEngine(BaseEngine):
                     warnings.warn('Downloading the emulator data. You can set the directory with the environment variable COSMOPRIMO_EMULATOR_DIR')
                     from cosmoprimo.emulators.tools.utils import download
                     download(url, path)
-                emulator.update(Emulator.load(path))
+                emulator.update(Emulator.read(path))
             self.__class__._emulator = emulator
 
         self._A_s = self._get_A_s_fid()
@@ -124,8 +124,8 @@ class EmulatedEngine(BaseEngine):
         self._predict = predict
 
     @classmethod
-    def load(cls, filename):
-        """Load class from disk."""
+    def read(cls, filename):
+        """Return an engine subclass that will load ``filename`` on first use."""
 
         class _EmulatedEngine(cls):
 
@@ -133,6 +133,13 @@ class EmulatedEngine(BaseEngine):
             __module__ = cls.__module__
 
         return _EmulatedEngine
+
+    @classmethod
+    def load(cls, filename):
+        """Deprecated. Use :meth:`read`."""
+        import warnings
+        warnings.warn('load() is deprecated, use read() instead.', DeprecationWarning, stacklevel=2)
+        return cls.read(filename)
 
     def _rescale_sigma8(self):
         """Rescale perturbative quantities to match input sigma8 or A_s."""
@@ -437,7 +444,6 @@ def _make_tuple(of, size=2):
     return tuple(sorted(of))
 
 
-@utils.addproperty('sigma8_m')
 class Fourier(BaseSection):
 
     def __init__(self, engine):
@@ -450,7 +456,12 @@ class Fourier(BaseSection):
             self.__setstate__(state)
         self._h = engine['h']
         self._rsigma8 = engine._rescale_sigma8()
-        self._sigma8_m = self.sigma8_z(0., of='delta_m')
+
+    @property
+    def sigma8_m(self):
+        if not hasattr(self, '_sigma8_m'):
+            self._sigma8_m = self.sigma8_z(0., of='delta_m')
+        return self._sigma8_m
 
     def sigma_rz(self, r, z, of='delta_m', **kwargs):
         r"""Return the r.m.s. of `of` perturbations in sphere of :math:`r \mathrm{Mpc}/h`."""
@@ -510,7 +521,7 @@ class Fourier(BaseSection):
             Arguments for :class:`PowerSpectrumInterpolator2D`.
         """
         from cosmoprimo.interpolator import _bcast_dtype
-        if self._callable:
+        if self._callable:  # z
 
             # TODO: if this is ever to be used, vectorize over z
 

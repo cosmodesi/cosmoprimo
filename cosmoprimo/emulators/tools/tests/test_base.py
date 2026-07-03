@@ -11,22 +11,22 @@ def calculator(a=0, b=0):
 
 def test_base():
     emulator_dir = '_tests'
-    fn = os.path.join(emulator_dir, 'emu.npy')
+    fn = os.path.join(emulator_dir, 'emu.h5')
     params = {'a': (0., 1.), 'b': (0., 1.)}
     emulator = Emulator(calculator=calculator, params=params, engine='point')
     emulator.set_samples()
     emulator.fit()
-    emulator.save(fn)
+    emulator.write(fn)
     emulator.mpicomm.Barrier()
     emulator = emulator.to_calculator()
-    emulator = EmulatedCalculator.load(fn)
+    emulator = EmulatedCalculator.read(fn)
     state = emulator(a=1)
     print(state)
 
 
 def test_operation():
 
-    fn = '_tests/operation.npy'
+    fn = '_tests/operation.h5'
     operation = Operation('v + 2', inverse='v - 2')
     assert operation.inverse(operation(42.)) == 42.
     rng = np.random.RandomState(seed=42)
@@ -48,42 +48,42 @@ def test_operation():
 
     operation = ScaleOperation()
     operation.initialize(x)
-    operation.save(fn)
-    operation = Operation.load(fn)
+    operation.write(fn)
+    operation = Operation.read(fn)
     operation(np.ones((2,) + shape))
 
     operation = NormOperation()
     operation.initialize(x)
-    operation.save(fn)
-    operation = Operation.load(fn)
+    operation.write(fn)
+    operation = Operation.read(fn)
     operation(np.ones((2,) + shape))
 
     operation = Log10Operation()
-    operation.save(fn)
-    operation = Operation.load(fn)
+    operation.write(fn)
+    operation = Operation.read(fn)
     assert np.allclose(operation.inverse(operation(np.ones((2,) + shape))), 1.)
 
     operation = ArcsinhOperation()
-    operation.save(fn)
-    operation = Operation.load(fn)
+    operation.write(fn)
+    operation = Operation.read(fn)
     assert np.allclose(operation.inverse(operation(np.ones((2,) + shape))), 1.)
 
     operation = PCAOperation(npcs=1)
     operation.initialize(x)
-    operation.save(fn)
-    operation = Operation.load(fn)
+    operation.write(fn)
+    operation = Operation.read(fn)
     operation.inverse(operation(np.ones(shape)))
 
     operation = ChebyshevOperation(order=3)
     operation.initialize(x)
-    operation.save(fn)
-    operation = Operation.load(fn)
+    operation.write(fn)
+    operation = Operation.read(fn)
     print(operation.inverse(operation(np.ones(shape))))
 
     operation = ChebyshevOperation(order=3, axis=2)
     operation.initialize(x)
-    operation.save(fn)
-    operation = Operation.load(fn)
+    operation.write(fn)
+    operation = Operation.read(fn)
     operation(np.ones(shape))
     print(operation.inverse(operation(np.ones(shape))))
 

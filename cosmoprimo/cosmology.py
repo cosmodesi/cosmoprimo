@@ -54,6 +54,23 @@ def is_sequence(item):
     return isinstance(item, (tuple, list))
 
 
+def _make_phase_space_integrand(jnp, out, exp_sign=1.):
+
+    if out == 'rho':
+        def phase_space_integrand(q, m_over_T2, m2_over_T2):
+            return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(exp_sign * q))
+    elif out == 'drhodm':
+        def phase_space_integrand(q, m_over_T2, m2_over_T2):
+            return m_over_T2 * q**2 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(exp_sign * q))
+    elif out == 'p':
+        def phase_space_integrand(q, m_over_T2, m2_over_T2):
+            return 1. / 3. * q**4 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(exp_sign * q))
+    else:
+        raise ValueError(f'Cannot compute ncdm momenta {out}; choices are ["rho", "drhodm", "p"]')
+
+    return phase_space_integrand
+
+
 def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e-7, out='rho'):
     r"""
     Return momenta of non-CDM components (massive neutrinos)
@@ -96,18 +113,7 @@ def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e
     if method == 'quad':
         # Upper bound of 100 enough (10^⁻16 error)
         limits = (0., 100.)
-
-        if out == 'rho':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
-        elif out == 'drhodm':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return m_over_T2 * q**2 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
-        elif out == 'p':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return 1. / 3. * q**4 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(q))
-        else:
-            raise ValueError('Cannot compute ncdm momenta {}; choices are ["rho", "drhodm", "p"]', out)
+        phase_space_integrand = _make_phase_space_integrand(jnp, out, exp_sign=1.)
 
         #if use_jax(T_eff, m, z):
         #    from quadax import quadgk
@@ -119,18 +125,7 @@ def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e
         toret = jnp.array([quad(phase_space_integrand, (m_over_T2[iz], m2_over_T2[iz])) for iz in range(len(z))])
 
     else:
-
-        if out == 'rho':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return q**2 * jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(-q))
-        elif out == 'drhodm':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return m_over_T2 * q**2 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(-q))
-        elif out == 'p':
-            def phase_space_integrand(q,  m_over_T2, m2_over_T2):
-                return 1. / 3. * q**4 / jnp.sqrt(q**2 + m2_over_T2) / (1. + jnp.exp(-q))
-        else:
-            raise ValueError('Cannot compute ncdm momenta {}; choices are ["rho", "drhodm", "p"]', out)
+        phase_space_integrand = _make_phase_space_integrand(jnp, out, exp_sign=-1.)
 
         # With Laguerre, \int e^{-x} f(x) = \sum f(ti) wi
         # Accuracy ~1e-12
@@ -606,6 +601,12 @@ def get_engine(engine):
             from . import camb
         elif engine == 'isitgr':
             from . import isitgr
+        elif engine == 'heftcamb':
+            from . import heftcamb
+        elif engine == 'isitide':
+            from . import isitide
+        elif engine == 'dsclass':
+            from . import dsclassy
         elif engine == 'mgcamb':
             from . import mgcamb
         elif engine == 'eisenstein_hu':
@@ -959,8 +960,18 @@ class Cosmology(BaseCosmoParams):
             raise TypeError('{} must be a list'.format(name))
 
         T_ncdm_over_cmb = params.get('T_ncdm_over_cmb', None)
-        if T_ncdm_over_cmb in (None, []):
-            T_ncdm_over_cmb = constants.TNCDM_OVER_CMB
+
+        def prepare_T_ncdm_over_cmb(T_ncdm_over_cmb, N_ncdm):
+            if T_ncdm_over_cmb is None:
+                T_ncdm_over_cmb = constants.TNCDM_OVER_CMB
+            if np.ndim(T_ncdm_over_cmb) == 0:
+                T_ncdm_over_cmb = [T_ncdm_over_cmb] * N_ncdm
+            T_ncdm_over_cmb = _make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
+            if N_ncdm and not len(T_ncdm_over_cmb):
+                T_ncdm_over_cmb = [constants.TNCDM_OVER_CMB]
+            if len(T_ncdm_over_cmb) != N_ncdm:
+                raise TypeError(f'T_ncdm_over_cmb and m_ncdm must be of same length, found {len(T_ncdm_over_cmb)} != {N_ncdm}')
+            return T_ncdm_over_cmb
 
         if 'm_ncdm' in params:
             m_ncdm = params.pop('m_ncdm')
@@ -976,11 +987,7 @@ class Cosmology(BaseCosmoParams):
                 if single_ncdm:  # a single massive neutrino
                     Omega_ncdm = [Omega_ncdm]
                 Omega_ncdm = _make_list(Omega_ncdm, 'Omega_ncdm')
-                if np.ndim(T_ncdm_over_cmb) == 0:
-                    T_ncdm_over_cmb = [T_ncdm_over_cmb] * len(Omega_ncdm)
-                T_ncdm_over_cmb = _make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
-                if len(T_ncdm_over_cmb) != len(Omega_ncdm):
-                    raise TypeError('T_ncdm_over_cmb and Omega_ncdm must be of same length')
+                T_ncdm_over_cmb = prepare_T_ncdm_over_cmb(T_ncdm_over_cmb, len(Omega_ncdm))
                 m_ncdm = []
                 h = params['h']
 
@@ -1021,12 +1028,7 @@ class Cosmology(BaseCosmoParams):
             m_ncdm = [m_ncdm]
 
         m_ncdm = _make_list(m_ncdm, 'm_ncdm')
-
-        if np.ndim(T_ncdm_over_cmb) == 0:
-            T_ncdm_over_cmb = [T_ncdm_over_cmb] * len(m_ncdm)
-        T_ncdm_over_cmb = _make_list(T_ncdm_over_cmb, 'T_ncdm_over_cmb')
-        if len(T_ncdm_over_cmb) != len(m_ncdm):
-            raise TypeError('T_ncdm_over_cmb and m_ncdm must be of same length')
+        T_ncdm_over_cmb = prepare_T_ncdm_over_cmb(T_ncdm_over_cmb, len(m_ncdm))
 
         if 'neutrino_hierarchy' in params:
             neutrino_hierarchy = params.pop('neutrino_hierarchy')
@@ -1404,17 +1406,40 @@ class Cosmology(BaseCosmoParams):
         return new
 
     @classmethod
+    def read(cls, filename):
+        """Read class from disk."""
+        import json
+        filename = str(filename)
+        if filename.endswith('.json'):
+            with open(filename, 'r') as f:
+                state = utils._restore_from_json(json.load(f))
+        else:
+            state = np.load(filename, allow_pickle=True)[()]
+        return cls.from_state(state)
+
+    @classmethod
     def load(cls, filename):
-        """Load class from disk."""
-        state = np.load(filename, allow_pickle=True)[()]
-        new = cls.from_state(state)
-        return new
+        """Deprecated. Use :meth:`read`."""
+        import warnings
+        warnings.warn('load() is deprecated, use read() instead.', DeprecationWarning, stacklevel=2)
+        return cls.read(filename)
+
+    def write(self, filename):
+        """Write class to disk."""
+        import json
+        filename = str(filename)
+        utils.mkdir(os.path.dirname(filename))
+        if filename.endswith('.json'):
+            with open(filename, 'w') as f:
+                json.dump(utils._prepare_for_json(self.__getstate__()), f)
+        else:
+            np.save(filename, self.__getstate__())
 
     def save(self, filename):
-        """Save class to disk."""
-        dirname = os.path.dirname(filename)
-        utils.mkdir(dirname)
-        np.save(filename, self.__getstate__())
+        """Deprecated. Use :meth:`write`."""
+        import warnings
+        warnings.warn('save() is deprecated, use write() instead.', DeprecationWarning, stacklevel=2)
+        return self.write(filename)
 
     def __dir__(self):
         """
@@ -1942,6 +1967,8 @@ class DefaultBackground(BaseBackground):
         Else if ``species`` is between 0 and N_ncdm, return density for this species.
         """
         name = 'rho_ncdm'
+        if self.N_ncdm == 0:
+            return np.zeros((0, z.size), dtype=z.dtype)
         func = getattr(BaseBackground, name)
         if species is None:
             species = np.arange(self.N_ncdm)
@@ -1960,6 +1987,8 @@ class DefaultBackground(BaseBackground):
         Else if ``species`` is between 0 and N_ncdm, return pressure for this species.
         """
         name = 'p_ncdm'
+        if self.N_ncdm == 0:
+            return np.zeros((0, z.size), dtype=z.dtype)
         func = getattr(BaseBackground, name)
         if species is None:
             species = np.arange(self.N_ncdm)

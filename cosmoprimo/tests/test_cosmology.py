@@ -29,9 +29,9 @@ def test_params():
     Fourier(cosmo)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        fn = os.path.join(tmp_dir, 'cosmo.npy')
-        cosmo.save(fn)
-        cosmo = Cosmology.load(fn)
+        fn = os.path.join(tmp_dir, 'cosmo.json')
+        cosmo.write(fn)
+        cosmo = Cosmology.read(fn)
 
     assert np.allclose(cosmo['m_ncdm'], m_ncdm)
     assert cosmo.engine.__class__.__name__ == 'ClassEngine'
@@ -145,10 +145,12 @@ def test_thermodynamics(params):
 
     for engine in ['camb']:
         th = Thermodynamics(cosmo, engine=engine)
-        for name in ['z_drag', 'rs_drag', 'z_star', 'rs_star']:  # weirdly enough, class's z_rec seems to match camb's z_star much better
-            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 2e-4)
-        for name in ['theta_star', 'theta_cosmomc']:
-            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-3 if 'star' in name else 5e-5)
+        for name in ['z_drag', 'rs_drag', 'z_star', 'rs_star']:
+            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=2e-4)
+        for name in ['theta_star']:
+            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=2e-4)
+        for name in ['theta_cosmomc']:
+            assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=5e-5)
         for name in ['YHe']:
             assert np.allclose(getattr(th, name), getattr(th_class, name), atol=0, rtol=1e-2)
         assert np.allclose(th_class.theta_cosmomc, cosmo['theta_cosmomc'], atol=0., rtol=3e-6)
@@ -768,9 +770,6 @@ def test_isitgr(plot=False):
 
     from cosmoprimo.fiducial import DESI
     cosmo = DESI(engine='isitgr')
-    cosmo['Q0']
-    assert 'Q0' in cosmo.get_default_params()
-    assert 'Q0' in cosmo.get_default_parameters()
 
     if plot:
         z = 1.

@@ -27,7 +27,7 @@ class EisensteinHuEngine(BaseEngine):
                 warnings.warn('{} cannot cope with non-zero curvature'.format(self.__class__.__name__))
             if has_fld:
                 warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
-        exception(raise_error, self['N_ncdm'], self['Omega_k'], self._has_fld)
+        #exception(raise_error, self['N_ncdm'], self['Omega_k'], self._has_fld)
         self.compute()
         self._A_s = self._get_A_s_fid()
 

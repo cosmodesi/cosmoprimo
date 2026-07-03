@@ -11,9 +11,9 @@ def test_desi():
     cosmo = fiducial.DESI()
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        fn = os.path.join(tmp_dir, 'cosmo.npy')
-        cosmo.save(fn)
-        cosmo = Cosmology.load(fn)
+        fn = os.path.join(tmp_dir, 'cosmo.json')
+        cosmo.write(fn)
+        cosmo = Cosmology.read(fn)
 
     assert np.allclose(cosmo['omega_ncdm'], 0.0006442)
     assert cosmo['N_ncdm'] == 1

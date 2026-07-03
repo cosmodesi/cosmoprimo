@@ -12,7 +12,7 @@ emulator_dir = '_tests'
 
 
 def test_base():
-    emulator_fn = os.path.join(emulator_dir, 'emu.npy')
+    emulator_fn = os.path.join(emulator_dir, 'emu.h5')
 
     cosmo = DESI()
 
@@ -20,9 +20,9 @@ def test_base():
     emulator = Emulator(cosmo, params=params, engine='point')
     emulator.set_samples()
     emulator.fit()
-    emulator.save(emulator_fn)
+    emulator.write(emulator_fn)
 
-    cosmo = DESI(engine=EmulatedEngine.load(emulator_fn))
+    cosmo = DESI(engine=EmulatedEngine.read(emulator_fn))
     z = np.linspace(0., 3., 100)
     d1 = cosmo.comoving_radial_distance(z)
     d2 = cosmo.clone(Omega_m=0.3).comoving_radial_distance(z)
@@ -46,7 +46,7 @@ def test_base():
 
 
 def test_custom():
-    emulator_fn = os.path.join(emulator_dir, 'emu2.npy')
+    emulator_fn = os.path.join(emulator_dir, 'emu2.h5')
 
     from custom import CustomEngine
 
@@ -55,15 +55,15 @@ def test_custom():
     emulator = Emulator(get_calculator(cosmo, emulated_engine=CustomEngine), params=params, engine='point')
     emulator.set_samples()
     emulator.fit()
-    emulator.save(emulator_fn)
+    emulator.write(emulator_fn)
 
-    cosmo = DESI(engine=CustomEngine.load(emulator_fn))
+    cosmo = DESI(engine=CustomEngine.read(emulator_fn))
     cosmo.get_fourier().sigma8_m_custom
 
 
 def test_jax():
-    emulator_fn = os.path.join(emulator_dir, 'emu.npy')
-    engine = EmulatedEngine.load(emulator_fn)
+    emulator_fn = os.path.join(emulator_dir, 'emu.h5')
+    engine = EmulatedEngine.read(emulator_fn)
 
     def test(Omega_m=0.3):
         cosmo = DESI(Omega_m=Omega_m, engine=engine)

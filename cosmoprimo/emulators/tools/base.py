@@ -1,6 +1,7 @@
 import os
 import copy
 import inspect
+import warnings
 from typing import Any
 
 import numpy as np
@@ -68,11 +69,22 @@ class EmulatedCalculator(object):
     """
 
     @classmethod
+    def read(cls, filename):
+        return Emulator.read(filename).to_calculator()
+
+    @classmethod
     def load(cls, filename):
-        return Emulator.load(filename).to_calculator()
+        """Deprecated. Use :meth:`read`."""
+        warnings.warn('load() is deprecated, use read() instead.', DeprecationWarning, stacklevel=2)
+        return cls.read(filename)
+
+    def write(self, fn):
+        return self.emulator.write(fn)
 
     def save(self, fn):
-        return self.emulator.save(fn)
+        """Deprecated. Use :meth:`write`."""
+        warnings.warn('save() is deprecated, use write() instead.', DeprecationWarning, stacklevel=2)
+        return self.write(fn)
 
 
 class Emulator(BaseClass):
@@ -471,13 +483,55 @@ class Emulator(BaseClass):
     def deepcopy(self):
         return copy.deepcopy(self)
 
-    def save(self, filename):
-        """Save emulator to disk."""
+    def write(self, filename):
+        """Write emulator to disk."""
+        import json
         state = self.__getstate__()
         if self.mpicomm.rank == 0:
-            self.log_info('Saving {}.'.format(filename))
+            self.log_info('Writing {}.'.format(filename))
+            filename = str(filename)
             utils.mkdir(os.path.dirname(filename))
-            np.save(filename, state, allow_pickle=True)
+            if filename.endswith(('.h5', '.hdf5')):
+                import h5py
+                with h5py.File(filename, 'w') as f:
+                    engines_grp = f.create_group('engines')
+                    for engine_name, engine_state in state['engines'].items():
+                        utils._h5_write_engine_state(engines_grp.create_group(engine_name), engine_state)
+                    fixed_grp = f.create_group('fixed')
+                    for name, arr in state.get('fixed', {}).items():
+                        fixed_grp.create_dataset(name, data=arr)
+                    meta = {k: v for k, v in state.items() if k not in ('engines', 'fixed')}
+                    f.attrs['__meta__'] = json.dumps(utils._prepare_for_json(meta))
+            else:
+                np.save(filename, state, allow_pickle=True)
+
+    def save(self, filename):
+        """Deprecated. Use :meth:`write`."""
+        warnings.warn('save() is deprecated, use write() instead.', DeprecationWarning, stacklevel=2)
+        return self.write(filename)
+
+    @classmethod
+    def read(cls, filename):
+        """Read emulator from disk."""
+        import json
+        cls.log_info('Reading {}.'.format(filename))
+        filename = str(filename)
+        if filename.endswith(('.h5', '.hdf5')):
+            import h5py
+            with h5py.File(filename, 'r') as f:
+                engines = {name: utils._h5_read_engine_state(f['engines'][name]) for name in f['engines'].keys()}
+                fixed = {name: f['fixed'][name][...] for name in f['fixed'].keys()}
+                meta = utils._restore_from_json(json.loads(str(f.attrs.get('__meta__', '{}'))))
+            state = {**meta, 'engines': engines, 'fixed': fixed}
+        else:
+            state = np.load(filename, allow_pickle=True)[()]
+        return cls.from_state(state)
+
+    @classmethod
+    def load(cls, filename):
+        """Deprecated. Use :meth:`read`."""
+        warnings.warn('load() is deprecated, use read() instead.', DeprecationWarning, stacklevel=2)
+        return cls.read(filename)
 
     def __setstate__(self, state):
         super(Emulator, self).__setstate__(state)
