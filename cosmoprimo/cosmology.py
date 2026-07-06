@@ -2057,10 +2057,9 @@ class DefaultBackground(BaseBackground):
 
             def f1(eta):
                 z = self._np.exp(- eta) - 1.
-                #return - 2. + 3. / 2. * self.Omega_m(z)
                 w_fld = self.w0_fld + z / (1. + z) * self.wa_fld
                 adotdot_over_a_over_H2 = -1. / 2. * (1. - self.Omega_k(z) + self.Omega_r(z) + 3 * w_fld * self.Omega_de(z))
-                return  - 1. - adotdot_over_a_over_H2
+                return - 1. - adotdot_over_a_over_H2
 
             def f2(eta):
                 z = self._np.exp(- eta) - 1.

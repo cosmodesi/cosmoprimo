@@ -124,7 +124,7 @@ def test_background(params, seed=42):
         rtol = 2e-4
         if engine in ['class', 'camb', 'astropy', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks']:
             names += ['time', 'comoving_radial_distance', 'luminosity_distance', 'angular_diameter_distance', 'comoving_angular_distance']
-        if engine in ['class']:
+        if engine in ['class', 'camb']:
             names += ['growth_factor', 'growth_rate']
         if engine in ['eisenstein_hu', 'eisenstein_hu_nowiggle', 'eisenstein_hu_nowiggle_variants', 'bbks'] and not cosmo['N_ncdm'] and not cosmo._has_fld:
             rtol = 2e-2

@@ -4,7 +4,7 @@ import warnings
 
 import numpy as np
 
-from .cosmology import BaseEngine, BaseSection, BaseBackground, CosmologyInputError, CosmologyComputationError
+from .cosmology import BaseEngine, BaseSection, BaseBackground, DefaultBackground, CosmologyInputError, CosmologyComputationError
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 from . import utils, constants
 
@@ -281,6 +281,7 @@ class Background(BaseBackground):
         self._RH0_ = constants.rho_crit_over_Msunph_per_Mpcph3 * constants.c**2 / (self.H0 * 1e3)**2 / 3.
         # for name in ['m', 'ncdm_tot']:
         #     setattr(self,'_Omega0_{}'.format(name),getattr(self,'Omega_{}'.format(name))(0.))
+        self._cache = {}
 
     @property
     def age(self):
@@ -431,6 +432,25 @@ class Background(BaseBackground):
         See eq. 21 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{L}(z)`.
         """
         return self.ba.luminosity_distance(z) * self._h
+
+    def growth_factor(self, z, mass='m', znorm=None):
+        r"""
+        Scale-invariant growth factor :math:`D(z)`.
+
+        CAMB does not expose this background-level quantity natively (its Python API only gives
+        scale-dependent, perturbation-level growth via :meth:`get_redshift_evolution`), so it is
+        computed by solving the same ODE as :meth:`DefaultBackground.growth_factor`, which matches
+        CLASS's native ``index_bg_D`` when ``mass='cb'`` (see :meth:`classy.Background.growth_factor`).
+        """
+        return DefaultBackground.growth_factor(self, z, mass=mass, znorm=znorm)
+
+    def growth_rate(self, z, mass='m'):
+        r"""
+        Scale-invariant growth rate :math:`d\ln D/d\ln a`.
+
+        See :meth:`growth_factor` for the definition and the ``mass`` argument.
+        """
+        return DefaultBackground.growth_rate(self, z, mass=mass)
 
 
 class Thermodynamics(BaseSection):
