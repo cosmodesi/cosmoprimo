@@ -348,6 +348,11 @@ class _BasePowerSpectrumInterpolator(BaseClass):
             self.extrap_kmin, self.extrap_kmax = extrap_kmin, extrap_kmax
             k, pk = _pad_log(k, pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
             k, pk = 10**k, 10**pk
+            # Pin the padded endpoints to the exact requested bounds: 10**log10(k) does not
+            # round-trip on all backends (1 ulp high on cuda), which would leave k[0] slightly
+            # above extrap_kmin and NaN-mask evaluations at exactly extrap_kmin
+            # (e.g. BAO filters sampling geomspace(extrap_kmin, extrap_kmax)).
+            k = self._np.concatenate([self._np.minimum(k[:1], extrap_kmin), k[1:-1], self._np.maximum(k[-1:], extrap_kmax)])
         return k, pk
 
     def params(self):
