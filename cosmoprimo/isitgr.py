@@ -67,6 +67,22 @@ class IsitgrEngine(CambEngine):
         use_nDGP=False,
     )
 
+    @classmethod
+    def _compile_params(cls, params):
+        """isitgr natively expects its MG pivot scales in its own physical units: Mpc^-1 for
+        the wavenumber-type pivots (k_TGR, k_c, k_S, k_tw) and Mpc for the length-type BZ pivot
+        (lambda_1). We instead let users specify these in h/Mpc (wavenumber-type) or Mpc/h
+        (length-type) units, consistent with cosmoprimo/desilike's usual h/Mpc convention, and
+        convert to isitgr's native units here: k[Mpc^-1] = k[h/Mpc] * h;
+        lambda_1[Mpc] = lambda_1[Mpc/h] / h.
+        """
+        params = super()._compile_params(params)
+        h = params['h']
+        for name in ('k_TGR', 'k_c', 'k_S', 'k_tw'):
+            params[name] = params[name] * h
+        params['lambda_1'] = params['lambda_1'] / h
+        return params
+
     def _set_camb(self):
         import isitgr
         self.camb = isitgr
