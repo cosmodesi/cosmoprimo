@@ -1,9 +1,20 @@
 """Cosmological calculation with the Boltzmann code MochiCLASS."""
 
+import numpy as np
+
 from pyclass import mochiclass
 
 from .cosmology import BaseEngine, CosmologyInputError, CosmologyComputationError
 from . import classy
+
+
+# Input parameters that switch on the scalar-modified-gravity (smg) sector.
+_smg_parameters = ('gravity_model', 'expansion_model', 'parameters_smg', 'expansion_smg', 'Omega_smg')
+
+# Verbosity at which mochi_class writes the alpha-functions, M_*^2 and the EFT
+# combinations (cs2num, lambda_i) to the background table; required by
+# :meth:`Background.h1`, :meth:`Background.h3` and :meth:`Background.h5`.
+_output_background_smg = 3
 
 
 class MochiClassEngine(classy.ClassEngine):
@@ -15,6 +26,11 @@ class MochiClassEngine(classy.ClassEngine):
     _default_cosmological_parameters = dict()
 
     def _set_classy(self, params):
+
+        if any(name in params for name in _smg_parameters):
+            # Only raise verbosity, never lower a user-provided value.
+            params = dict(params)
+            params['output_background_smg'] = max(int(params.get('output_background_smg', 0)), _output_background_smg)
 
         class _ClassEngine(mochiclass.ClassEngine):
 
@@ -29,9 +45,147 @@ class MochiClassEngine(classy.ClassEngine):
         self.classy = _ClassEngine(params=params)
 
 
+def _flatarray(func):
+    """Decorator to make ``func(self, z)`` accept any array shape (and scalars)."""
+    from functools import wraps
+
+    @wraps(func)
+    def wrapper(self, z, *args, **kwargs):
+        z = np.asarray(z, dtype='f8')
+        toret = func(self, z.ravel(), *args, **kwargs)
+        if z.ndim == 0:
+            return toret[0]
+        return toret.reshape(z.shape)
+
+    return wrapper
+
+
 class Background(classy.BaseClassBackground, mochiclass.Background):
 
-    """Your modifications, if any."""
+    r"""
+    Background quantities, including the Horndeski / EFT-of-dark-energy functions
+    :math:`h_{1}`, :math:`h_{3}` and :math:`h_{5}` of `arXiv:1902.06978
+    <https://arxiv.org/abs/1902.06978>`_ (eqs. 64, 66, 68), which parameterize the
+    quasi-static effective Newton constant
+
+    .. math:: Y(k, z) = h_{1} \frac{1 + k^{2} h_{5}}{1 + k^{2} h_{3}}.
+
+    These require the smg sector to be switched on, e.g.::
+
+        cosmo = AbacusSummit(0, engine='mochiclass', Omega_Lambda=0, Omega_fld=0, Omega_smg=-1,
+                             gravity_model='propto_omega', parameters_smg='1., 0.5, 0.3, 0., 1.',
+                             expansion_model='wowa', expansion_smg='0.685, -1., 0.')
+        cosmo.h1(z), cosmo.h3(z), cosmo.h5(z), cosmo.Y(k, z)
+    """
+
+    def _eft_of_de(self):
+        r"""
+        Return dict of cubic splines, as a function of :math:`\ln a`, of the background
+        quantities entering eqs. (62) - (69) of arXiv:1902.06978.
+
+        All ingredients are taken directly from the mochi_class background table, so no
+        finite differencing of the alpha-functions is involved. Using primes for
+        :math:`d / d\ln a`, the required identities are:
+
+        - :math:`\xi \equiv H^{\prime} / H = -\frac{3}{2} (\rho_\mathrm{tot} + p_\mathrm{tot}) / H^{2}`
+        - :math:`\alpha_{2}` (eq. 63) is mochi_class' ``lambda_2``, and mochi_class'
+          ``cs2num`` :math:`= (2 - \alpha_{B}) \alpha_{1} / 2 + \alpha_{2}` is exactly
+          the numerator of :math:`h_{3}`;
+        - :math:`2 \xi^{2} + \xi^{\prime} + \xi (3 + \alpha_{M}) = \xi \alpha_{M} - \frac{3}{2} p_\mathrm{tot}^{\prime} / H^{2}`,
+          which removes the need for :math:`\xi^{\prime}` (hence :math:`H^{\prime\prime}`) in :math:`\mu^{2}` (eq. 69).
+        """
+        if getattr(self, '_eft_of_de_splines', None) is None:
+            from scipy import interpolate
+
+            table = self.table()
+            names = table.dtype.names or ()
+            for name in ('braiding_smg', 'cs2num'):
+                if name not in names:
+                    raise CosmologyInputError('mochi_class did not output "{}"; h1 / h3 / h5 require the smg sector, '
+                                              'i.e. one of {} among the engine parameters'.format(name, _smg_parameters))
+            z = table['z']
+            a = 1. / (1. + z)
+            H = table['H [1/Mpc]']  # H / c, in 1 / Mpc
+            H2 = H**2
+            di = {'M2': table['M*^2_smg'],
+                  'alpha_B': table['braiding_smg'],
+                  'alpha_M': table['Mpl_running_smg'],
+                  'alpha_T': table['tensor_excess_smg'],
+                  'cs2num': table['cs2num'],
+                  # xi = H' / H
+                  'xi': -1.5 * (table['(.)rho_tot'] + table['(.)p_tot']) / H2,
+                  # p_tot' / H^2, with ' = d / dln a and (.)p_tot_prime = dp_tot / dtau
+                  'dp_over_H2': table['(.)p_tot_prime'] / (a * H) / H2,
+                  # a H / c, in h / Mpc
+                  'aH': a * H / self.h}
+            loga = np.log(a)
+            argsort = np.argsort(loga)  # the table is tabulated in increasing ln(a), but let's be safe
+            loga = loga[argsort]
+            self._eft_of_de_splines = {name: interpolate.CubicSpline(loga, value[argsort], extrapolate=False)
+                                       for name, value in di.items()}
+        return self._eft_of_de_splines
+
+    def _eft_of_de_at_z(self, z):
+        """Evaluate :meth:`_eft_of_de` at redshift ``z``, and add the derived alpha_1, alpha_2, mu^2."""
+        loga = -np.log(1. + z)
+        toret = {name: spline(loga) for name, spline in self._eft_of_de().items()}
+        aB, aM, aT = toret['alpha_B'], toret['alpha_M'], toret['alpha_T']
+        # eq. 62
+        toret['alpha_1'] = alpha_1 = aB + (aB - 2.) * aT + 2. * aM
+        # eq. 63, mochi_class' lambda_2 (equivalently, cs2num - (2 - alpha_B) alpha_1 / 2)
+        toret['alpha_2'] = alpha_2 = toret['cs2num'] - (2. - aB) * alpha_1 / 2.
+        # eq. 69
+        toret['mu2'] = -3. * (aB * (toret['xi'] * aM - 1.5 * toret['dp_over_H2']) + toret['xi'] * alpha_2)
+        return toret
+
+    @_flatarray
+    def h1(self, z):
+        r"""
+        :math:`h_{1} = (1 + \alpha_{T}) / M_{\ast}^{2}`, eq. 64 of arXiv:1902.06978, unitless.
+        """
+        bg = self._eft_of_de_at_z(z)
+        return (1. + bg['alpha_T']) / bg['M2']
+
+    @_flatarray
+    def h3(self, z):
+        r"""
+        :math:`h_{3} = \left[(2 - \alpha_{B}) \alpha_{1} + 2 \alpha_{2}\right] / (2 a^{2} H^{2} \mu^{2})`,
+        eq. 66 of arXiv:1902.06978, in :math:`(\mathrm{Mpc}/h)^{2}` (i.e. for :math:`k` in :math:`h/\mathrm{Mpc}`).
+        """
+        bg = self._eft_of_de_at_z(z)
+        return bg['cs2num'] / (bg['aH']**2 * bg['mu2'])
+
+    @_flatarray
+    def h5(self, z):
+        r"""
+        :math:`h_{5} = \left[\frac{1 + \alpha_{M}}{1 + \alpha_{T}} \alpha_{1} + \alpha_{2}\right] / (a^{2} H^{2} \mu^{2})`,
+        eq. 68 of arXiv:1902.06978, in :math:`(\mathrm{Mpc}/h)^{2}` (i.e. for :math:`k` in :math:`h/\mathrm{Mpc}`).
+        """
+        bg = self._eft_of_de_at_z(z)
+        numerator = (1. + bg['alpha_M']) / (1. + bg['alpha_T']) * bg['alpha_1'] + bg['alpha_2']
+        return numerator / (bg['aH']**2 * bg['mu2'])
+
+    def Y(self, k, z):
+        r"""
+        Quasi-static effective Newton constant :math:`Y = h_{1} (1 + k^{2} h_{5}) / (1 + k^{2} h_{3})`,
+        eq. 24 of arXiv:1902.06978, unitless.
+
+        Parameters
+        ----------
+        k : array_like
+            Wavenumbers, in :math:`h/\mathrm{Mpc}`.
+
+        z : array_like
+            Redshifts.
+
+        Returns
+        -------
+        Y : array
+            Array of shape ``(k.shape, z.shape)``.
+        """
+        k, z = np.asarray(k, dtype='f8'), np.asarray(z, dtype='f8')
+        k2 = k.reshape(k.shape + (1,) * z.ndim)**2
+        return self.h1(z) * (1. + k2 * self.h5(z)) / (1. + k2 * self.h3(z))
 
 
 class Thermodynamics(classy.BaseClassThermodynamics, mochiclass.Thermodynamics):
