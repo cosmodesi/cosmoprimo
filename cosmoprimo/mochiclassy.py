@@ -46,16 +46,16 @@ class MochiClassEngine(classy.ClassEngine):
 
 
 def _flatarray(func):
-    """Decorator to make ``func(self, z)`` accept any array shape (and scalars)."""
+    """Decorator to make ``func(self, x)`` accept any array shape (and scalars)."""
     from functools import wraps
 
     @wraps(func)
-    def wrapper(self, z, *args, **kwargs):
-        z = np.asarray(z, dtype='f8')
-        toret = func(self, z.ravel(), *args, **kwargs)
-        if z.ndim == 0:
+    def wrapper(self, x, *args, **kwargs):
+        x = np.asarray(x, dtype='f8')
+        toret = func(self, x.ravel(), *args, **kwargs)
+        if x.ndim == 0:
             return toret[0]
-        return toret.reshape(z.shape)
+        return toret.reshape(x.shape)
 
     return wrapper
 
@@ -70,12 +70,17 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
 
     .. math:: Y(k, z) = h_{1} \frac{1 + k^{2} h_{5}}{1 + k^{2} h_{3}}.
 
+    :math:`h_{1}`, :math:`h_{3}` and :math:`h_{5}` are functions of
+    :math:`\eta = \ln a = -\ln (1 + z)`, the time variable the underlying splines are
+    tabulated in and the one Horndeski / EFT-of-dark-energy codes (e.g. fkptjax) integrate
+    in.  :meth:`Y` keeps taking a redshift.
+
     These require the smg sector to be switched on, e.g.::
 
         cosmo = AbacusSummit(0, engine='mochiclass', Omega_Lambda=0, Omega_fld=0, Omega_smg=-1,
                              gravity_model='propto_omega', parameters_smg='1., 0.5, 0.3, 0., 1.',
                              expansion_model='wowa', expansion_smg='0.685, -1., 0.')
-        cosmo.h1(z), cosmo.h3(z), cosmo.h5(z), cosmo.Y(k, z)
+        cosmo.h1(eta), cosmo.h3(eta), cosmo.h5(eta), cosmo.Y(k, z)
     """
 
     def _eft_of_de(self):
@@ -125,10 +130,9 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
                                        for name, value in di.items()}
         return self._eft_of_de_splines
 
-    def _eft_of_de_at_z(self, z):
-        """Evaluate :meth:`_eft_of_de` at redshift ``z``, and add the derived alpha_1, alpha_2, mu^2."""
-        loga = -np.log(1. + z)
-        toret = {name: spline(loga) for name, spline in self._eft_of_de().items()}
+    def _eft_of_de_at_eta(self, eta):
+        r"""Evaluate :meth:`_eft_of_de` at :math:`\eta = \ln a`, and add the derived alpha_1, alpha_2, mu^2."""
+        toret = {name: spline(eta) for name, spline in self._eft_of_de().items()}
         aB, aM, aT = toret['alpha_B'], toret['alpha_M'], toret['alpha_T']
         # eq. 62
         toret['alpha_1'] = alpha_1 = aB + (aB - 2.) * aT + 2. * aM
@@ -139,29 +143,32 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
         return toret
 
     @_flatarray
-    def h1(self, z):
+    def h1(self, eta):
         r"""
-        :math:`h_{1} = (1 + \alpha_{T}) / M_{\ast}^{2}`, eq. 64 of arXiv:1902.06978, unitless.
+        :math:`h_{1} = (1 + \alpha_{T}) / M_{\ast}^{2}`, eq. 64 of arXiv:1902.06978, unitless,
+        as a function of :math:`\eta = \ln a`.
         """
-        bg = self._eft_of_de_at_z(z)
+        bg = self._eft_of_de_at_eta(eta)
         return (1. + bg['alpha_T']) / bg['M2']
 
     @_flatarray
-    def h3(self, z):
+    def h3(self, eta):
         r"""
         :math:`h_{3} = \left[(2 - \alpha_{B}) \alpha_{1} + 2 \alpha_{2}\right] / (2 a^{2} H^{2} \mu^{2})`,
-        eq. 66 of arXiv:1902.06978, in :math:`(\mathrm{Mpc}/h)^{2}` (i.e. for :math:`k` in :math:`h/\mathrm{Mpc}`).
+        eq. 66 of arXiv:1902.06978, in :math:`(\mathrm{Mpc}/h)^{2}` (i.e. for :math:`k` in :math:`h/\mathrm{Mpc}`),
+        as a function of :math:`\eta = \ln a`.
         """
-        bg = self._eft_of_de_at_z(z)
+        bg = self._eft_of_de_at_eta(eta)
         return bg['cs2num'] / (bg['aH']**2 * bg['mu2'])
 
     @_flatarray
-    def h5(self, z):
+    def h5(self, eta):
         r"""
         :math:`h_{5} = \left[\frac{1 + \alpha_{M}}{1 + \alpha_{T}} \alpha_{1} + \alpha_{2}\right] / (a^{2} H^{2} \mu^{2})`,
-        eq. 68 of arXiv:1902.06978, in :math:`(\mathrm{Mpc}/h)^{2}` (i.e. for :math:`k` in :math:`h/\mathrm{Mpc}`).
+        eq. 68 of arXiv:1902.06978, in :math:`(\mathrm{Mpc}/h)^{2}` (i.e. for :math:`k` in :math:`h/\mathrm{Mpc}`),
+        as a function of :math:`\eta = \ln a`.
         """
-        bg = self._eft_of_de_at_z(z)
+        bg = self._eft_of_de_at_eta(eta)
         numerator = (1. + bg['alpha_M']) / (1. + bg['alpha_T']) * bg['alpha_1'] + bg['alpha_2']
         return numerator / (bg['aH']**2 * bg['mu2'])
 
@@ -176,7 +183,8 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
             Wavenumbers, in :math:`h/\mathrm{Mpc}`.
 
         z : array_like
-            Redshifts.
+            Redshifts.  Note :meth:`h1`, :meth:`h3` and :meth:`h5` themselves take
+            :math:`\eta = \ln a`; the conversion is done here.
 
         Returns
         -------
@@ -185,7 +193,8 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
         """
         k, z = np.asarray(k, dtype='f8'), np.asarray(z, dtype='f8')
         k2 = k.reshape(k.shape + (1,) * z.ndim)**2
-        return self.h1(z) * (1. + k2 * self.h5(z)) / (1. + k2 * self.h3(z))
+        eta = -np.log(1. + z)
+        return self.h1(eta) * (1. + k2 * self.h5(eta)) / (1. + k2 * self.h3(eta))
 
 
 class Thermodynamics(classy.BaseClassThermodynamics, mochiclass.Thermodynamics):
