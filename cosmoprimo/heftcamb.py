@@ -79,6 +79,66 @@ _RPH_ALPHA_BRANCHES = _RPH_COMMON_BRANCHES + _RPH_ALPHAM_BRANCHES + _RPH_MASSP_B
 # and registered as case(12) in 04p1_parametrizations_1D_allocator.f90.
 HILLVALLEY_FLAG = 12
 
+# ----------------------------------------------------------------------
+# Braiding convention.
+#
+# EFTCAMB and hi_class / mochi-class normalise the braiding differently:
+#
+#     alpha_B(EFTCAMB) = -0.5 * alpha_B(hi_class)
+#
+# so the same physical model needs different numbers in the two codes. The
+# other alpha functions (alpha_K, alpha_M, alpha_T) and M_*^2 share a
+# convention. Verified against the 'mochiclass' engine over a 1000-point
+# Latin-hypercube scan of (alpha_M0, alpha_B0, w0, wa): with this factor the
+# two codes agree on every stability verdict, and on the linear matter power
+# spectrum to the same 0.16% that plain 'class' and 'camb' agree to in LCDM.
+#
+# The c_K / c_B / c_M / c_T / M2_ini arguments of HEFTCAMBEngine are in the
+# *hi_class* convention (they are mochi-class's parameters_smg entries), so
+# that the 'mochiclass' and 'heftcamb' engines take identical arguments; the
+# conversion happens in _apply_alpha_basis().
+# ----------------------------------------------------------------------
+BRAIDING_EFTCAMB_OVER_HICLASS = -0.5
+
+
+def _designer_normalisation_is_reliable(camb):
+    """Whether this HEFTCAMB build normalises the RPH designer background correctly.
+
+    ``RPHintegratefromtoday = False`` makes 007p2_RPH.f90 normalise rho_DE with
+    a *single* DLSODA call across the whole grid, capped at ``IWORK(6) = 100``
+    steps. For any w(a) != -1 that cap is reached; the code only warns
+    (``istate = -1`` -> ``istate = 1``) and then uses the unconverged value, so
+    rho_DE(a=1) != rho_DE,0 and the run silently ends up at the wrong H0
+    (measured: 44.8 to 5.5e13 km/s/Mpc where 67.36 was requested, giving a
+    linear power spectrum wrong by seven orders of magnitude).
+
+    Probing is cheap (one background-only run, ~15 ms) and the answer is a
+    property of the build, so it is cached. A patched build returns True and
+    nothing further is said; an unpatched one triggers the warning in
+    :meth:`HEFTCAMBEngine._check_designer_normalisation`.
+    """
+    global _DESIGNER_NORMALISATION_OK
+    if _DESIGNER_NORMALISATION_OK is None:
+        h0 = 67.36
+        try:
+            pars = camb.set_params(
+                H0=h0, ombh2=0.02237, omch2=0.12, mnu=0., EFTflag=2, AltParEFTmodel=1,
+                EFTCAMB_skip_stability=True, feedback_level=0,
+                RPHintegratefromtoday=False, RPHusealphaM=True, RPH_M0=0.,
+                RPHalphaMmodel=0, RPHalphaMmodel_ODE=2, RPHalphaM_ODE0=0.,
+                RPHkineticitymodel=0, RPHkineticitymodel_ODE=2, RPHkineticity_ODE0=1.,
+                RPHbraidingmodel=0, RPHbraidingmodel_ODE=2, RPHbraiding_ODE0=0.,
+                RPHtensormodel=0, RPHtensormodel_ODE=2, RPHtensor_ODE0=0.,
+                RPHwDE=2, RPHw0=-0.9, RPHwa=-0.5)
+            results = camb.get_background(pars, no_thermo=True)
+            _DESIGNER_NORMALISATION_OK = abs(float(results.hubble_parameter(0.)) / h0 - 1.) < 1e-6
+        except Exception:  # noqa: BLE001 - a probe must never break the engine
+            _DESIGNER_NORMALISATION_OK = True
+    return _DESIGNER_NORMALISATION_OK
+
+
+_DESIGNER_NORMALISATION_OK = None
+
 
 class Background(CambBackground):
     """CAMB background section, with the GR-only growth solver disabled.
@@ -157,6 +217,22 @@ class HEFTCAMBEngine(CambEngine):
 
     Shape parameters that the selected model flag would not read are
     stripped before reaching camb.set_params(...); see _prune_rph_params.
+
+    For the default shape the alpha functions can be given in the hi_class /
+    mochi-class convention as ``c_K, c_B, c_M, c_T, M2_ini`` -- exactly
+    mochi-class's ``parameters_smg`` -- so that the same call describes the same
+    model on either engine::
+
+        common = dict(c_K=1., c_B=1., c_M=1., c_T=0., M2_ini=1.,
+                      w0_fld=-0.9, wa_fld=-0.5)
+        AbacusSummit(0, engine='heftcamb', **common)
+        AbacusSummit(0, engine='mochiclass', Omega_Lambda=0., Omega_fld=0.,
+                     Omega_smg=-1., gravity_model='propto_omega',
+                     parameters_smg='1., 1., 1., 0., 1.',
+                     expansion_model='wowa', expansion_smg='0.685, -0.9, -0.5')
+
+    The braiding is converted by ``BRAIDING_EFTCAMB_OVER_HICLASS``; the raw
+    ``RPHbraiding_ODE0`` etc. remain available for EFTCAMB-convention input.
     """
 
     name = "heftcamb"
@@ -207,8 +283,31 @@ class HEFTCAMBEngine(CambEngine):
 
         # EFTCAMB turn-on / stability settings
         EFTCAMB_back_turn_on=1.0e-8,
-        EFTCAMB_turn_on_time=1.0e-8,
-        EFTCAMB_skip_stability=True,
+
+        # CAMB's own default. Earlier values make CAMB abort with "EFTCAMB
+        # starts before thermo tauminn, EFT_pert_turn_on, EFTturnOnTime" over a
+        # large part of the (alpha_M0, alpha_B0, w0, wa) box.
+        EFTCAMB_turn_on_time=1.0e-2,
+
+        # Run EFTCAMB's stability module. With it skipped the engine reports
+        # every model as computable, so it can neither agree nor disagree with
+        # the 'mochiclass' engine on stability.
+        EFTCAMB_skip_stability=False,
+
+        # Earliest scale factor at which stability is tested. EFTCAMB's own
+        # default (1e-10) precedes the designer background grid
+        # (model_background_a_ini = 1e-8) and EFTStabilityComputation does not
+        # clamp to EFTCAMB_back_turn_on, so the sampler would extrapolate the
+        # interpolation tables.
+        #
+        # On a build carrying the EFTCAMB_stability_threshold patch (see
+        # Stability/PACKAGE_CHANGES.md in the DESI-DR2-CPE project) this whole
+        # window is usable and the verdicts match mochi-class. On an unpatched
+        # build, EFT_kinetic / EFT_gradient are compared against zero with no
+        # tolerance even where they have cancelled down to the round-off floor,
+        # so early times return the sign of the noise; raise this to ~0.1 there.
+        EFTCAMB_stability_time=1.0e-8,
+
         feedback_level=0,
 
         # Optional stability flags
@@ -252,10 +351,24 @@ class HEFTCAMBEngine(CambEngine):
         "heftcamb_debug",
         "heftcamb_map_w0wa",
         "heftcamb_gr_growth",
+        "heftcamb_check_designer",
         "RPH_massP0",
         "RPH_braiding0",
         "RPH_kinetic0",
+        "c_K",
+        "c_B",
+        "c_M",
+        "c_T",
+        "M2_ini",
     ]
+
+    # hi_class / mochi-class alpha-basis arguments -> the RPH flags they set.
+    # c_B is handled separately because of BRAIDING_EFTCAMB_OVER_HICLASS.
+    _ALPHA_BASIS_KEYS = {
+        "c_K": "RPHkineticity_ODE0",
+        "c_M": "RPHalphaM_ODE0",
+        "c_T": "RPHtensor_ODE0",
+    }
 
     def __init__(self, *args, **kwargs):
         # ------------------------------------------------------------
@@ -275,11 +388,23 @@ class HEFTCAMBEngine(CambEngine):
         # which does not describe the modified gravity model (see Background).
         heftcamb_gr_growth = kwargs.pop("heftcamb_gr_growth", False)
 
+        # Whether to probe the build for the RPH designer normalisation bug.
+        heftcamb_check_designer = kwargs.pop("heftcamb_check_designer", True)
+
         # Stash on self: _set_camb() runs inside super().__init__().
         self._heftcamb_debug = bool(heftcamb_debug)
         self._heftcamb_map_w0wa = bool(heftcamb_map_w0wa)
         self._heftcamb_gr_growth = bool(heftcamb_gr_growth)
+        self._heftcamb_check_designer = bool(heftcamb_check_designer)
         self._pruned_rph_params = {}
+
+        # The alpha basis given as extra_params has to be stashed here: the
+        # wrapper-private keys are dropped from kwargs further down, before
+        # super().__init__() (and hence _set_camb()) ever sees them.
+        self._alpha_basis_kwargs = {
+            name: kwargs[name]
+            for name in list(self._ALPHA_BASIS_KEYS) + ["c_B", "M2_ini"]
+            if kwargs.get(name, None) is not None}
 
         # Convenience aliases.
         # Use None defaults so these aliases do not accidentally overwrite
@@ -287,6 +412,11 @@ class HEFTCAMBEngine(CambEngine):
         RPH_massP0 = kwargs.pop("RPH_massP0", None)
         RPH_braiding0 = kwargs.pop("RPH_braiding0", None)
         RPH_kinetic0 = kwargs.pop("RPH_kinetic0", None)
+
+        # The hi_class / mochi-class alpha basis (c_K, c_B, c_M, c_T, M2_ini) is
+        # not handled here: it can also arrive as a top-level Cosmology
+        # parameter, which lands in self._params rather than in these kwargs.
+        # Both paths are picked up by _apply_alpha_basis() from _set_camb().
 
         # ------------------------------------------------------------
         # Build parameter dictionary to push through CambEngine.
@@ -343,8 +473,45 @@ class HEFTCAMBEngine(CambEngine):
         # read_parameters() is cached Python-side; clear before debug.
         self._clear_eftcamb_read_cache()
 
+        self._check_designer_normalisation()
+
         if heftcamb_debug:
             self._debug_eftcamb_parameters("after CambEngine")
+
+    def _check_designer_normalisation(self):
+        """Warn when this build would silently mis-normalise the RPH background.
+
+        Only fires on an unpatched HEFTCAMB (probed once per process, see
+        :func:`_designer_normalisation_is_reliable`) and only for the
+        configuration that triggers the bug: a non-trivial w(a) integrated from
+        early times. Silence therefore means the build is fine, not that the
+        check was skipped.
+        """
+        if not getattr(self, '_heftcamb_check_designer', True):
+            return
+        if not self._eftcamb_drives_background():
+            return
+        try:
+            if bool(self._rph_setting('RPHintegratefromtoday', False)):
+                return
+            w0 = float(self._rph_setting('RPHw0', -1.))
+            wa = float(self._rph_setting('RPHwa', 0.))
+        except (TypeError, ValueError):
+            return
+        if w0 == -1. and wa == 0.:
+            return
+        if _designer_normalisation_is_reliable(self.camb):
+            return
+        warnings.warn(
+            "HEFTCAMBEngine: this HEFTCAMB build mis-normalises the RPH designer background "
+            "for w(a) != -1 (w0={}, wa={}). fortran/eftcamb/07f_designer_models/007p2_RPH.f90 "
+            "normalises rho_DE with one DLSODA call capped at IWORK(6) = 100 steps, always "
+            "exhausts it, warns, and then uses the unconverged value, so the run ends up at "
+            "the wrong H0 and the linear power spectrum can be wrong by orders of magnitude. "
+            "Apply the 007p2_RPH.f90 patch and rebuild, or pass RPHintegratefromtoday=True "
+            "(which imposes 1 + RPH_M0 = M_*^2 today rather than at early times, so M2_ini "
+            "must be recalibrated). Pass heftcamb_check_designer=False to silence this."
+            .format(w0, wa))
 
     # ------------------------------------------------------------------
     # RPH parameter bookkeeping
@@ -360,6 +527,52 @@ class HEFTCAMBEngine(CambEngine):
             if name in container:
                 return container[name]
         return self._default_calculation_parameters.get(name, default)
+
+    def _collect_alpha_basis(self):
+        """Pick up c_K / c_B / c_M / c_T / M2_ini from wherever they arrived.
+
+        ``self._params`` (a top-level ``Cosmology`` parameter) wins over
+        ``self._extra_params``, matching :meth:`_rph_setting`.
+        """
+        names = list(self._ALPHA_BASIS_KEYS) + ["c_B", "M2_ini"]
+        basis = dict(getattr(self, '_alpha_basis_kwargs', {}))
+        for name in names:
+            for container in (getattr(self, '_extra_params', {}), getattr(self, '_params', {})):
+                value = container.get(name, None)
+                if value is not None:
+                    basis[name] = value
+        return basis
+
+    def _apply_alpha_basis(self, basis):
+        """Translate the hi_class alpha basis into the RPH flags.
+
+        ``alpha_i(a) = c_i * Omega_DE(a)`` in both codes, so c_K, c_M and c_T
+        carry straight over to RPHkineticity_ODE0 / RPHalphaM_ODE0 /
+        RPHtensor_ODE0; only the braiding needs
+        :data:`BRAIDING_EFTCAMB_OVER_HICLASS`. ``M2_ini`` is mochi-class's
+        ``parameters_smg`` entry 5, the effective Planck mass at the start of
+        the integration, which is what ``1 + RPH_M0`` sets while
+        ``RPHintegratefromtoday`` is False.
+
+        The converted flags are written into ``self._extra_params`` rather than
+        ``self._params``: ``_set_camb`` strips the wrapper-private c_K/c_B/...
+        keys from the very dict the ``Cosmology`` holds, so a later
+        ``Cosmology.clone()`` (which ``AbacusSummit`` performs internally) would
+        otherwise rebuild the engine with the alpha basis already gone. Storing
+        the RPH flags instead makes the translation survive cloning.
+        Precedence is unchanged: a raw RPH flag given as a top-level parameter
+        lands in ``self._params`` and still wins.
+        """
+        if not basis:
+            return
+        target = self._extra_params if hasattr(self, '_extra_params') else self._params
+        for name, flag in self._ALPHA_BASIS_KEYS.items():
+            if name in basis:
+                target[flag] = float(basis[name])
+        if 'c_B' in basis:
+            target['RPHbraiding_ODE0'] = BRAIDING_EFTCAMB_OVER_HICLASS * float(basis['c_B'])
+        if 'M2_ini' in basis:
+            target['RPH_M0'] = float(basis['M2_ini']) - 1.
 
     def _resolve_default_param_conflicts(self):
         """Let explicit ``extra_params`` win over untouched class defaults.
@@ -568,6 +781,11 @@ class HEFTCAMBEngine(CambEngine):
 
         self.camb = heftcamb
 
+        # Read the hi_class-convention alpha basis before the loops below drop
+        # it: c_K/c_B/c_M/c_T/M2_ini are wrapper-private, and they may have
+        # arrived either as extra_params or as top-level Cosmology parameters.
+        alpha_basis = self._collect_alpha_basis()
+
         # Clean only wrapper-private keys.
         # Do NOT remove real EFTCAMB/RPH parameters.
         if hasattr(self, "_extra_params"):
@@ -581,6 +799,10 @@ class HEFTCAMBEngine(CambEngine):
         # _set_camb() is called by CambEngine.__init__ after _params and
         # _extra_params are set and before base_params is assembled, so this
         # is the right place to finalise the EFTCAMB parameter set.
+        # Before _resolve_default_param_conflicts(), which is what lets the
+        # values written into _extra_params win over the untouched class
+        # defaults sitting in _params.
+        self._apply_alpha_basis(alpha_basis)
         self._resolve_default_param_conflicts()
         self._map_w0wa_to_rph()
         self._check_background_consistency()
