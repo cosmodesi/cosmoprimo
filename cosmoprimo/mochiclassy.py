@@ -98,13 +98,16 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
           the numerator of :math:`h_{3}`;
         - :math:`2 \xi^{2} + \xi^{\prime} + \xi (3 + \alpha_{M}) = \xi \alpha_{M} - \frac{3}{2} p_\mathrm{tot}^{\prime} / H^{2}`,
           which removes the need for :math:`\xi^{\prime}` (hence :math:`H^{\prime\prime}`) in :math:`\mu^{2}` (eq. 69).
+          The :math:`3/2` (rather than :math:`1/2`) is CLASS' ``(.)`` convention: the table stores
+          :math:`8 \pi G p / 3`.  Note :math:`p_\mathrm{tot}^{\prime}` must include the smg fluid;
+          see the comment on ``dp_over_H2`` below.
         """
         if getattr(self, '_eft_of_de_splines', None) is None:
             from scipy import interpolate
 
             table = self.table()
             names = table.dtype.names or ()
-            for name in ('braiding_smg', 'cs2num'):
+            for name in ('braiding_smg', 'cs2num', '(.)p_smg_prime'):
                 if name not in names:
                     raise CosmologyInputError('mochi_class did not output "{}"; h1 / h3 / h5 require the smg sector, '
                                               'i.e. one of {} among the engine parameters'.format(name, _smg_parameters))
@@ -119,8 +122,21 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
                   'cs2num': table['cs2num'],
                   # xi = H' / H
                   'xi': -1.5 * (table['(.)rho_tot'] + table['(.)p_tot']) / H2,
-                  # p_tot' / H^2, with ' = d / dln a and (.)p_tot_prime = dp_tot / dtau
-                  'dp_over_H2': table['(.)p_tot_prime'] / (a * H) / H2,
+                  # p_tot' / H^2, with ' = d / dln a and (.)p_tot_prime = dp_tot / dtau.
+                  # mochi_class' (.)p_tot_prime EXCLUDES the smg fluid: background_functions()
+                  # accumulates dp_dloga species by species (source/background.c, l. 432 - 568)
+                  # and the smg correction is commented out at source/background.c:2517, with
+                  # the note "Never used anywhere in hiclass, because here only matter
+                  # contributions without smg are considered in dp_dlna". The missing piece is
+                  # tabulated separately as (.)p_smg_prime, in the same d / dtau convention
+                  # (factor = a * H in gravity_smg/background_smg.c:2406), and mochi_class' own
+                  # mu_p uses exactly this sum (background_smg.c:1249).
+                  #
+                  # It vanishes identically for w = -1, which is why h3 / h5 were right there
+                  # and 50%-level wrong for any w != -1; with the term restored they match the
+                  # 'heftcamb' engine to ~5e-3 % (see Projects/DESI/DESI-DR2-MG/FullShape/
+                  # h1h3h5_HEFTCAMB_vs_mochiclass_v2.ipynb).
+                  'dp_over_H2': (table['(.)p_tot_prime'] + table['(.)p_smg_prime']) / (a * H) / H2,
                   # a H / c, in h / Mpc
                   'aH': a * H / self.h}
             loga = np.log(a)

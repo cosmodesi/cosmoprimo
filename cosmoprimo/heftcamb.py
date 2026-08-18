@@ -6,7 +6,7 @@ import numpy as np
 
 from .camb import (CambEngine, Background as CambBackground, Thermodynamics, Primordial,
                    Transfer, Harmonic, Fourier)
-from .cosmology import CosmologyComputationError
+from .cosmology import CosmologyComputationError, CosmologyInputError
 from . import utils, constants
 
 
@@ -141,7 +141,24 @@ _DESIGNER_NORMALISATION_OK = None
 
 
 class Background(CambBackground):
-    """CAMB background section, with the GR-only growth solver disabled.
+    r"""CAMB background section, with the GR-only growth solver disabled, and with the
+    Horndeski / EFT-of-dark-energy functions :math:`h_{1}`, :math:`h_{3}` and :math:`h_{5}`
+    of `arXiv:2312.10510 <https://arxiv.org/abs/2312.10510>`_ (eqs. A.8, A.9, A.10; eqs. 64,
+    66, 68 of `arXiv:1902.06978 <https://arxiv.org/abs/1902.06978>`_), which parameterize the
+    quasi-static effective Newton constant
+
+    .. math:: Y(k, z) = h_{1} \frac{1 + k^{2} h_{5}}{1 + k^{2} h_{3}}.
+
+    :math:`h_{1}`, :math:`h_{3}` and :math:`h_{5}` are functions of
+    :math:`\eta = \ln a = -\ln (1 + z)`, the time variable Horndeski / EFT-of-dark-energy
+    codes (e.g. fkptjax) integrate in; :meth:`Y` keeps taking a redshift.  This is the same
+    API, in the same units and conventions, as the 'mochiclass' engine, e.g.::
+
+        common = dict(c_K=1., c_B=2., c_M=2., c_T=0., M2_ini=1., w0_fld=-1., wa_fld=0.)
+        cosmo = AbacusSummit(0, engine='heftcamb', **common)
+        cosmo.h1(eta), cosmo.h3(eta), cosmo.h5(eta), cosmo.Y(k, z)
+
+    On the GR-only growth solver:
 
     Recent cosmoprimo gives ``camb.Background`` a ``growth_factor`` /
     ``growth_rate`` that integrates the *general relativistic* growth equation
@@ -183,6 +200,127 @@ class Background(CambBackground):
     def growth_rate(self, z, mass='m'):
         self._check_gr_growth('growth_rate')
         return super().growth_rate(z, mass=mass)
+
+    # ------------------------------------------------------------------
+    # Horndeski / EFT-of-dark-energy one-loop kernels.
+    #
+    # Same API as the 'mochiclass' engine (see mochiclassy.Background), so
+    # that h1 / h3 / h5 / Y can be requested from either engine with the
+    # same call.  Here they are not rebuilt from the alpha-functions: the
+    # patched HEFTCAMB computes them itself, in EFTCAMBModelComputeOneLoopKernels
+    # (fortran/eftcamb/06_abstract_EFTCAMB_model.f90), in cancellation-free
+    # form, and exposes them in the timestep cache as h1_loop, h3_loop,
+    # h5_loop.  This just evaluates that cache on the requested times.
+    # ------------------------------------------------------------------
+
+    # Requested name -> HEFTCAMB timestep-cache field.  alpha_B, xi and aH
+    # are derived below; the rest are copied straight over.  Names and
+    # conventions follow mochiclassy.Background._eft_of_de_at_eta.
+    _eft_of_de_fields = {'M2': 'Meff2',
+                         'alpha_M': 'alphaM',
+                         'alpha_T': 'alphaT',
+                         'alpha_K': 'alphaK',
+                         'alpha_1': 'a1_loop',
+                         'alpha_2': 'a2_loop',
+                         'mu2': 'mu2_loop',
+                         'h1': 'h1_loop',
+                         'h3': 'h3_loop',
+                         'h5': 'h5_loop'}
+
+    def _eft_of_de_at_eta(self, eta):
+        r"""
+        Return dict of the background quantities entering eqs. (A.9) - (A.13) of
+        arXiv:2312.10510 (eqs. 62 - 69 of arXiv:1902.06978), evaluated at
+        :math:`\eta = \ln a`.
+
+        Everything comes from HEFTCAMB's own timestep cache, i.e. from the same
+        numbers the perturbation solver uses; nothing is finite-differenced or
+        re-interpolated here.  :math:`\alpha_{B}` is returned in the hi_class /
+        mochi-class convention (:attr:`BRAIDING_EFTCAMB_OVER_HICLASS`), which is
+        the one eqs. (A.12) - (A.13) are written in, so the dict is directly
+        comparable with the mochiclass one.
+
+        The result of the last call is cached, so asking for :meth:`h1`,
+        :meth:`h3` and :meth:`h5` on the same times costs one HEFTCAMB call, not
+        three.
+        """
+        eta = np.asarray(eta, dtype='f8').ravel()
+        cache = getattr(self, '_eft_of_de_cache', None)
+        key = (eta.shape, eta.tobytes())
+        if cache is not None and cache[0] == key:
+            return cache[1]
+
+        eftcamb = self._engine._camb_params.EFTCAMB
+        if eftcamb is None:
+            raise CosmologyInputError('HEFTCAMB did not set up an EFT model; h1 / h3 / h5 require '
+                                      'the EFT sector, i.e. EFTflag != 0 among the engine parameters')
+        fields, values = eftcamb.get_eft_functions(self.ba, np.exp(eta))
+        for name in self._eft_of_de_fields.values():
+            if name not in fields:
+                raise CosmologyInputError('HEFTCAMB did not output "{}"; h1 / h3 / h5 require the build '
+                                          'carrying the one-loop-kernel patch'.format(name))
+        toret = {name: np.asarray(values[field], dtype='f8') for name, field in self._eft_of_de_fields.items()}
+        # Appendix-A / hi_class braiding, alpha_B = -2 alpha_B^EFTCAMB.
+        toret['alpha_B'] = np.asarray(values['alphaB'], dtype='f8') / BRAIDING_EFTCAMB_OVER_HICLASS
+        # aH / c, in h / Mpc (HEFTCAMB's adotoa is a H / c in 1 / Mpc).
+        toret['aH'] = np.asarray(values['adotoa'], dtype='f8') / self.h
+        # xi = H' / H, with ' = d / dln a.
+        toret['xi'] = np.asarray(values['Hdot'], dtype='f8') / np.asarray(values['adotoa'], dtype='f8')**2 - 1.
+
+        self._eft_of_de_cache = (key, toret)
+        return toret
+
+    @utils.flatarray(dtype=np.float64)
+    def h1(self, eta):
+        r"""
+        :math:`h_{1} = (1 + \alpha_{T}) / M_{\ast}^{2}`, eq. (A.8) of arXiv:2312.10510
+        (eq. 64 of arXiv:1902.06978), unitless, as a function of :math:`\eta = \ln a`.
+        """
+        return self._eft_of_de_at_eta(eta)['h1']
+
+    @utils.flatarray(dtype=np.float64)
+    def h3(self, eta):
+        r"""
+        :math:`h_{3} = \left[(2 - \alpha_{B}) \alpha_{1} + 2 \alpha_{2}\right] / (2 a^{2} H^{2} \mu^{2})`,
+        eq. (A.9) of arXiv:2312.10510 (eq. 66 of arXiv:1902.06978), in
+        :math:`(\mathrm{Mpc}/h)^{2}` (i.e. for :math:`k` in :math:`h/\mathrm{Mpc}`),
+        as a function of :math:`\eta = \ln a`.
+        """
+        return self._eft_of_de_at_eta(eta)['h3']
+
+    @utils.flatarray(dtype=np.float64)
+    def h5(self, eta):
+        r"""
+        :math:`h_{5} = \left[\frac{1 + \alpha_{M}}{1 + \alpha_{T}} \alpha_{1} + \alpha_{2}\right] / (a^{2} H^{2} \mu^{2})`,
+        eq. (A.10) of arXiv:2312.10510 (eq. 68 of arXiv:1902.06978), in
+        :math:`(\mathrm{Mpc}/h)^{2}` (i.e. for :math:`k` in :math:`h/\mathrm{Mpc}`),
+        as a function of :math:`\eta = \ln a`.
+        """
+        return self._eft_of_de_at_eta(eta)['h5']
+
+    def Y(self, k, z):
+        r"""
+        Quasi-static effective Newton constant :math:`Y = h_{1} (1 + k^{2} h_{5}) / (1 + k^{2} h_{3})`,
+        eq. 24 of arXiv:1902.06978, unitless.
+
+        Parameters
+        ----------
+        k : array_like
+            Wavenumbers, in :math:`h/\mathrm{Mpc}`.
+
+        z : array_like
+            Redshifts.  Note :meth:`h1`, :meth:`h3` and :meth:`h5` themselves take
+            :math:`\eta = \ln a`; the conversion is done here.
+
+        Returns
+        -------
+        Y : array
+            Array of shape ``(k.shape, z.shape)``.
+        """
+        k, z = np.asarray(k, dtype='f8'), np.asarray(z, dtype='f8')
+        k2 = k.reshape(k.shape + (1,) * z.ndim)**2
+        eta = -np.log(1. + z)
+        return self.h1(eta) * (1. + k2 * self.h5(eta)) / (1. + k2 * self.h3(eta))
 
 
 class HEFTCAMBEngine(CambEngine):
