@@ -2,7 +2,7 @@ import warnings
 
 import numpy as np
 
-from .cosmology import BaseEngine, BaseSection, DefaultBackground
+from .cosmology import BaseEngine, BaseSection, DefaultBackground, CosmologyError
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 from . import constants, utils
 from .jax import exception
@@ -22,24 +22,12 @@ class EisensteinHuEngine(BaseEngine):
         super().__init__(*args, **kwargs)
         def raise_error(N_ncdm, Omega_k, has_fld):
             if N_ncdm:
-                warnings.warn(
-                    '{} cannot cope with massive neutrinos'.format(
-                        self.__class__.__name__
-                        )
-                    )
+                warnings.warn('{} cannot cope with massive neutrinos'.format(self.__class__.__name__))
             if Omega_k != 0.:
-                warnings.warn(
-                    '{} cannot cope with non-zero curvature'.format(
-                        self.__class__.__name__
-                        )
-                    )
+                warnings.warn('{} cannot cope with non-zero curvature'.format(self.__class__.__name__))
             if has_fld:
-                warnings.warn(
-                    '{} cannot cope with non-constant dark energy'.format(
-                        self.__class__.__name__
-                        )
-                    )
-        exception(raise_error, self['N_ncdm'], self['Omega_k'], self._has_fld)
+                warnings.warn('{} cannot cope with non-constant dark energy'.format(self.__class__.__name__))
+        #exception(raise_error, self['N_ncdm'], self['Omega_k'], self._has_fld)
         self.compute()
         self._A_s = self._get_A_s_fid()
 
@@ -60,11 +48,9 @@ class EisensteinHuEngine(BaseEngine):
         # EH eq. 4
         z_drag_b1 = 0.313 * self.omega_m ** (-0.419) * (1 + 0.607 * self.omega_m ** 0.674)
         z_drag_b2 = 0.238 * self.omega_m ** 0.223
-        # self.z_drag = 1291 * self.omega_m ** 0.251 / (1. + 0.659 * self.omega_m ** 0.828)\
-        # * (1. + z_drag_b1 * self.omega_b ** z_drag_b2)
+        # self.z_drag = 1291 * self.omega_m ** 0.251 / (1. + 0.659 * self.omega_m ** 0.828) * (1. + z_drag_b1 * self.omega_b ** z_drag_b2)
         # HS1996, arXiv 9510117, eq. E1 actually better match to CLASS
-        self.z_drag = 1345 * self.omega_m ** 0.251 / (1. + 0.659 * self.omega_m ** 0.828)\
-                    * (1. + z_drag_b1 * self.omega_b ** z_drag_b2)
+        self.z_drag = 1345 * self.omega_m ** 0.251 / (1. + 0.659 * self.omega_m ** 0.828) * (1. + z_drag_b1 * self.omega_b ** z_drag_b2)
 
         # EH eq. 5
         self.r_drag = 31.5 * self.omega_b * self.theta_cmb ** (-4) * (1000. / (1 + self.z_drag))
@@ -72,9 +58,7 @@ class EisensteinHuEngine(BaseEngine):
 
         # EH eq. 6
         self.rs_drag = 2. / (3. * self.k_eq) * self._np.sqrt(6. / self.r_eq)\
-                       * self._np.log((self._np.sqrt(1 + self.r_drag) +
-                                       self._np.sqrt(self.r_drag + self.r_eq))\
-                                      / (1 + self._np.sqrt(self.r_eq)))
+                       * self._np.log((self._np.sqrt(1 + self.r_drag) + self._np.sqrt(self.r_drag + self.r_eq)) / (1 + self._np.sqrt(self.r_eq)))
         # self.rs_drag = 44.5 * np.log(9.83 / self.omega_m) / np.sqrt(1. + 10. * self.omega_b**0.75)
 
     def compute(self):
@@ -83,8 +67,7 @@ class EisensteinHuEngine(BaseEngine):
         self._set_rsdrag()
 
         # EH eq. 7
-        self.k_silk = 1.6 * self.omega_b ** 0.52 * self.omega_m ** 0.73\
-                        * (1 + (10.4 * self.omega_m) ** (-0.95))  # 1/Mpc
+        self.k_silk = 1.6 * self.omega_b ** 0.52 * self.omega_m ** 0.73 * (1 + (10.4 * self.omega_m) ** (-0.95))  # 1/Mpc
 
         # alpha_c
         # EH eq. 11
@@ -100,26 +83,16 @@ class EisensteinHuEngine(BaseEngine):
 
         y_drag = (1 + self.z_eq) / (1 + self.z_drag)
         # EH eq. 15
-        alpha_b_G = y_drag * (-6. * self._np.sqrt(1 + y_drag) + (2. + 3. * y_drag)
-                            * self._np.log(
-                                (self._np.sqrt(1 + y_drag) + 1) / (self._np.sqrt(1 + y_drag) - 1)
-                                ))
+        alpha_b_G = y_drag * (-6. * self._np.sqrt(1 + y_drag) + (2. + 3. * y_drag) * self._np.log((self._np.sqrt(1 + y_drag) + 1) / (self._np.sqrt(1 + y_drag) - 1)))
         self.alpha_b = 2.07 * self.k_eq * self.rs_drag * (1 + self.r_drag)**(-0.75) * alpha_b_G
 
         # EH eq. 23
         self.beta_node = 8.41 * self.omega_m ** 0.435
         # EH eq. 24
-        self.beta_b = 0.5 + self.frac_b + (3. - 2. * self.frac_b)\
-                    * self._np.sqrt((17.2 * self.omega_m) ** 2 + 1)
+        self.beta_b = 0.5 + self.frac_b + (3. - 2. * self.frac_b) * self._np.sqrt((17.2 * self.omega_m) ** 2 + 1)
 
     def _rescale_sigma8(self):
-        """Rescale power spectrum to the provided ``sigma8`` normalisation  at :math:`z = 0`.
-
-        Returns
-        -------
-        _rsigma8 : float
-            Rescaling factor.
-        """
+        """Rescale perturbative quantities to match input sigma8."""
         if getattr(self, '_rsigma8', None) is not None:
             return self._rsigma8
         self._rsigma8 = 1.
@@ -150,13 +123,8 @@ class Background(DefaultBackground):
             Redshifts.
 
         znorm : float, default=None
-            If provided, growth factor is normalized as
-            ``(1 + znorm) / (1 + z)`` in the matter domination era.
+            If provided, growth factor is normalized as ``(1 + znorm) / (1 + z)`` in the matter domination era.
             Else, growth_factor is normalized to 1 at ``z = 0``.
-
-        Returns
-        -------
-        array_like : Growth factor at redshift `z`
 
         References
         ----------
@@ -164,11 +132,7 @@ class Background(DefaultBackground):
         https://ui.adsabs.harvard.edu/abs/1992ARA%26A..30..499C/abstract, eq. 29
         """
         def growth(z):
-            return 1. / (1 + z) * 5 * self.Omega_m(z) /2.\
-                /(
-                self.Omega_m(z)**(4. / 7.) - self.Omega_de(z)
-                + (1. + self.Omega_m(z) / 2.) * (1 + self.Omega_de(z) / 70.)
-                )
+            return 1. / (1 + z) * 5 * self.Omega_m(z) / 2. / (self.Omega_m(z)**(4. / 7.) - self.Omega_de(z) + (1. + self.Omega_m(z) / 2.) * (1 + self.Omega_de(z) / 70.))
 
         growthz = growth(z)
         if znorm is not None:
@@ -180,15 +144,6 @@ class Background(DefaultBackground):
         """
         Approximation of growth rate.
 
-        Parameters
-        ----------
-        z : array_like
-            Redshifts.
-
-        Returns
-        -------
-        array_like : Growth rate at redshift ``z``
-
         References
         ----------
         https://arxiv.org/abs/astro-ph/0507263
@@ -199,22 +154,9 @@ class Background(DefaultBackground):
 
 @utils.addproperty('rs_drag', 'z_drag')
 class Thermodynamics(BaseSection):
-    """
-    Calculate redshift and sound horizon at drag epoch.
-    using numerical fit from Eisenstein & Hu 1998.
 
-    References
-    ----------
-    https://arxiv.org/abs/astro-ph/9709112 eq.4 & 5
-    """
     def __init__(self, engine):
-        """
-        Initialize :class:`Thermodynamics`.
-
-        Parameters
-        ----------
-        engine : 'eisenstein_hu'
-        """
+        """Initialize :class:`Thermodynamics`."""
         super().__init__(engine)
         self._rs_drag = engine.rs_drag * engine['h']
         self._z_drag = engine.z_drag
@@ -222,16 +164,9 @@ class Thermodynamics(BaseSection):
 
 @utils.addproperty('k_pivot', 'n_s', 'alpha_s', 'beta_s')
 class Primordial(BaseSection):
-    """Calculate Primordial power spectrum."""
 
     def __init__(self, engine):
-        """
-        Initialize :class:`Primordial`.
-
-        Parameters
-        ----------
-        engine : 'eisenstein_hu'
-        """
+        """Initialize :class:`Primordial`."""
         super().__init__(engine)
         self._h = engine['h']
         self._A_s = engine._A_s
@@ -243,38 +178,22 @@ class Primordial(BaseSection):
 
     @property
     def A_s(self):
-        r"""
-        Scalar amplitude of the primordial power spectrum
-        at :math:`k_\mathrm{pivot}`, unitless.
-
-        Returns
-        -------
-        float : :math:`A_s`
-        """
+        r"""Scalar amplitude of the primordial power spectrum at :math:`k_\mathrm{pivot}`, unitless."""
         return self._A_s * self._rsigma8**2
 
     @property
     def ln_1e10_A_s(self):
-        r"""
-        :math:`\ln(10^{10}A_s)`, unitless.
-
-        Returns
-        -------
-        float : :math:`\ln(10^{10}A_s)`
-        """
+        r""":math:`\ln(10^{10}A_s)`, unitless."""
         return np.log(1e10 * self.A_s)
 
     def pk_k(self, k, mode='scalar'):
         r"""
-        The primordial spectrum of curvature perturbations at ``k``,
-        generated by inflation, in :math:`(\mathrm{Mpc}/h)^{3}`.
+        The primordial spectrum of curvature perturbations at ``k``, generated by inflation, in :math:`(\mathrm{Mpc}/h)^{3}`.
         For scalar perturbations this is e.g. defined as:
 
         .. math::
 
-            \mathcal{P_R}(k) = A_s \left (\frac{k}{k_\mathrm{pivot}} \right )^
-            {n_s - 1 + 1/2 \alpha_s \ln(k/k_\mathrm{pivot}) +
-            1/6 \beta_s \ln(k/k_\mathrm{pivot})^2}
+            \mathcal{P_R}(k) = A_s \left (\frac{k}{k_\mathrm{pivot}} \right )^{n_s - 1 + 1/2 \alpha_s \ln(k/k_\mathrm{pivot}) + 1/6 \beta_s \ln(k/k_\mathrm{pivot})^2}
 
         See also: eq. 2 of `this reference <https://arxiv.org/abs/1303.5076>`_.
 
@@ -284,17 +203,16 @@ class Primordial(BaseSection):
             Wavenumbers, in :math:`h/\mathrm{Mpc}`.
 
         mode : string, default='scalar'
-            `scalar` mode.
+            'scalar' mode.
 
         Returns
         -------
         pk : array
             The primordial power spectrum.
         """
-        # index = ['scalar'].index(mode) # only scalar mode implemented
+        index = ['scalar'].index(mode)
         lnkkp = self._np.log(k / self.k_pivot)
-        return self._h**3 * self.A_s * (k / self.k_pivot) **\
-            (self.n_s - 1. + 1. / 2. * self.alpha_s * lnkkp + 1. / 6. * self.beta_s * lnkkp**2)
+        return self._h**3 * self.A_s * (k / self.k_pivot) ** (self.n_s - 1. + 1. / 2. * self.alpha_s * lnkkp + 1. / 6. * self.beta_s * lnkkp**2)
 
     def pk_interpolator(self, mode='scalar'):
         """
@@ -303,31 +221,21 @@ class Primordial(BaseSection):
         Parameters
         ----------
         mode : string, default='scalar'
-            `scalar', `vector' or `tensor' mode.
+            'scalar', 'vector' or 'tensor' mode.
 
         Returns
         -------
-        PowerSpectrumInterpolator1D : 1D Power spectrum interpolator of `scalar` perturbations.
+        interp : PowerSpectrumInterpolator1D
         """
-        return PowerSpectrumInterpolator1D.from_callable(
-            pk_callable=lambda k: self.pk_k(k, mode=mode))
+        return PowerSpectrumInterpolator1D.from_callable(pk_callable=lambda k: self.pk_k(k, mode=mode))
 
 
 class Transfer(BaseSection):
-    """
-    Eisenstein & Hu matter transfer function.
-    Calculates transfer function with BAO wiggles.
-
-    References
-    ----------
-    https://arxiv.org/abs/astro-ph/9709112
-    """
 
     def __init__(self, engine):
         super().__init__(engine)
         self._h = engine['h']
-        for name in ['k_eq', 'k_silk', 'rs_drag', 'beta_node', 'beta_c',
-                     'alpha_c', 'alpha_b', 'beta_b', 'k_silk', 'frac_b']:
+        for name in ['k_eq', 'k_silk', 'rs_drag', 'beta_node', 'beta_c', 'alpha_c', 'alpha_b', 'beta_b', 'k_silk', 'frac_b']:
             setattr(self, '_' + name, getattr(engine, name))
 
     def transfer_k(self, k):
@@ -368,8 +276,7 @@ class Transfer(BaseSection):
         # EH eq. 21
         T_b_T0 = T0(T_c_ln_nobeta, T_c_C_noalpha)
         T_b_1 = T_b_T0 / (1 + (ks / 5.2)**2)
-        T_b_2 = self._alpha_b / (1 + (self._beta_b / ks)**3)\
-            * self._np.exp(-(k / self._k_silk) ** 1.4)
+        T_b_2 = self._alpha_b / (1 + (self._beta_b / ks)**3) * self._np.exp(-(k / self._k_silk) ** 1.4)
         T_b = self._np.sinc(ks_tilde / np.pi) * (T_b_1 + T_b_2)
 
         # EH eq. 16
@@ -377,9 +284,6 @@ class Transfer(BaseSection):
 
 
 class Fourier(BaseSection):
-    """Class for Fourier-space quantities using eisenstein_hu engine.
-    Calculates matter power spectrum, r.m.s of the perturbations in spheres of r.
-    """
 
     def __init__(self, engine):
         super().__init__(engine)
@@ -395,20 +299,14 @@ class Fourier(BaseSection):
         Parameters
         ----------
         of : string, tuple
-            Perturbed quantities: `delta_m', `theta_m`.
+            Perturbed quantities: 'delta_m', 'theta_m'.
             No distinction is made between baryons and CDM.
-            Requesting velocity divergence ``theta_xx`` will rescale the power spectrum
-            by the growth rate as a function of ``z``.
+            Requesting velocity divergence 'theta_xx' will rescale the power spectrum by the growth rate as a function of ``z``.
 
         kwargs : dict
             Arguments for :class:`PowerSpectrumInterpolator2D`.
-
-        Returns
-        -------
-        PowerspectrumInterpolator2D : 2D Power spectrum interpolator of ``of`` perturbations.
         """
-        if isinstance(of, str):
-            of = (of,)
+        if isinstance(of, str): of = (of,)
         of = list(of)
         of = of + [of[0]] * (2 - len(of))
 
@@ -421,87 +319,24 @@ class Fourier(BaseSection):
                 return ba.growth_factor(z, znorm=0.)**2
 
         def pk_callable(ba, pm, tr, k):
-            potential_to_density = (3. * ba.Omega0_m * 100**2 /\
-                                    (2. * (constants.c / 1e3)**2 * k**2)) ** (-2)
+            potential_to_density = (3. * ba.Omega0_m * 100**2 / (2. * (constants.c / 1e3)**2 * k**2)) ** (-2)
             curvature_to_potential = 9. / 25. * 2. * np.pi**2 / k**3 / ba.h ** 3
-            return tr.transfer_k(k) **\
-                2 * potential_to_density * curvature_to_potential * pm.pk_k(k)
+            return tr.transfer_k(k) ** 2 * potential_to_density * curvature_to_potential * pm.pk_k(k)
 
         from .jax import Partial
 
-        return PowerSpectrumInterpolator2D.from_callable(
-            pk_callable=Partial(pk_callable, self.ba, self.pm, self.tr),
-            growth_factor_sq=Partial(growth_factor_sq, self.ba), **kwargs
-            )
+        return PowerSpectrumInterpolator2D.from_callable(pk_callable=Partial(pk_callable, self.ba, self.pm, self.tr),
+                                                         growth_factor_sq=Partial(growth_factor_sq, self.ba), **kwargs)
 
     def sigma_rz(self, r, z, of='delta_m', **kwargs):
-        r"""
-        Return the r.m.s. of ``of`` perturbations in a sphere of :math:`r`, i.e.:
-
-        .. math::
-
-            \sigma_{r}(z) = \sqrt{\frac{1}{2 \pi^{2}} \int dk k^{2} P(k, z) W^{2}(kr)}
-
-        No distinction is made between baryons and CDM.
-
-        Parameters
-        ----------
-        r : array_like
-            Radii in :math:`\mathrm{Mpc}/h`.
-        z : array_like
-            Redshifts.
-        of : string, tuple
-            Perturbed quantities: `delta_m`, `theta_m`.
-            No distinction is made between baryons and CDM.
-        kwargs : dict
-            Arguments for :class:`PowerSpectrumInterpolator2D`.
-
-        Returns
-        -------`
-        array_like : r.m.s. of ```of`` perturbations
-        in sphere of ``r`` at redshift ``z``.
-
-        Notes
-        -----
-        The returned array has shape `(len(r), len(z))`.
-
-        Examples
-        -----
-        >>> cosEH = fiducial.DESI()
-        >>> cosEH.set_engine('eisenstein_hu')
-        >>> Fourier(cosEH).sigma_rz([7,5],[0,2])
-        array([[0.90337196, 0.3770912 ],
-        [1.11668007, 0.46613161]])
-        """
+        r"""Return the r.m.s. of `of` perturbations in sphere of :math:`r \mathrm{Mpc}/h`. No distinction is made between baryons and CDM."""
         return self.pk_interpolator(of=of, **kwargs).sigma_rz(r, z)
 
     def sigma8_z(self, z, of='delta_m'):
-        r"""Return the r.m.s. of ``of`` perturbations
-        in sphere of :math:`8 \mathrm{Mpc}/h`.
-        No distinction is made between baryons and CDM.
-
-        Parameters
-        ----------
-        z : array_like
-            Redshifts.
-        of : string, tuple
-            Perturbed quantities: `delta_m`, `theta_m`.
-            No distinction is made between baryons and CDM.
-
-        Returns
-        -------
-        array-like : r.m.s. of `of` perturbations at redshift `z`
-        in sphere of :math:`8 \mathrm{Mpc}/h`.
-            """
+        r"""Return the r.m.s. of `of` perturbations in sphere of :math:`8 \mathrm{Mpc}/h`. No distinction is made between baryons and CDM."""
         return self.sigma_rz(8., z, of=of)
 
     @property
     def sigma8_m(self):
-        r"""Current r.m.s. of matter perturbations
-        in a sphere of :math:`8 \mathrm{Mpc}/h`, unitless.
-
-        Returns
-        -------
-        float : :math:`\sigma_8` at redshift 0.
-        """
+        r"""Current r.m.s. of matter perturbations in a sphere of :math:`8 \mathrm{Mpc}/h`, unitless."""
         return self.sigma8_z(0., of='delta_m')
