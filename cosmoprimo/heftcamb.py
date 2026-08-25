@@ -101,6 +101,71 @@ HILLVALLEY_FLAG = 12
 BRAIDING_EFTCAMB_OVER_HICLASS = -0.5
 
 
+# ----------------------------------------------------------------------
+# Closed forms of the hill/valley parametrization, arXiv:1904.12903.
+#
+# Same expressions as mochi-class' gravity_models_hill_valley_smg()
+# (gravity_smg/gravity_models_smg.c), evaluated through x = exp(-|u|) in
+# [0, 1] rather than through y = (a/a_t)^tau, since y overflows for large
+# tau while x underflows to zero -- which is the correct general
+# relativity limit (alpha_M -> 0, M_*^2 -> const) at the very small scale
+# factors where the background integration starts.
+# ----------------------------------------------------------------------
+
+def _hill_valley_sech2_tanh(a, tau, a_t):
+    """``sech^2(u)`` and ``tanh(u)`` for ``u = (tau / 2) ln(a / a_t)``, overflow-free."""
+    a = np.asarray(a, dtype='f8')
+    u = 0.5 * tau * np.log(a / a_t)
+    x2 = np.exp(-2. * np.abs(u))          # = exp(-2|u|), in [0, 1]
+    opx2 = 1. + x2
+    sech2 = 4. * x2 / opx2**2
+    tanh = np.sign(u) * (1. - x2) / opx2
+    return sech2, tanh
+
+
+def hill_valley_alpha_M(a, c_M, tau, a_t):
+    r"""
+    Hill/valley running of the Planck mass, eq. (6) of `arXiv:1904.12903
+    <https://arxiv.org/abs/1904.12903>`_:
+
+    .. math:: \alpha_M(a) = c_M \frac{\tanh u}{\cosh^2 u}, \qquad u = \frac{\tau}{2} \ln \frac{a}{a_t}.
+
+    The extrema are :math:`\pm 0.385 c_M`, at :math:`a = a_t (2 \pm \sqrt{3})^{1/\tau}`, so the
+    amplitude of :math:`\alpha_M` is *not* :math:`|c_M|`.
+    """
+    sech2, tanh = _hill_valley_sech2_tanh(a, tau, a_t)
+    return c_M * tanh * sech2
+
+
+def hill_valley_M2(a, c_M, tau, a_t, M2_ini=1.):
+    r"""
+    Effective Planck mass squared of the hill/valley model, the exact integral of
+    :func:`hill_valley_alpha_M`, eq. (10) of `arXiv:1904.12903
+    <https://arxiv.org/abs/1904.12903>`_:
+
+    .. math:: M_\ast^2(a) = M_{\ast,\mathrm{ini}}^2 \exp\left[-\frac{c_M}{\tau} \mathrm{sech}^2 u\right],
+
+    normalised so that :math:`M_\ast^2 \to M_{\ast,\mathrm{ini}}^2` as :math:`a \to 0`, which is
+    the normalisation mochi-class uses and the one ``1 + RPH_M0`` sets on the HEFTCAMB side while
+    ``RPHintegratefromtoday`` is False.
+    """
+    sech2, _ = _hill_valley_sech2_tanh(a, tau, a_t)
+    return M2_ini * np.exp(-c_M / tau * sech2)
+
+
+# How much of the Planck-mass running may already have happened by the time EFTCAMB switches the
+# EFT sector on in the perturbations, before :meth:`HEFTCAMBEngine._check_turn_on_time` complains.
+# The induced error on sigma8 is roughly this offset times ~1.2 (measured, see that method), so
+# 1e-4 keeps it an order of magnitude below the ~0.02% CLASS-vs-CAMB floor.
+TURN_ON_M2_OFFSET_TOLERANCE = 1.e-4
+
+# Empirical lower end of the usable EFTCAMB_turn_on_time range: at 1e-5 the EFT turn-on precedes
+# the start of the thermodynamics grid and the run returns a wrong power spectrum *without*
+# raising (measured: +2.2% on sigma8_cb where +0.025% was correct). This is a property of the
+# build and of the thermodynamics sampling rather than of the model, so it is only a warning.
+TURN_ON_TIME_MIN = 1.e-4
+
+
 def _designer_normalisation_is_reliable(camb):
     """Whether this HEFTCAMB build normalises the RPH designer background correctly.
 
@@ -369,8 +434,40 @@ class HEFTCAMBEngine(CambEngine):
                      parameters_smg='1., 1., 1., 0., 1.',
                      expansion_model='wowa', expansion_smg='0.685, -0.9, -0.5')
 
-    The braiding is converted by ``BRAIDING_EFTCAMB_OVER_HICLASS``; the raw
-    ``RPHbraiding_ODE0`` etc. remain available for EFTCAMB-convention input.
+    More generally, mochi-class's own ``gravity_model`` / ``parameters_smg`` pair is
+    accepted directly, for the models listed in ``_PARAMETERS_SMG_NAMES``
+    (``'propto_omega'``, and ``'hill_valley'`` aka ``'no_slip_gravity'``). Then the
+    *identical* model arguments go to either engine::
+
+        common = dict(gravity_model='hill_valley',
+                      # alpha_K, c_M, tau, a_t, r, M*^2_ini
+                      parameters_smg=[1e-4, -0.05, 1., 0.5, 2., 1.],
+                      w0_fld=-0.9, wa_fld=0.36)
+        DESI(engine='heftcamb', **common)
+        DESI(engine='mochiclass', Omega_Lambda=0, Omega_fld=0, Omega_smg=-1,
+             expansion_model='wowa', expansion_smg=[0.68, -0.9, 0.36], **common)
+
+    ``parameters_smg`` may be a sequence or mochi-class's comma-separated string.
+    The keyword form ``hill_valley=dict(alpha_K=..., c_M=..., tau=..., a_t=..., r=...,
+    M2_ini=...)`` is equivalent and does not depend on entry order.
+
+    **Conventions are the engine's job, not the caller's.** The braiding differs by
+    ``BRAIDING_EFTCAMB_OVER_HICLASS = -0.5`` between the two codes, and every
+    hi_class-convention entry point above applies it internally
+    (:meth:`_braiding_hiclass_to_eftcamb`) -- for ``propto_omega``'s ``c_B`` and for
+    hill/valley's ``alpha_B = -r alpha_M`` alike. Nothing outside this module should
+    multiply a braiding by -1/2. Reading it back out, :meth:`Background._eft_of_de_at_eta`
+    undoes the factor, so ``alpha_B`` is reported in the hi_class convention too.
+    The raw ``RPHbraiding_ODE0`` / ``RPHbraiding_cM`` etc. remain available for input
+    that is already in the EFTCAMB convention.
+
+    One numerical switch does *not* have a safe default for every model:
+    ``EFTCAMB_turn_on_time``, the scale factor at which the EFT sector enters the
+    perturbation equations. CAMB's default of 1e-2 is far too late for the
+    hill/valley shape and costs ~1% on the linear power spectrum;
+    :meth:`_check_turn_on_time` warns about that, and about the silently wrong
+    results returned when it is pushed too early. Pass
+    ``heftcamb_check_turn_on=False`` to silence it.
     """
 
     name = "heftcamb"
@@ -490,6 +587,7 @@ class HEFTCAMBEngine(CambEngine):
         "heftcamb_map_w0wa",
         "heftcamb_gr_growth",
         "heftcamb_check_designer",
+        "heftcamb_check_turn_on",
         "RPH_massP0",
         "RPH_braiding0",
         "RPH_kinetic0",
@@ -498,6 +596,24 @@ class HEFTCAMBEngine(CambEngine):
         "c_M",
         "c_T",
         "M2_ini",
+        "gravity_model",
+        "parameters_smg",
+        "hill_valley",
+    ]
+
+    # Wrapper-only *options* (as opposed to model description). These are popped from kwargs in
+    # __init__ and stashed on self, which on its own does not survive Cosmology.clone(): clone
+    # rebuilds the engine from the previous engine's _extra_params, and _set_camb() has by then
+    # stripped every wrapper-private key from it. Since AbacusSummit / DESI clone internally, an
+    # option passed by the user would silently revert to its default. They are therefore put back
+    # into _extra_params once CAMB has been configured; see the end of __init__.
+    _wrapper_option_keys = [
+        "eftcamb_print_header",
+        "heftcamb_debug",
+        "heftcamb_map_w0wa",
+        "heftcamb_gr_growth",
+        "heftcamb_check_designer",
+        "heftcamb_check_turn_on",
     ]
 
     # hi_class / mochi-class alpha-basis arguments -> the RPH flags they set.
@@ -508,10 +624,26 @@ class HEFTCAMBEngine(CambEngine):
         "c_T": "RPHtensor_ODE0",
     }
 
+    # mochi-class ``gravity_model`` values this engine knows how to translate, mapped to the
+    # names of the ``parameters_smg`` entries they take, in mochi-class' order. See
+    # gravity_smg/gravity_models_smg.c.
+    _PARAMETERS_SMG_NAMES = {
+        "propto_omega": ("c_K", "c_B", "c_M", "c_T", "M2_ini"),
+        "hill_valley": ("alpha_K", "c_M", "tau", "a_t", "r", "M2_ini"),
+    }
+
+    # mochi-class accepts 'no_slip_gravity' as an alias of 'hill_valley'.
+    _GRAVITY_MODEL_ALIASES = {"no_slip_gravity": "hill_valley"}
+
     def __init__(self, *args, **kwargs):
         # ------------------------------------------------------------
         # Wrapper-only options
         # ------------------------------------------------------------
+        # Remember which ones the caller actually gave, so they can be restored into
+        # _extra_params below and survive a later clone(); see _wrapper_option_keys.
+        wrapper_options = {name: kwargs[name] for name in self._wrapper_option_keys
+                           if name in kwargs}
+
         eftcamb_params = kwargs.pop("eftcamb_params", None)
         eftcamb_print_header = kwargs.pop("eftcamb_print_header", False)
         heftcamb_debug = kwargs.pop("heftcamb_debug", eftcamb_print_header)
@@ -529,11 +661,15 @@ class HEFTCAMBEngine(CambEngine):
         # Whether to probe the build for the RPH designer normalisation bug.
         heftcamb_check_designer = kwargs.pop("heftcamb_check_designer", True)
 
+        # Whether to check EFTCAMB_turn_on_time against the model (see _check_turn_on_time).
+        heftcamb_check_turn_on = kwargs.pop("heftcamb_check_turn_on", True)
+
         # Stash on self: _set_camb() runs inside super().__init__().
         self._heftcamb_debug = bool(heftcamb_debug)
         self._heftcamb_map_w0wa = bool(heftcamb_map_w0wa)
         self._heftcamb_gr_growth = bool(heftcamb_gr_growth)
         self._heftcamb_check_designer = bool(heftcamb_check_designer)
+        self._heftcamb_check_turn_on = bool(heftcamb_check_turn_on)
         self._pruned_rph_params = {}
 
         # The alpha basis given as extra_params has to be stashed here: the
@@ -542,6 +678,14 @@ class HEFTCAMBEngine(CambEngine):
         self._alpha_basis_kwargs = {
             name: kwargs[name]
             for name in list(self._ALPHA_BASIS_KEYS) + ["c_B", "M2_ini"]
+            if kwargs.get(name, None) is not None}
+
+        # Same for the mochi-class-style (gravity_model, parameters_smg) entry point, which lets
+        # the very same arguments describe the same model on either engine; every convention
+        # factor (the braiding in particular) is applied by _apply_gravity_model().
+        self._gravity_model_kwargs = {
+            name: kwargs[name]
+            for name in ("gravity_model", "parameters_smg", "hill_valley")
             if kwargs.get(name, None) is not None}
 
         # Convenience aliases.
@@ -591,6 +735,10 @@ class HEFTCAMBEngine(CambEngine):
         # Remember whether flag 12 was asked for, so that a failure can be
         # attributed to a HEFTCAMB build without the hill/valley parametrization.
         self._hillvalley_in_kwargs = False
+        gravity_model = self._gravity_model_kwargs.get("gravity_model", None)
+        if "hill_valley" in self._gravity_model_kwargs or gravity_model in (
+                "hill_valley", "no_slip_gravity"):
+            self._hillvalley_in_kwargs = True
         for flag_name, _ in _RPH_ALPHA_BRANCHES:
             try:
                 if int(kwargs.get(flag_name, 0)) == HILLVALLEY_FLAG:
@@ -607,6 +755,12 @@ class HEFTCAMBEngine(CambEngine):
             super().__init__(*args, **kwargs)
         except Exception as exc:
             raise self._annotate_init_error(exc) from exc
+
+        # CAMB has been configured by now (CambEngine.__init__ ran _set_camb() and then built
+        # its parameter dictionary), so the wrapper-only options can go back into _extra_params
+        # without reaching camb.set_params. This is what lets them survive Cosmology.clone().
+        if wrapper_options and hasattr(self, "_extra_params"):
+            self._extra_params.update(wrapper_options)
 
         # read_parameters() is cached Python-side; clear before debug.
         self._clear_eftcamb_read_cache()
@@ -708,9 +862,150 @@ class HEFTCAMBEngine(CambEngine):
             if name in basis:
                 target[flag] = float(basis[name])
         if 'c_B' in basis:
-            target['RPHbraiding_ODE0'] = BRAIDING_EFTCAMB_OVER_HICLASS * float(basis['c_B'])
+            target['RPHbraiding_ODE0'] = self._braiding_hiclass_to_eftcamb(basis['c_B'])
         if 'M2_ini' in basis:
             target['RPH_M0'] = float(basis['M2_ini']) - 1.
+
+    @staticmethod
+    def _braiding_hiclass_to_eftcamb(alpha_B):
+        r"""Convert a braiding amplitude from the hi_class / mochi-class convention to EFTCAMB's.
+
+        :math:`\alpha_B^{\rm EFTCAMB} = -\tfrac{1}{2} \alpha_B^{\rm hi\_class}`
+        (:data:`BRAIDING_EFTCAMB_OVER_HICLASS`). This is the single place the factor is applied
+        on input, so that no caller outside this module has to know about it; the inverse is
+        applied on output in :meth:`Background._eft_of_de_at_eta`.
+        """
+        return BRAIDING_EFTCAMB_OVER_HICLASS * float(alpha_B)
+
+    def _collect_gravity_model(self):
+        """Pick up ``gravity_model`` / ``parameters_smg`` / ``hill_valley`` from wherever they came.
+
+        These may arrive as ``extra_params`` (i.e. keyword arguments of this engine) or as
+        top-level :class:`~cosmoprimo.cosmology.Cosmology` parameters, exactly like the
+        ``c_K``/``c_B``/... alpha basis; see :meth:`_collect_alpha_basis`.
+        """
+        toret = dict(getattr(self, '_gravity_model_kwargs', {}))
+        for name in ('gravity_model', 'parameters_smg', 'hill_valley'):
+            for container in (getattr(self, '_extra_params', {}), getattr(self, '_params', {})):
+                value = container.get(name, None)
+                if value is not None:
+                    toret[name] = value
+        return toret
+
+    @classmethod
+    def _parse_parameters_smg(cls, gravity_model, parameters_smg):
+        """Turn mochi-class' ``(gravity_model, parameters_smg)`` into a named dict.
+
+        ``parameters_smg`` is accepted either as a sequence or as the comma-separated string
+        mochi-class itself takes, so that the very same arguments can be handed to either engine.
+        """
+        model = cls._GRAVITY_MODEL_ALIASES.get(gravity_model, gravity_model)
+        if model not in cls._PARAMETERS_SMG_NAMES:
+            raise CosmologyInputError(
+                "gravity_model = {!r} is not one the 'heftcamb' engine can translate; "
+                "it knows {}. Set the RPH flags directly for anything else.".format(
+                    gravity_model, sorted(cls._PARAMETERS_SMG_NAMES) + sorted(cls._GRAVITY_MODEL_ALIASES)))
+        names = cls._PARAMETERS_SMG_NAMES[model]
+        if isinstance(parameters_smg, str):
+            values = [item for item in parameters_smg.replace(',', ' ').split() if item]
+        else:
+            values = list(np.atleast_1d(parameters_smg).ravel())
+        if len(values) != len(names):
+            raise CosmologyInputError(
+                "gravity_model = {!r} takes {:d} parameters_smg entries ({}), got {:d}".format(
+                    gravity_model, len(names), ', '.join(names), len(values)))
+        return model, {name: float(value) for name, value in zip(names, values)}
+
+    def _apply_gravity_model(self, spec):
+        """Translate a mochi-class gravity model into the RPH flags, conventions included.
+
+        This is what lets the same physical model be written the same way on both engines::
+
+            common = dict(gravity_model='hill_valley',
+                          parameters_smg=[1e-4, -0.05, 1., 0.5, 2., 1.],
+                          w0_fld=-0.9, wa_fld=0.36)
+            DESI(engine='heftcamb', **common)
+            DESI(engine='mochiclass', Omega_Lambda=0, Omega_fld=0, Omega_smg=-1,
+                 expansion_model='wowa', expansion_smg=[0.68, -0.9, 0.36], **common)
+
+        In particular the braiding convention factor (:data:`BRAIDING_EFTCAMB_OVER_HICLASS`) is
+        applied here rather than left to the caller. The raw ``RPHbraiding_*`` flags remain
+        available for input that is already in the EFTCAMB convention.
+        """
+        if not spec:
+            return
+        if 'hill_valley' in spec:
+            model, parameters = 'hill_valley', dict(spec['hill_valley'])
+            names = self._PARAMETERS_SMG_NAMES['hill_valley']
+            missing = [name for name in names if name not in parameters]
+            if missing:
+                raise CosmologyInputError(
+                    "hill_valley is missing {}; it takes {}".format(
+                        ', '.join(missing), ', '.join(names)))
+            parameters = {name: float(parameters[name]) for name in names}
+        else:
+            if 'gravity_model' not in spec:
+                raise CosmologyInputError(
+                    "parameters_smg was given without gravity_model, so there is no way to know "
+                    "what the entries mean")
+            if 'parameters_smg' not in spec:
+                raise CosmologyInputError(
+                    "gravity_model = {!r} was given without parameters_smg".format(spec['gravity_model']))
+            model, parameters = self._parse_parameters_smg(spec['gravity_model'], spec['parameters_smg'])
+
+        if model == 'propto_omega':
+            # Same five numbers as the c_K/c_B/c_M/c_T/M2_ini alpha basis.
+            self._apply_alpha_basis(parameters)
+            return
+
+        # --- hill/valley, mochi-class' gravity_model = 'hill_valley' ---------------------------
+        # alpha_M(a) = c_M tanh(u) / cosh^2(u), u = (tau/2) ln(a/a_t), alpha_B = -r alpha_M,
+        # alpha_T = 0, alpha_K constant, M_*^2 -> M2_ini as a -> 0.
+        alpha_K = parameters['alpha_K']
+        c_M, tau, a_t, r, M2_ini = (parameters['c_M'], parameters['tau'], parameters['a_t'],
+                                    parameters['r'], parameters['M2_ini'])
+        # mochi-class raises on these, so raise here too rather than let EFTCAMB produce numbers.
+        if not tau > 0.:
+            raise CosmologyInputError(
+                "hill_valley: tau = {:g}, but tau > 0 is required to recover general relativity at "
+                "early times (see arXiv:1904.12903). Note that (c_M, tau) -> (-c_M, -tau) leaves "
+                "alpha_M unchanged, so use the tau > 0 branch.".format(tau))
+        if not a_t > 0.:
+            raise CosmologyInputError(
+                "hill_valley: a_t = {:g}, but the transition scale factor must be positive.".format(a_t))
+        if not M2_ini > 0.:
+            raise CosmologyInputError(
+                "hill_valley: M_*^2_ini = {:g}, but the early-time Planck mass squared must be "
+                "positive.".format(M2_ini))
+
+        self._hillvalley_in_kwargs = True
+        target = self._extra_params if hasattr(self, '_extra_params') else self._params
+        target.update({
+            # M_*^2 is integrated up from the early universe, where it equals M2_ini.
+            'RPHusealphaM': True,
+            'RPHintegratefromtoday': False,
+            'RPH_M0': M2_ini - 1.,
+            # alpha_M: the hill/valley shape itself.
+            'RPHalphaMmodel': HILLVALLEY_FLAG,
+            'RPHalphaM_cM': c_M,
+            'RPHalphaM_tau': tau,
+            'RPHalphaM_at': a_t,
+            'RPHalphaMmodel_ODE': 0,
+            # alpha_B = -r alpha_M in the hi_class convention. EFTCAMB stores -1/2 of that, so it
+            # is the same shape function again, with the amplitude converted here.
+            'RPHbraidingmodel': HILLVALLEY_FLAG,
+            'RPHbraiding_cM': self._braiding_hiclass_to_eftcamb(-r * c_M),
+            'RPHbraiding_tau': tau,
+            'RPHbraiding_at': a_t,
+            'RPHbraidingmodel_ODE': 0,
+            # alpha_K is a constant in mochi-class' hill_valley, not proportional to Omega_DE.
+            'RPHkineticitymodel': 1,
+            'RPHkineticity0': alpha_K,
+            'RPHkineticitymodel_ODE': 0,
+            # alpha_T = 0 after GW170817.
+            'RPHtensormodel': 0,
+            'RPHtensormodel_ODE': 0,
+        })
 
     def _resolve_default_param_conflicts(self):
         """Let explicit ``extra_params`` win over untouched class defaults.
@@ -810,6 +1105,89 @@ class HEFTCAMBEngine(CambEngine):
         self._extra_params['RPHwDE'] = 2   # CPL
         self._extra_params['RPHw0'] = w0
         self._extra_params['RPHwa'] = wa
+
+    def _check_turn_on_time(self):
+        """Warn when the EFT perturbation turn-on time does not suit the model being run.
+
+        ``EFTCAMB_back_turn_on`` starts the EFT integration of the *background*;
+        ``EFTCAMB_turn_on_time`` is a separate switch deciding when the EFT sector enters the
+        *perturbation* equations. Before it, EFTCAMB evolves plain general relativity, so any
+        Planck-mass running that has already happened by then is never applied to the
+        perturbations -- while hi_class / mochi-class applies it from the start. The two codes
+        then disagree even though they agree on the background, on the alpha functions, and on
+        h1 / h3 / h5.
+
+        For ``alpha_X(a) = c_X Omega_DE(a)`` the alphas are negligible in the early universe and
+        CAMB's default of 1e-2 costs nothing, which is why it is the default. For the hill/valley
+        shape it is not negligible: with (c_M, tau, a_t) = (-0.05, 1, 0.5) the Planck mass has
+        already run to M_*^2 = 1.0039 by a = 1e-2, and on the DESI fiducial cosmology that shows
+        up as a 1.07% error on the linear P_cb(k) against a 0.18% CLASS-vs-CAMB floor, and +0.48%
+        on sigma8_cb. Lowering the turn-on to 1e-4 brings it to +0.025%, i.e. below the floor::
+
+            turn_on   M_*^2 there   sigma8_cb error
+              1e-2      1.003852        +0.476 %
+              1e-3      1.000398        +0.060 %
+              1e-4      1.000040        +0.025 %   <- GR floor is +0.024 %
+              1e-5      1.000004        +2.247 %   <- silently wrong, see below
+
+        The induced error tracks ``M_*^2(a_on) - 1``, the growth suppression that is skipped,
+        which is what is tested here against :data:`TURN_ON_M2_OFFSET_TOLERANCE`.
+
+        Going too early is the other failure mode and is worse, because it does not raise: below
+        about :data:`TURN_ON_TIME_MIN` the EFT turn-on precedes the start of the thermodynamics
+        grid and the run returns a wrong spectrum. Both bounds are checked.
+
+        Only the hill/valley branch is tested, since that is the one whose M_*^2 has a closed
+        form here; nothing is guessed for other parametrizations. Pass
+        ``heftcamb_check_turn_on=False`` to silence.
+        """
+        if not getattr(self, '_heftcamb_check_turn_on', True):
+            return
+        if not self._eftcamb_drives_background():
+            return
+        try:
+            turn_on = float(self._rph_setting('EFTCAMB_turn_on_time', 1.e-2))
+        except (TypeError, ValueError):
+            return
+        if not turn_on > 0.:
+            return
+
+        if turn_on < TURN_ON_TIME_MIN:
+            warnings.warn(
+                "HEFTCAMBEngine: EFTCAMB_turn_on_time = {:g} is below {:g}, where the EFT sector "
+                "is switched on in the perturbations before the thermodynamics grid begins. "
+                "EFTCAMB does not raise on this; it returns a wrong power spectrum (measured: "
+                "+2.2% on sigma8_cb where +0.025% was correct). Scan this switch rather than "
+                "pushing it as early as possible. Pass heftcamb_check_turn_on=False to silence."
+                .format(turn_on, TURN_ON_TIME_MIN))
+            return
+
+        # Only the hill/valley alpha_M branch has a closed-form M_*^2 to test against.
+        try:
+            if int(self._rph_setting('RPHalphaMmodel', 0)) != HILLVALLEY_FLAG:
+                return
+            if not bool(self._rph_setting('RPHusealphaM', True)):
+                return
+            c_M = float(self._rph_setting('RPHalphaM_cM', 0.))
+            tau = float(self._rph_setting('RPHalphaM_tau', 1.))
+            a_t = float(self._rph_setting('RPHalphaM_at', 0.5))
+        except (TypeError, ValueError):
+            return
+        if not (c_M and tau > 0. and a_t > 0.):
+            return
+
+        offset = float(hill_valley_M2(turn_on, c_M, tau, a_t)) - 1.
+        if abs(offset) <= TURN_ON_M2_OFFSET_TOLERANCE:
+            return
+        warnings.warn(
+            "HEFTCAMBEngine: EFTCAMB_turn_on_time = {:g} is too late for this hill/valley model. "
+            "By then M_*^2 = {:.6f}, i.e. {:+.3f}% of the Planck-mass running has already "
+            "happened, and EFTCAMB evolves all of it in general relativity while hi_class / "
+            "mochi-class does not; expect roughly that much error on sigma8 and twice it on "
+            "P(k). Lower it, e.g. extra_params={{'eftcamb_params': {{'EFTCAMB_turn_on_time': "
+            "{:g}}}}}, but do not go below {:g} (see the warning there). Pass "
+            "heftcamb_check_turn_on=False to silence."
+            .format(turn_on, offset + 1., 100. * offset, TURN_ON_TIME_MIN, TURN_ON_TIME_MIN))
 
     def _prune_rph_params(self):
         """Drop RPH shape parameters that the active model flags will not read.
@@ -923,6 +1301,7 @@ class HEFTCAMBEngine(CambEngine):
         # it: c_K/c_B/c_M/c_T/M2_ini are wrapper-private, and they may have
         # arrived either as extra_params or as top-level Cosmology parameters.
         alpha_basis = self._collect_alpha_basis()
+        gravity_model = self._collect_gravity_model()
 
         # Clean only wrapper-private keys.
         # Do NOT remove real EFTCAMB/RPH parameters.
@@ -941,10 +1320,13 @@ class HEFTCAMBEngine(CambEngine):
         # values written into _extra_params win over the untouched class
         # defaults sitting in _params.
         self._apply_alpha_basis(alpha_basis)
+        # After the alpha basis, so that an explicit gravity_model wins over a stray c_B.
+        self._apply_gravity_model(gravity_model)
         self._resolve_default_param_conflicts()
         self._map_w0wa_to_rph()
         self._check_background_consistency()
         self._prune_rph_params()
+        self._check_turn_on_time()
 
         if getattr(self, '_heftcamb_debug', False):
             self._debug_effective_params()
@@ -1021,12 +1403,14 @@ class HEFTCAMBEngine(CambEngine):
             "EFT_additional_priors": bool(EFT_additional_priors),
         }
 
-    @staticmethod
+    @classmethod
     def _build_hillvalley_eftcamb_params(
+        cls,
         *,
         cM=-0.05,
         at=0.5,
         tau=1.0,
+        r=2.0,
         no_slip=True,
         RPH_kinetic0=1.0,
         w0=None,
@@ -1050,14 +1434,21 @@ class HEFTCAMBEngine(CambEngine):
         Stability requires cM < 0, and the extremal amplitude is
         0.385 |cM|, not |cM|.
 
-        With ``no_slip=True`` the braiding is locked to the No Slip Gravity
-        condition alpha_B = -2 alpha_M in the Bellini-Sawicki convention.
-        EFTCAMB stores alpha_B^EFTCAMB = -alpha_B^BS / 2 (see the comment at
-        008p0_Horndeski.f90:1783 and the assignment in 007p2_RPH.f90), so in
-        EFTCAMB's own convention this is alpha_B = +alpha_M: the same
-        functional form with the same three parameters.
+        With ``no_slip=True`` the braiding is locked to alpha_B = -r alpha_M in the
+        Bellini-Sawicki / hi_class convention (eq. 4 of arXiv:1904.12903; r = 2 is
+        No Slip Gravity). EFTCAMB stores alpha_B^EFTCAMB = -alpha_B^BS / 2 (see the
+        comment at 008p0_Horndeski.f90:1783 and the assignment in 007p2_RPH.f90),
+        so the braiding is the same functional form with amplitude
+        +r cM / 2; the conversion is done by
+        :meth:`_braiding_hiclass_to_eftcamb` rather than written out here.
 
         ``w0`` / ``wa`` optionally select a CPL background (RPHwDE = 2).
+
+        Note
+        ----
+        This builds a raw ``eftcamb_params`` dictionary. Prefer the
+        ``gravity_model='hill_valley'`` / ``parameters_smg`` entry point
+        (:meth:`_apply_gravity_model`), which takes mochi-class' own arguments.
         """
         params = {
             # Model selection
@@ -1106,7 +1497,8 @@ class HEFTCAMBEngine(CambEngine):
         if no_slip:
             params.update({
                 "RPHbraidingmodel": HILLVALLEY_FLAG,
-                "RPHbraiding_cM": float(cM),
+                # alpha_B = -r alpha_M in the hi_class convention.
+                "RPHbraiding_cM": cls._braiding_hiclass_to_eftcamb(-float(r) * float(cM)),
                 "RPHbraiding_at": float(at),
                 "RPHbraiding_tau": float(tau),
                 "RPHbraidingmodel_ODE": 0,
