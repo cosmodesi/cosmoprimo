@@ -1,3 +1,5 @@
+"""Return :class: 'Cosmology' of various fiducial cosmology."""
+
 import os
 import numpy as np
 
@@ -17,7 +19,8 @@ def Uchuu(name='Planck2015', engine='class', extra_params=None, **params):
     name : string, default='2015'
         One of 'Planck2015', 'Planck2018', 'Planck2018DDE', 'DESIY1DDE'.
     engine : string, default=None
-        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_no
+        wiggle', 'bbks'].
         If ``None``, returns current :attr:`Cosmology.engine`.
 
     extra_params : dict, default=None
@@ -29,6 +32,7 @@ def Uchuu(name='Planck2015', engine='class', extra_params=None, **params):
     Returns
     -------
     cosmology : Cosmology
+
     """
     common = dict(Omega_k=0., m_ncdm=[0.06], neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF, A_L=1.0, k_pivot=0.05)
     if name == 'Planck2015':
@@ -47,8 +51,11 @@ def Uchuu(name='Planck2015', engine='class', extra_params=None, **params):
 
 
 def Planck2018FullFlatLCDM(engine=None, extra_params=None, **params):
-    """
-    Initialize :class:`Cosmology` based on Planck2018 TT, TE, EE, lowE, lensing and BAO data.
+    """Initialize :class:`Cosmology` based on Table 2 Planck2018 TT,TE,EE+lowP+lensing+BAO.
+
+    Note
+    ----
+    can be found in https://arxiv.org/abs/1807.06209
 
     Parameters
     ----------
@@ -65,16 +72,17 @@ def Planck2018FullFlatLCDM(engine=None, extra_params=None, **params):
     Returns
     -------
     cosmology : Cosmology
+
     """
-    default_params = dict(h=0.6766, omega_cdm=0.11933, omega_b=0.02242, Omega_k=0., sigma8=0.8102, k_pivot=0.05, n_s=0.9665,
-                          m_ncdm=[0.06], neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
+    default_params = dict(h=0.6766, omega_cdm=0.11933, omega_b=0.02242, Omega_k=0., sigma8=0.8102,
+                          k_pivot=0.05, n_s=0.9665, m_ncdm=[0.06], neutrino_hierarchy=None,
+                          T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
                           tau_reio=0.0561, A_L=1.0, w0_fld=-1., wa_fld=0.)
     return Cosmology(engine=engine, extra_params=extra_params, **default_params).clone(**params)
 
 
 def BOSS(engine=None, extra_params=None, **params):
-    """
-    Initialize :class:`Cosmology` based on BOSS fiducial cosmology.
+    """Initialize :class:`Cosmology` based on BOSS fiducial cosmology.
 
     Note
     ----
@@ -95,9 +103,11 @@ def BOSS(engine=None, extra_params=None, **params):
     Returns
     -------
     cosmology : Cosmology
+
     """
-    default_params = dict(h=0.676, Omega_m=0.31, omega_b=0.022, Omega_k=0., sigma8=0.8, k_pivot=0.05, n_s=0.97,
-                          m_ncdm=[0.06], neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
+    default_params = dict(h=0.676, Omega_m=0.31, omega_b=0.022, Omega_k=0., sigma8=0.8,
+                          k_pivot=0.05, n_s=0.97, m_ncdm=[0.06], neutrino_hierarchy=None,
+                          T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, N_eff=constants.NEFF,
                           A_L=1.0, w0_fld=-1., wa_fld=0.)
     return Cosmology(engine=engine, extra_params=extra_params, **default_params).clone(**params)
 
@@ -122,15 +132,31 @@ def AbacusSummit_params(name=None, filename=_AbacusSummit_params_filename, param
     filename : string, default='data/abacus_cosmologies.csv'
         Where Abacus cosmology parameters are saved as a 'csv' file.
 
-    params : list, default=['omega_b', 'omega_cdm', 'h', 'A_s', 'n_s', 'alpha_s', 'N_ur', 'omega_ncdm', 'omega_k', 'tau_reio', 'w0_fld', 'wa_fld']
+    params : list, default=['omega_b', 'omega_cdm', 'h', 'A_s', 'n_s',
+        'alpha_s', 'N_ur', 'omega_ncdm', 'omega_k', 'tau_reio', 'w0_fld', 'wa_fld']
         Optionally, list of parameters to read from.
+
+    Returns
+    -------
+    toret : dict or list of dict
+        If ``name`` is given, returns a dict with the cosmological parameters
+        of following AbacusSummit cosmology.
+        If ``name`` is ``None``, returns a list of dict with the cosmological parameters
+        of all AbacusSummit cosmologies.
+
+    Raises
+    ------
+    ValueError
+        if ''name'' is given but not found in the filename.
     """
     if name is not None:
         if not isinstance(name, str):
             name = '{:03d}'.format(name)
 
     if params is None:
-        params = ['omega_b', 'omega_cdm', 'h', 'A_s', 'n_s', 'alpha_s', 'N_ur', 'omega_ncdm', 'omega_k', 'tau_reio', 'w0_fld', 'wa_fld']
+        params = ['omega_b', 'omega_cdm', 'h', 'A_s', 'n_s',
+                  'alpha_s', 'N_ur', 'omega_ncdm', 'omega_k',
+                  'tau_reio', 'w0_fld', 'wa_fld']
     decode = {'root': str, 'notes': str, 'N_ncdm': int}
     default = {'tau_reio': 0.0544, 'omega_k': 0.}
     params = list(params)
@@ -181,8 +207,10 @@ def AbacusSummit(name=0, engine='class', precision=None, extra_params=None, **pa
     Warning
     -------
     Be careful of the parameterization when calling :meth:`Cosmology.clone`:
-    for AbacusSummit input parameters are ['omega_b', 'omega_cdm', 'h', 'A_s', 'n_s', 'alpha_s', 'N_ur', 'omega_ncdm', 'omega_k', 'tau_reio', 'w0_fld', 'wa_fld'].
-    We recast the ``N_ur`` specification into ``N_eff`` with ``clone(N_eff=cosmo['N_eff'])`` such that changes with 'm_ncdm' are continuous.
+    for AbacusSummit input parameters are ['omega_b', 'omega_cdm', 'h', 'A_s', 'n_s',
+    'alpha_s', 'N_ur', 'omega_ncdm', 'omega_k', 'tau_reio', 'w0_fld', 'wa_fld'].
+    We recast the ``N_ur`` specification into ``N_eff`` with ``clone(N_eff=cosmo['N_eff'])``
+    such that changes with 'm_ncdm' are continuous.
 
     Parameters
     ----------
@@ -194,7 +222,8 @@ def AbacusSummit(name=0, engine='class', precision=None, extra_params=None, **pa
         If ``None``, returns current :attr:`Cosmology.engine`.
 
     precision : string, default=None
-        Precision for computation; pass 'base' to get same precision as AbacusSummitBase (few minutes).
+        Precision for computation; pass 'base' to get same precision
+        as AbacusSummitBase (few minutes).
 
     extra_params : dict, default=None
         Extra engine parameters, typically precision parameters.
@@ -206,23 +235,53 @@ def AbacusSummit(name=0, engine='class', precision=None, extra_params=None, **pa
     -------
     cosmology : Cosmology
     """
-    default_params = dict(k_pivot=0.05, neutrino_hierarchy=None, T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, A_L=1.0)
+    default_params = dict(k_pivot=0.05, neutrino_hierarchy=None,
+                          T_ncdm_over_cmb=constants.TNCDM_OVER_CMB, A_L=1.0)
     default_params.update(AbacusSummit_params(name=name))
     engine = get_engine(engine)
     default_extra_params = {}
     if engine is not None and engine.name == 'class':
-        default_extra_params = {'recombination': 'HyRec'}  # {'recombination': 'HyRec', 'sBBN file': 'bbn/sBBN.dat'}  # TODO: change this for Y3? ~5e-5 change in rs_drag
+        default_extra_params = {'recombination': 'HyRec'}
+        # {'recombination': 'HyRec', 'sBBN file': 'bbn/sBBN.dat'}
+        # TODO: change this for Y3? ~5e-5 change in rs_drag
         if precision == 'base':
-            prec = dict(tol_ncdm_bg=1.e-10, recfast_Nz0=100000, tol_thermo_integration=1.e-5, recfast_x_He0_trigger_delta=0.01, recfast_x_H0_trigger_delta=0.01, evolver=0, k_min_tau0=0.002, k_max_tau0_over_l_max=3.,
-                        k_step_sub=0.015, k_step_super=0.0001, k_step_super_reduction=0.1, start_small_k_at_tau_c_over_tau_h=0.0004, start_large_k_at_tau_h_over_tau_k=0.05, tight_coupling_trigger_tau_c_over_tau_h=0.005,
-                        tight_coupling_trigger_tau_c_over_tau_k=0.008, start_sources_at_tau_c_over_tau_h=0.006, l_max_g=50, l_max_pol_g=25, l_max_ur=150, l_max_ncdm=50, tol_perturb_integration=1.e-6, perturb_sampling_stepsize=0.01,
-                        radiation_streaming_approximation=2, radiation_streaming_trigger_tau_over_tau_k=240., radiation_streaming_trigger_tau_c_over_tau=100., ur_fluid_approximation=2, ur_fluid_trigger_tau_over_tau_k=50.,
-                        ncdm_fluid_approximation=3, ncdm_fluid_trigger_tau_over_tau_k=51., tol_ncdm_synchronous=1.e-10, tol_ncdm_newtonian=1.e-10, l_logstep=1.026, l_linstep=25, hyper_sampling_flat=12., hyper_sampling_curved_low_nu=10.,
-                        hyper_sampling_curved_high_nu=10., hyper_nu_sampling_step=10., hyper_phi_min_abs=1.e-10, hyper_x_tol=1.e-4, hyper_flat_approximation_nu=1.e6, q_linstep=0.20, q_logstep_spline=20., q_logstep_trapzd=0.5,
-                        q_numstep_transition=250, transfer_neglect_delta_k_S_t0=100., transfer_neglect_delta_k_S_t1=100., transfer_neglect_delta_k_S_t2=100., transfer_neglect_delta_k_S_e=100., transfer_neglect_delta_k_V_t1=100.,
-                        transfer_neglect_delta_k_V_t2=100., transfer_neglect_delta_k_V_e=100., transfer_neglect_delta_k_V_b=100., transfer_neglect_delta_k_T_t2=100., transfer_neglect_delta_k_T_e=100., transfer_neglect_delta_k_T_b=100.,
-                        neglect_CMB_sources_below_visibility=1.e-30, transfer_neglect_late_source=3000., halofit_k_per_decade=3000., l_switch_limber=40., accurate_lensing=1, num_mu_minus_lmax=1000., delta_l_max=1000.)
-            for name in ['recfast_Nz0', 'tol_perturb_integration', 'perturb_sampling_stepsize']: prec.pop(name)  # these do not exist anymore
+            prec = dict(tol_ncdm_bg=1.e-10, recfast_Nz0=100000, tol_thermo_integration=1.e-5,
+                        recfast_x_He0_trigger_delta=0.01, recfast_x_H0_trigger_delta=0.01,
+                        evolver=0, k_min_tau0=0.002, k_max_tau0_over_l_max=3.,
+                        k_step_sub=0.015,k_step_super=0.0001, k_step_super_reduction=0.1,
+                        start_small_k_at_tau_c_over_tau_h=0.0004,
+                        start_large_k_at_tau_h_over_tau_k=0.05,
+                        tight_coupling_trigger_tau_c_over_tau_h=0.005,
+                        tight_coupling_trigger_tau_c_over_tau_k=0.008,
+                        start_sources_at_tau_c_over_tau_h=0.006,
+                        l_max_g=50, l_max_pol_g=25, l_max_ur=150,
+                        l_max_ncdm=50, tol_perturb_integration=1.e-6,
+                        perturb_sampling_stepsize=0.01, radiation_streaming_approximation=2,
+                        radiation_streaming_trigger_tau_over_tau_k=240.,
+                        radiation_streaming_trigger_tau_c_over_tau=100.,
+                        ur_fluid_approximation=2, ur_fluid_trigger_tau_over_tau_k=50.,
+                        ncdm_fluid_approximation=3, ncdm_fluid_trigger_tau_over_tau_k=51.,
+                        tol_ncdm_synchronous=1.e-10,
+                        tol_ncdm_newtonian=1.e-10, l_logstep=1.026, l_linstep=25,
+                        hyper_sampling_flat=12.,
+                        hyper_sampling_curved_low_nu=10., hyper_sampling_curved_high_nu=10.,
+                        hyper_nu_sampling_step=10.,
+                        hyper_phi_min_abs=1.e-10, hyper_x_tol=1.e-4,
+                        hyper_flat_approximation_nu=1.e6, q_linstep=0.20,
+                        q_logstep_spline=20., q_logstep_trapzd=0.5,
+                        q_numstep_transition=250, transfer_neglect_delta_k_S_t0=100.,
+                        transfer_neglect_delta_k_S_t1=100., transfer_neglect_delta_k_S_t2=100.,
+                        transfer_neglect_delta_k_S_e=100.,
+                        transfer_neglect_delta_k_V_t1=100.,
+                        transfer_neglect_delta_k_V_t2=100., transfer_neglect_delta_k_V_e=100.,
+                        transfer_neglect_delta_k_V_b=100., transfer_neglect_delta_k_T_t2=100.,
+                        transfer_neglect_delta_k_T_e=100., transfer_neglect_delta_k_T_b=100.,
+                        neglect_CMB_sources_below_visibility=1.e-30,
+                        transfer_neglect_late_source=3000.,
+                        halofit_k_per_decade=3000., l_switch_limber=40., accurate_lensing=1,
+                        num_mu_minus_lmax=1000., delta_l_max=1000.)
+            for name in ['recfast_Nz0', 'tol_perturb_integration', 'perturb_sampling_stepsize']:
+                prec.pop(name)  # these do not exist anymore
             default_extra_params.update(prec)
     extra_params = {**default_extra_params, **(extra_params or {})}
     cosmo = Cosmology(engine=engine, extra_params=extra_params, **default_params)
@@ -232,7 +291,8 @@ def AbacusSummit(name=0, engine='class', precision=None, extra_params=None, **pa
 
 def AbacusSummitBase(engine='class', precision=None, extra_params=None, **params):
     """
-    Initialize :class:`Cosmology` with base AbacusSummit cosmological parameters (Planck2018, base_plikHM_TTTEEE_lowl_lowE_lensing mean).
+    Initialize :class:`Cosmology` with base AbacusSummit cosmological parameters
+    (Planck2018, base_plikHM_TTTEEE_lowl_lowE_lensing mean).
 
     Note
     ----
@@ -246,7 +306,8 @@ def AbacusSummitBase(engine='class', precision=None, extra_params=None, **params
         If ``None``, returns current :attr:`Cosmology.engine`.
 
     precision : string, default=None
-        Precision for computation; pass 'base' to get same precision as AbacusSummitBase (few minutes).
+        Precision for computation; pass 'base' to get same precision
+        as AbacusSummitBase (few minutes).
 
     extra_params : dict, default=None
         Extra engine parameters, typically precision parameters.
@@ -257,8 +318,10 @@ def AbacusSummitBase(engine='class', precision=None, extra_params=None, **params
     Returns
     -------
     cosmology : Cosmology
+
     """
-    return AbacusSummit(name='000', engine=engine, precision=precision, extra_params=extra_params, **params)
+    return AbacusSummit(name='000', engine=engine, precision=precision,
+                        extra_params=extra_params, **params)
 
 
 DESI = AbacusSummitBase
@@ -273,16 +336,34 @@ def TabulatedDESI():
     """
     Tabulated DESI cosmology.
 
-    Note
+    Note:
     ----
-    Redshift interpolation range is [0, 10]; returned values outside this range are constant (no error is raised).
-    Relative interpolation precision is 1e-7; relative difference with camb prediction is 1e-7, with astropy 1e-5 and pyccl 1e-6
+    Redshift interpolation range is [0, 10];
+    returned values outside this range are constant (no error is raised).
+    Relative interpolation precision is 1e-7;
+    relative difference with camb prediction is 1e-7, with astropy 1e-5 and pyccl 1e-6
     (see tests/test_tabulated.py).
+
+    Returns
+    -------
+    cosmology : Cosmology
+
     """
-    return DESI(engine='tabulated', extra_params={'filename': _DESI_filename, 'names': ['efunc', 'comoving_radial_distance']})
+    return DESI(engine='tabulated',
+                extra_params={'filename': _DESI_filename,
+                              'names': ['efunc', 'comoving_radial_distance']})
 
 
 def save_TabulatedDESI():
+    """Save tabulated DESI E(z) and comoving radial distance to a file
+    for interpolation used in TabulatedDESI().
+
+    Note:
+    ----
+    The file is saved in 'data/desi.dat'.
+    Each row contains [z, E(z), comoving_radial_distance(z) [Mpc/h]].
+
+    """
     cosmo = DESI()
     bins_log = 'np.logspace(-8, 2, 40001)'
     z = np.concatenate([[0], eval(bins_log, {'np': np})], axis=0)
