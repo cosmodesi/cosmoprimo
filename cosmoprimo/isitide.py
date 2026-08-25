@@ -15,15 +15,25 @@ class Background(CambBackground):
 
     """Implementing functions for IDE growth rates"""
 
+    def _pk_results(self):
+        """Return the CAMB results object with matter power spectra computed.
+
+        growth_rate/growth_factor are now derived from P(k, z) rather than the background-only
+        growth ODE, so they need the 'fourier' task (which also pulls in 'transfer'), not just
+        'background'. Requesting it here (only when these two methods are actually called).
+        """
+        return self._engine.get_fourier().fo
+
     @utils.flatarray(dtype=np.float64)
     def growth_rate(self, z):
-        r"""Growth rate :math:`f(z) = d\ln D / d\ln a`, where :math:`D` is the growth factor"""
-        return self.ba.get_fQ_growth_rate(z=z)
-    
+        r"""Growth rate :math:`f(z) = d\ln D / d\ln a`, where :math:`D` is the growth factor
+        and is rescaled with the fQ=f+g term for IDE models."""
+        return self._pk_results().get_fQ_growth_rate_from_pk(z=z)
+
     @utils.flatarray(dtype=np.float64)
     def growth_factor(self, z):
         r"""Growth factor :math:`D(z)` normalized to D(0)=1"""
-        return self.ba.get_growth_factor(z=z)
+        return self._pk_results().get_growth_factor_from_pk(z=z)
 
 class isitideEngine(CambEngine):
 

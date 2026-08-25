@@ -88,7 +88,11 @@ class CambEngine(BaseEngine):
             if self._has_fld:
                 # base_params['dark_energy_model'] = self.camb.dark_energy.DarkEnergyPPF if self['use_ppf'] and self['cs2_fld'] == 1. else self.camb.dark_energy.DarkEnergyFluid
                 # base_params.update(de_params)
-                if 'dark_energy_model' not in base_params:
+                # Honor an explicit user-provided dark-energy model (e.g. IDEModel1thaw)
+                # before falling back to default PPF/fluid behavior.
+                if 'dark_energy_model' in self._extra_params:
+                    base_params['dark_energy_model'] = self._extra_params['dark_energy_model']
+                elif 'dark_energy_model' not in base_params:
                     base_params['dark_energy_model'] = (
                         self.camb.dark_energy.DarkEnergyPPF
                         if self['use_ppf'] and self['cs2_fld'] == 1. else
