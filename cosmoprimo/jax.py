@@ -669,6 +669,43 @@ def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return
     return result
 
 
+def cumulative_quad(func, t, y0=0.):
+    """
+    Cumulative integral of a *t*-only integrand: ``y(t) = y0 + int_{t[0]}^{t} func(t') dt'``.
+
+    Exactly equivalent to ``odeint(lambda y, t: func(t), y0, t, method='rk4')`` -- for a
+    right-hand side that does not depend on ``y``, RK4 reduces algebraically to Simpson's
+    rule on each interval, ``h / 6 * (g(a) + 4 g((a + b) / 2) + g(b))`` -- but evaluates
+    *func* ONCE, vectorised, at the grid points and the midpoints, instead of four times per
+    step inside a scan.  That matters when *func* is expensive per call (the background
+    integrands go through interpolator-backed densities).
+
+    Parameters
+    ----------
+    func : callable
+        Integrand, vectorised over *t*.
+    t : array
+        Integration nodes, in increasing order; the result is returned at these nodes.
+    y0 : float, default=0.
+        Value at ``t[0]``.
+
+    Returns
+    -------
+    y : array
+        Cumulative integral at each node of *t*.
+    """
+    # The nodes are static (a fixed z / eta grid); it is the INTEGRAND VALUES that may be
+    # traced, so dispatch numpy/jax on those, not on *t*.
+    t = np.asarray(t)
+    mid = (t[:-1] + t[1:]) / 2.
+    values = func(np.concatenate([t, mid]))
+    jnp = numpy_jax(values, y0)
+    values = jnp.asarray(values)
+    grid_values, mid_values = values[:t.size], values[t.size:]
+    increments = jnp.asarray((t[1:] - t[:-1]) / 6.) * (grid_values[:-1] + 4. * mid_values + grid_values[1:])
+    return jnp.concatenate([jnp.zeros(1, dtype=increments.dtype) + y0, y0 + jnp.cumsum(increments)])
+
+
 def odeint(fun, y0, t, args=(), method='rk4'):
 
     jnp = numpy_jax(t)

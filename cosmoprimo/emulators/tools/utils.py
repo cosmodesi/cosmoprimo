@@ -1,480 +1,193 @@
-import os
-import re
-import sys
-import time
-import logging
-import traceback
-import warnings
+"""Shared polynomial-basis / stencil mathematics for emulators.
+
+Single home for the node, weight and index-set constructions used by both the cosmoprimo
+emulator engines and desilike's graph-level emulators:
+
+- uniform centered finite-difference stencils (:func:`fd_stencil`);
+- polynomial-interpolation (Fornberg-type) derivative weights at an arbitrary point from
+  arbitrary nodes (:func:`interpolation_weights`) -- the correct replacement for shifted
+  uniform stencils near prior boundaries (a shifted stencil evaluated with centered weights
+  silently returns the derivative at the shifted point, not the requested one);
+- Chebyshev machinery: values (:func:`chebyshev_values`), Lobatto nodes
+  (:func:`chebyshev_lobatto_nodes`) and the per-dimension change of basis
+  (:func:`chebyshev_vandermonde_inverse`);
+- named expansion-variable transforms (:data:`TRANSFORMS`), e.g. ``'sqrt'`` -- the natural
+  variable for the neutrino mass (free-streaming scale ~ sqrt(m));
+- anisotropic Smolyak sparse grids: nested Chebyshev-Lobatto levels
+  (:func:`nested_level_nodes`) and the admissible level set with combination-technique
+  coefficients (:func:`smolyak_combination`).
+
+Static (fit-time) constructions use plain numpy; value-dependent functions dispatch through
+:func:`cosmoprimo.jax.numpy_jax`, so they work both eagerly and inside jax traces.
+"""
+
+import itertools
+import math
 
 import numpy as np
 
-
-"""A few utilities."""
-
-
-logger = logging.getLogger('Utils')
+from cosmoprimo.jax import numpy as jnp, numpy_jax
 
 
-def is_sequence(item):
-    """Whether input item is a tuple or list."""
-    return isinstance(item, (list, tuple))
-
-
-def exception_handler(exc_type, exc_value, exc_traceback):
-    """Print exception with a logger."""
-    # Do not print traceback if the exception has been handled and logged
-    _logger_name = 'Exception'
-    log = logging.getLogger(_logger_name)
-    line = '=' * 100
-    # log.critical(line[len(_logger_name) + 5:] + '\n' + ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)) + line)
-    log.critical('\n' + line + '\n' + ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)) + line)
-    if exc_type is KeyboardInterrupt:
-        log.critical('Interrupted by the user.')
-    else:
-        log.critical('An error occured.')
-
-
-def mkdir(dirname):
-    """Try to create ``dirname`` and catch :class:`OSError`."""
-    try:
-        os.makedirs(dirname)  # MPI...
-    except OSError:
-        return
-
-
-def setup_logging(level=logging.INFO, stream=sys.stdout, filename=None, filemode='w', **kwargs):
+def fd_stencil(order, acc=2):
     """
-    Set up logging.
+    Uniform centered finite-difference stencil for the order-th derivative at accuracy acc.
+
+    Returns (offsets, coeffs): integer offsets and weights such that
+    ``f^(order)(x) ~ sum(coeffs[i] * f(x + offsets[i] * h)) / h^order``.
+    Zero-weight points (e.g. the center for odd orders) are omitted.
+    """
+    nside = (order + acc - 1) // 2
+    offsets = np.arange(-nside, nside + 1)
+    # Vandermonde system: sum_j c_j * j^k = order! * delta(k, order)
+    matrix = np.array([[float(offset) ** k for offset in offsets] for k in range(len(offsets))])
+    rhs = np.zeros(len(offsets))
+    rhs[order] = float(math.factorial(order))
+    coeffs = np.linalg.solve(matrix, rhs)
+    mask = np.abs(coeffs) > 1e-12
+    return offsets[mask], coeffs[mask]
+
+
+def interpolation_weights(nodes, x0, order, scale=None):
+    """
+    Polynomial-interpolation weights for the order-th derivative at *x0* from *nodes*.
+
+    Solves the Vandermonde system ``sum_j w_j u_j^r = r! delta(r, order)`` in the scaled
+    positions ``u_j = (nodes_j - x0) / scale``; the derivative is then
+    ``f^(order)(x0) = sum_j w_j f(nodes_j)`` (the returned weights include the
+    ``1 / scale^order`` factor). Exact for any polynomial of degree < len(nodes); reduces
+    to the classical centered weights on a symmetric uniform grid.
+
+    *x0* may carry batch dimensions (shape ``B``); *nodes* is 1D of length ``n``; the
+    returned weights have shape ``(*B, n)``. Dispatches on the input types, so *x0* may be
+    a jax tracer.
+    """
+    jnp = numpy_jax(x0)
+    nodes = np.asarray(nodes, dtype='f8')
+    n_nodes = len(nodes)
+    if order >= n_nodes:
+        raise ValueError(f'derivative order {order} needs more than {n_nodes} nodes')
+    if scale is None:
+        scale = 0.5 * (nodes.max() - nodes.min()) or 1.
+    rhs = np.zeros(n_nodes)
+    rhs[order] = float(math.factorial(order))
+    x0 = jnp.asarray(x0)
+    scaled = (nodes - x0[..., None]) / scale  # (*B, n)
+    rows = [jnp.ones_like(scaled)]
+    for _ in range(n_nodes - 1):
+        rows.append(rows[-1] * scaled)
+    matrix = jnp.stack(rows, axis=-2)  # (*B, n, n)
+    rhs_b = jnp.broadcast_to(jnp.asarray(rhs), matrix.shape[:-1])
+    return jnp.linalg.solve(matrix, rhs_b[..., None])[..., 0] / scale ** order
+
+
+def chebyshev_values(t, n_max):
+    """Chebyshev polynomials ``T_0..T_{n_max}`` at *t* (scalar or array), shape ``(n_max + 1, *t.shape)``."""
+    jnp = numpy_jax(t)
+    t = jnp.asarray(t)
+    values = [jnp.ones_like(t), t]
+    for _ in range(n_max - 1):
+        values.append(2. * t * values[-1] - values[-2])
+    return jnp.stack(values[:n_max + 1])
+
+
+def chebyshev_lobatto_nodes(n_nodes, limits=(-1., 1.)):
+    """*n_nodes* Chebyshev-Lobatto nodes spanning *limits* (endpoints included), sorted ascending."""
+    lo, hi = (float(lim) for lim in limits)
+    if n_nodes == 1:
+        return np.array([0.5 * (lo + hi)])
+    angles = np.pi * np.arange(n_nodes) / (n_nodes - 1)
+    return np.sort(0.5 * (lo + hi) + 0.5 * (hi - lo) * np.cos(angles))
+
+
+def chebyshev_vandermonde_inverse(nodes, limits=(-1., 1.)):
+    """Inverse Chebyshev Vandermonde at *nodes* (in *limits*), mapping values at the nodes to
+    Chebyshev coefficients of degree ``len(nodes) - 1``: ``coeffs = inverse @ values``."""
+    lo, hi = (float(lim) for lim in limits)
+    t_nodes = (2. * np.asarray(nodes, dtype='f8') - lo - hi) / (hi - lo)
+    return np.linalg.inv(np.polynomial.chebyshev.chebvander(t_nodes, len(t_nodes) - 1))
+
+
+def _sqrt_forward(x):
+    jnp = numpy_jax(x)
+    return jnp.sqrt(jnp.maximum(x, 0.))
+
+
+# Named expansion-variable transforms: name -> (forward, inverse), forward monotone
+# increasing. With a transform, step sizes / anchors / collocation ranges are in
+# transformed units, and derivatives are w.r.t. the transformed variable.
+TRANSFORMS = {'sqrt': (_sqrt_forward, lambda u: u * u)}
+
+
+def nested_level_nodes(level, limits=(-1., 1.)):
+    """Nodes of the nested Chebyshev-Lobatto rule at *level*: 1 node at level 0,
+    ``2^level + 1`` nodes otherwise; each level's nodes contain the previous level's."""
+    return chebyshev_lobatto_nodes(1 if level == 0 else 2 ** level + 1, limits=limits)
+
+
+def smolyak_combination(max_levels, budget):
+    """
+    Anisotropic Smolyak level set and combination-technique coefficients.
 
     Parameters
     ----------
-    level : string, int, default=logging.INFO
-        Logging level.
-
-    stream : _io.TextIOWrapper, default=sys.stdout
-        Where to stream.
-
-    filename : string, default=None
-        If not ``None`` stream to file name.
-
-    filemode : string, default='w'
-        Mode to open file, only used if filename is not ``None``.
-
-    kwargs : dict
-        Other arguments for :func:`logging.basicConfig`.
-    """
-    # Cannot provide stream and filename kwargs at the same time to logging.basicConfig, so handle different cases
-    # Thanks to https://stackoverflow.com/questions/30861524/logging-basicconfig-not-creating-log-file-when-i-run-in-pycharm
-    if isinstance(level, str):
-        level = {'info': logging.INFO, 'debug': logging.DEBUG, 'warning': logging.WARNING}[level.lower()]
-    for handler in logging.root.handlers:
-        logging.root.removeHandler(handler)
-
-    t0 = time.time()
-
-    class MyFormatter(logging.Formatter):
-
-        def format(self, record):
-            self._style._fmt = '[%09.2f] ' % (time.time() - t0) + ' %(asctime)s %(name)-28s %(levelname)-8s %(message)s'
-            return super(MyFormatter, self).format(record)
-
-    fmt = MyFormatter(datefmt='%m-%d %H:%M ')
-    if filename is not None:
-        mkdir(os.path.dirname(filename))
-        handler = logging.FileHandler(filename, mode=filemode)
-    else:
-        handler = logging.StreamHandler(stream=stream)
-    handler.setFormatter(fmt)
-    logging.basicConfig(level=level, handlers=[handler], **kwargs)
-    sys.excepthook = exception_handler
-
-
-class BaseMetaClass(type):
-
-    """Metaclass to add logging attributes to :class:`BaseClass` derived classes."""
-
-    def __new__(meta, name, bases, class_dict):
-        cls = super().__new__(meta, name, bases, class_dict)
-        cls.set_logger()
-        return cls
-
-    def set_logger(cls):
-        """
-        Add attributes for logging:
-
-        - logger
-        - methods log_debug, log_info, log_warning, log_error, log_critical
-        """
-        cls.logger = logging.getLogger(cls.__name__)
-
-        def make_logger(level):
-
-            @classmethod
-            def logger(cls, *args, **kwargs):
-                return getattr(cls.logger, level)(*args, **kwargs)
-
-            return logger
-
-        for level in ['debug', 'info', 'warning', 'error', 'critical']:
-            setattr(cls, 'log_{}'.format(level), make_logger(level))
-
-
-class BaseClass(object, metaclass=BaseMetaClass):
-    """
-    Base class that implements :meth:`copy`.
-    To be used throughout this package.
-    """
-    def __copy__(self, *args, **kwargs):
-        new = self.__class__.__new__(self.__class__)
-        new.__dict__.update(self.__dict__)
-        return new
-
-    def copy(self, *args, **kwargs):
-        return self.__copy__(*args, **kwargs)
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-
-    @classmethod
-    def from_state(cls, state):
-        new = cls.__new__(cls)
-        new.__setstate__(state)
-        return new
-
-    def write(self, filename):
-        """Write to ``filename``."""
-        self.log_info('Writing {}.'.format(filename))
-        filename = str(filename)
-        mkdir(os.path.dirname(filename))
-        if filename.endswith(('.h5', '.hdf5')):
-            import h5py
-            with h5py.File(filename, 'w') as f:
-                _h5_write_state(f, self.__getstate__())
-        else:
-            np.save(filename, self.__getstate__(), allow_pickle=True)
-
-    def save(self, filename):
-        """Deprecated. Use :meth:`write`."""
-        warnings.warn('save() is deprecated, use write() instead.', DeprecationWarning, stacklevel=2)
-        return self.write(filename)
-
-    @classmethod
-    def read(cls, filename):
-        """Read from ``filename``."""
-        cls.log_info('Reading {}.'.format(filename))
-        filename = str(filename)
-        if filename.endswith(('.h5', '.hdf5')):
-            import h5py
-            with h5py.File(filename, 'r') as f:
-                state = _h5_read_state(f)
-        else:
-            state = np.load(filename, allow_pickle=True)[()]
-        return cls.from_state(state)
-
-    @classmethod
-    def load(cls, filename):
-        """Deprecated. Use :meth:`read`."""
-        warnings.warn('load() is deprecated, use read() instead.', DeprecationWarning, stacklevel=2)
-        return cls.read(filename)
-
-
-def find_names(allnames, name):
-    """
-    Search parameter name ``name`` in list of names ``allnames``,
-    matching template forms ``[::]``;
-    return corresponding parameter names.
-    Contrary to :func:`find_names_latex`, it does not handle latex strings,
-    but can take a list of parameter names as ``name``
-    (thus returning the concatenated list of matching names in ``allnames``).
-
-    >>> find_names(['a_1', 'a_2', 'b_1', 'c_2'], ['a_[:]', 'b_[:]'])
-    ['a_1', 'a_2', 'b_1']
-
-    Parameters
-    ----------
-    allnames : list
-        List of parameter names (strings).
-
-    name : list, str
-        List of parameter name(s) to match in ``allnames``.
+    max_levels : sequence of int
+        Maximum 1-D level per dimension.
+    budget : int
+        Total level budget: the admissible set is ``{l : l_i <= max_levels[i], sum l_i <= budget}``.
 
     Returns
     -------
-    toret : list
-        List of parameter names (strings).
+    dict
+        ``{level_vector: coefficient}`` restricted to non-zero combination coefficients
+        ``c_l = sum_{z in {0,1}^d} (-1)^{|z|} [l + z admissible]``.
     """
-    if not is_sequence(allnames):
-        allnames = [allnames]
-
-    if is_sequence(name):
-        toret = []
-        for nn in name:
-            for n in find_names(allnames, nn):
-                if n not in toret:
-                    toret.append(n)
-        return toret
-
-    if isinstance(name, re.Pattern):
-        pattern = name
-    else:
-        #name = fnmatch.translate(name)  # does weird things to -
-        pattern = name.replace('*', '.*?') + '$'  # ? for non-greedy, $ to match end of string
-    toret = []
-    for paramname in allnames:
-        match = re.match(pattern, paramname)
-        if match:
-            toret.append(paramname)
-    return toret
+    max_levels = [int(level) for level in max_levels]
+    n_dims = len(max_levels)
+    level_vectors = [lv for lv in itertools.product(*[range(level + 1) for level in max_levels])
+                     if sum(lv) <= budget]
+    level_set = set(level_vectors)
+    combination = {}
+    for lv in level_vectors:
+        coeff = 0
+        for z in itertools.product((0, 1), repeat=n_dims):
+            if tuple(l + dz for l, dz in zip(lv, z)) in level_set:
+                coeff += (-1) ** sum(z)
+        if coeff != 0:
+            combination[lv] = coeff
+    return combination
 
 
-def expand_dict(di, names):
+def cardinal_cubic_weights(nodes, x):
+    """Dense local-cubic-Lagrange weights of *x* on uniform *nodes*, shape ``(n_nodes,)``.
+
+    Same 4-node bracketing scheme as folps' fog_collocation_weights (fourth-order accurate,
+    weights sum to one), jax-traceable in *x*.
     """
-    Expand input dictionary, taking care of wildcards, e.g.:
-
-    >>> expand_dict({'*': 2}, ['a', 'b'])
-    {'a': 2, 'b': 2}
-    >>> expand_dict({'a*': 2, 'b': 1}, ['a1', 'a2', 'b'])
-    {'a1': 2, 'a2': 2, 'b': 1}
-    """
-    toret = dict.fromkeys(names)
-    if is_sequence(di):
-        di = dict(zip(names, di))
-    if not hasattr(di, 'items'):
-        di = {'*': di}
-    for template, value in di.items():
-        for tmpname in find_names(names, template):
-            toret[tmpname] = value
-    return toret
-
-
-def deep_eq(obj1, obj2, equal_nan=True):
-    """(Recursively) test equality between ``obj1`` and ``obj2``."""
-    from cosmoprimo import jax
-    if type(obj2) is type(obj1):
-        if isinstance(obj1, dict):
-            if obj2.keys() == obj1.keys():
-                return all(deep_eq(obj1[name], obj2[name]) for name in obj1)
-        elif isinstance(obj1, (tuple, list)):
-            if len(obj2) == len(obj1):
-                return all(deep_eq(o1, o2) for o1, o2 in zip(obj1, obj2))
-        elif isinstance(obj1, (np.ndarray,) + jax.array_types):
-            return np.array_equal(obj2, obj1, equal_nan=equal_nan)
-        else:
-            return obj2 == obj1
-    return False
+    nodes = jnp.asarray(nodes)
+    n_nodes = nodes.shape[0]
+    step = nodes[1] - nodes[0]
+    position = (jnp.clip(x, nodes[0], nodes[-1]) - nodes[0]) / step
+    index = jnp.clip(jnp.floor(position) - 1, 0, n_nodes - 4)
+    offset = position - (index + 1.)
+    lagrange = [-offset * (offset - 1.) * (offset - 2.) / 6.,
+                (offset + 1.) * (offset - 1.) * (offset - 2.) / 2.,
+                -(offset + 1.) * offset * (offset - 2.) / 2.,
+                (offset + 1.) * offset * (offset - 1.) / 6.]
+    node_index = jnp.arange(n_nodes)
+    weights = 0.
+    for shift, weight in enumerate(lagrange):
+        weights = weights + weight * (node_index == index + shift)
+    return weights
 
 
-def subspace(X, precision=None, npcs=None, chi2min=None, fweights=None, aweights=None):
-    r"""
-    Project input values ``X`` to a subspace.
-    See https://arxiv.org/pdf/2009.03311.pdf
-
-    Parameters
-    ----------
-    X : array
-        Array of shape (number of samples, ndim).
-
-    precision : array, default=None
-        Optionally, precision matrix, to normalize ``X``.
-
-    npcs : int, default=None
-        Optionally, number (<= ndim) of principal components to keep.
-        If ``None``, number of components to be kept is fixed by ``chi2min``.
-
-    chi2min : int, default=None
-        In case ``npcs`` is provided, threshold for the maximum difference in :math:`\chi^{2}`
-        w.r.t. keeping all components. If ``None``, all components are kept.
-
-    fweights : array, default=None
-        Optionally, integer frequency weights, of shape (number of samples,).
-
-    aweights : array, default=None
-        Optionally, observation weights.
-
-    Returns
-    -------
-    eigenvectors : array of shape (ndim, npcs)
-        Eigenvectors.
-    """
-    X = np.asarray(X)
-    X = X.reshape(X.shape[0], -1)
-    if precision is None:
-        L = np.array(1.)
-    else:
-        L = np.linalg.cholesky(precision)
-    X = X.dot(L)
-    cov = np.cov(X, rowvar=False, ddof=0, fweights=fweights, aweights=aweights)
-    size = cov.shape[0]
-    if npcs is not None:
-        if npcs > size:
-            raise ValueError('Number of requested components is {0:d}, but dimension is {1:d} < {0:d}.'.format(npcs, size))
-        import scipy as sp
-        eigenvalues, eigenvectors = sp.linalg.eigh(cov, subset_by_index=[size - 1 - npcs, size - 1])
-    else:
-        eigenvalues, eigenvectors = np.linalg.eigh(cov)
-    if npcs is None:
-        if chi2min is None:
-            npcs = size
-        else:
-            npcs = size - np.sum(np.cumsum(eigenvalues) < chi2min)
-        eigenvectors = eigenvectors[..., -npcs:]
-    return L.dot(eigenvectors)
-
-
-import ast
-import json
-
-from cosmoprimo.utils import _prepare_for_json, _restore_from_json
-
-
-_ENGINE_ATTRS = ('name', 'params', 'xshape', 'yshape')
-
-
-def _h5_write_engine_state(h5grp, state):
-    """Write engine state to h5 group. Saves name/params/xshape/yshape as individual attrs, arrays as datasets, rest as JSON __meta__ attr."""
-    for key in _ENGINE_ATTRS:
-        if key in state:
-            val = state[key]
-            h5grp.attrs[key] = val if isinstance(val, str) else json.dumps(_prepare_for_json(val))
-    arr_keys = {k for k, v in state.items() if isinstance(v, np.ndarray) and k not in _ENGINE_ATTRS}
-    for key in arr_keys:
-        h5grp.create_dataset(key, data=state[key])
-    meta_keys = [k for k in state if k not in _ENGINE_ATTRS and k not in arr_keys]
-    if meta_keys:
-        h5grp.attrs['__meta__'] = json.dumps(_prepare_for_json({k: state[k] for k in meta_keys}))
-
-
-def _h5_read_engine_state(h5grp):
-    """Read engine state from h5 group written by _h5_write_engine_state."""
-    state = {}
-    for key in _ENGINE_ATTRS:
-        if key in h5grp.attrs:
-            val = str(h5grp.attrs[key])
-            state[key] = val if key == 'name' else _restore_from_json(json.loads(val))
-    for key in h5grp.keys():
-        state[key] = h5grp[key][...]
-    meta_str = h5grp.attrs.get('__meta__', None)
-    if meta_str is not None:
-        state.update(_restore_from_json(json.loads(str(meta_str))))
-    return state
-
-
-def _h5_write_state(h5grp, state):
-    """Write a state dict to h5 group. Arrays become datasets, everything else becomes JSON __meta__ attr."""
-    arr_keys = {k for k, v in state.items() if isinstance(v, np.ndarray)}
-    for key in arr_keys:
-        h5grp.create_dataset(key, data=state[key])
-    meta = {k: v for k, v in state.items() if k not in arr_keys}
-    h5grp.attrs['__meta__'] = json.dumps(_prepare_for_json(meta))
-
-
-def _h5_read_state(h5grp):
-    """Read a state dict from h5 group written by _h5_write_state."""
-    state = {}
-    for key in h5grp.keys():
-        state[key] = h5grp[key][...]
-    meta_str = h5grp.attrs.get('__meta__', None)
-    if meta_str is not None:
-        state.update(_restore_from_json(json.loads(str(meta_str))))
-    return state
-
-
-def evaluate(value, type=None, locals=None, verbose=True):
-    """
-    Evaluate several lines of input, returning the result of the last line.
-
-    Reference
-    ---------
-    https://stackoverflow.com/questions/12698028/why-is-pythons-eval-rejecting-this-multiline-string-and-how-can-i-fix-it
-
-    Parameters
-    ----------
-    value : str, any type
-        If value is string, call ``eval``, with input ``locals`` (dictionary of local objects).
-        "np", "sp", "jnp", "jsp" are recognized as numpy, scipy, jax.numpy, jax.scipy (if jax is installed).
-
-    type : type, default=None
-        If not ``None``, cast output ``value`` with ``type``.
-
-    locals : dict, default=None
-        Dictionary of local objects to use when calling ``eval``.
-
-    Returns
-    -------
-    value : evaluated value.
-
-    """
-    import numpy as np
-    import scipy as sp
-    if isinstance(value, str):
-        from cosmoprimo.jax import numpy as jnp
-        from cosmoprimo.jax import scipy as jsp
-        locals = dict(locals or {})
-        globals = locals | {'np': np, 'sp': sp, 'jnp': jnp, 'jsp': jsp}  # FIXME: hack for nested loops
-        tree = ast.parse(value)
-        eval_expr = ast.Expression(tree.body[-1].value)
-        exec_expr = ast.Module(tree.body[:-1], type_ignores=[])
-        try:
-            exec(compile(exec_expr, 'file', 'exec'), globals, locals)
-            value = eval(compile(eval_expr, 'file', 'eval'), globals, locals)
-        except Exception as exc:
-            if verbose:
-                raise Exception('unable to evaluate {} with locals = {} and globals = {}'.format(value, locals, globals)) from exc
-            raise exc
-    if type is not None:
-        value = type(value)
-    return value
-
-
-def download(url, target, authorization=None, size=None):
-    """
-    Download file from input ``url``.
-
-    Parameters
-    ----------
-    url : str, Path
-        url to download file from.
-
-    target : str, Path
-        Path where to save the file, on disk.
-
-    size : int, default=None
-        Expected file size, in bytes, used to show progression bar.
-        If not provided, taken from header (if the file is larger than a couple of GBs,
-        it may be wrong due to integer overflow).
-        If a sensible file size is obtained, a progression bar is printed.
-    """
-    # Adapted from https://stackoverflow.com/questions/15644964/python-progress-bar-and-downloads
-    print('Downloading {} to {}.'.format(url, target))
-    mkdir(os.path.dirname(target))
-    import requests
-    # See https://stackoverflow.com/questions/61991164/python-requests-missing-content-length-response
-    headers = {}
-    if authorization:
-        headers.update({'Authorization': authorization})
-    if size is None:
-        size = requests.head(url, headers={**headers, 'Accept-Encoding': None}).headers.get('content-length')
-    try:
-        r = requests.get(url, headers=headers, allow_redirects=True, stream=True)
-        r.raise_for_status()
-    except requests.exceptions.HTTPError:
-        return False
-
-    with open(target, 'wb') as file:
-        if size is None or int(size) < 0:  # no content length header
-            file.write(r.content)
-        else:
-            import shutil
-            width = shutil.get_terminal_size((80, 20))[0] - 9  # pass fallback
-            dl, size, current = 0, int(size), 0
-            for data in r.iter_content(chunk_size=2048):
-                dl += len(data)
-                file.write(data)
-                if size:
-                    frac = min(dl / size, 1.)
-                    done = int(width * frac)
-                    if done > current:  # it seems, when content-length is not set iter_content does not care about chunk_size
-                        print('\r[{}{}] [{:3.0%}]'.format('#' * done, ' ' * (width - done), frac), end='', flush=True)
-                        current = done
-            print('')
-    return True
+def lagrange_weights(nodes, x):
+    """Dense global-Lagrange weights of *x* on *nodes* (exact for polynomials of degree
+    ``n_nodes - 1``), jax-traceable in *x*."""
+    nodes = jnp.asarray(nodes)
+    n_nodes = nodes.shape[0]
+    weights = []
+    for node_index in range(n_nodes):
+        others = jnp.delete(nodes, node_index, assume_unique_indices=True)
+        weights.append(jnp.prod((x - others) / (nodes[node_index] - others)))
+    return jnp.stack(weights)
