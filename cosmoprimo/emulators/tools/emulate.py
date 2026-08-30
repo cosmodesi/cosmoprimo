@@ -2,7 +2,7 @@
 
     emu = Emulator(target, Space(samples=chain))   # what, and where it must be accurate
     emu.params                                     # what the interpolant will expand
-    emu.train(engine='taylor', budget=4)           # sample and fit
+    emu.train(budget=4)                            # sample and fit
     emu.predict(h=0.68, omega_cdm=0.12)            # use it
 
 The target is a plain callable, ``target(params) -> dict`` of named arrays. Nothing else is
@@ -91,8 +91,9 @@ class Emulator(object):
         ``target(params) -> dict`` of named arrays. Nothing else is assumed.
     space : Space
         Where accuracy is required, in the user's own parameters.
-    engine : str, default='taylor'
-        The interpolant.
+    engine : str, default='chebyshev'
+        Which engine fits the nodes: ``'chebyshev'`` (sparse-grid interpolation),
+        ``'taylor'`` (a local expansion, see :mod:`taylor`) or ``'mlp'``.
     coverage : str, default='raise'
         ``'raise'``, ``'warn'`` or ``'ignore'`` outside the trained box.
     options : dict
@@ -106,7 +107,7 @@ class Emulator(object):
     #: predicts confidently and is wrong everywhere.
     version = 1
 
-    def __init__(self, target, space, engine='taylor', coverage='raise', **options):
+    def __init__(self, target, space, engine='chebyshev', coverage='raise', **options):
         if not callable(target):
             raise TypeError(f'target must be callable, `target(params) -> dict`; got '
                             f'{type(target).__name__}')
@@ -185,8 +186,9 @@ class Emulator(object):
         """The parameter values the calculator will be evaluated at.
 
         Exposed so a training can be sized -- or handed to an external batch system -- before
-        paying for it. The levels are nested, so raising ``budget`` later reuses every
-        evaluation already made.
+        paying for it. The grid's levels are nested, so raising ``budget`` later reuses every
+        evaluation already made; the Taylor engine's stencils are not, so there the order is
+        worth choosing before paying (see :class:`~.taylor.TaylorEngine`).
         """
         return self._engine(budget=budget, **kwargs).nodes()
 
@@ -195,6 +197,11 @@ class Emulator(object):
             if len(self.params) < len(self.training.params) else self.training
 
     def _engine(self, budget=None, **kwargs):
+        from .engines import ChebyshevEngine
+        from .mlp import MLPEngine
+        from .taylor import TaylorEngine
+
+        classes = {cls.name: cls for cls in (ChebyshevEngine, TaylorEngine, MLPEngine)}
         subspace = self._subspace()
         options = {**self.options, **kwargs}
         # `budget` may arrive twice -- once at construction (kept in `options`) and once from
@@ -204,21 +211,19 @@ class Emulator(object):
             budget = options.pop('budget', None)
         else:
             options.pop('budget', None)
-        if self.engine_name in ('taylor', 'chebyshev', 'mlp'):
-            from .engines import ChebyshevEngine
-            from .mlp import MLPEngine
-
-            whitening = {}
-            if subspace.is_correlated():
-                # the grid goes on the posterior's principal axes instead of a rectangle around
-                # them: measured 350x in the median at equal node count, the largest single lever.
-                # It stays internal -- the engine's parameter names remain physical.
-                whitening = dict(mean=subspace.mean, covariance=subspace.covariance,
-                                 nsigma=subspace.nsigma)
-            cls = MLPEngine if self.engine_name == 'mlp' else ChebyshevEngine
-            return cls(subspace.params, subspace.limits, levels=subspace.levels,
-                       budget=budget, transform=subspace.transforms, **whitening, **options)
-        raise ValueError(f"unknown engine {self.engine_name!r}; 'taylor' and 'mlp' are available")
+        if self.engine_name not in classes:
+            raise ValueError(f'unknown engine {self.engine_name!r}; available '
+                             f'{sorted(classes)}')
+        whitening = {}
+        if subspace.is_correlated():
+            # the nodes go on the posterior's principal axes instead of a rectangle around
+            # them: measured 350x in the median at equal node count, the largest single lever.
+            # It stays internal -- the engine's parameter names remain physical.
+            whitening = dict(mean=subspace.mean, covariance=subspace.covariance,
+                             nsigma=subspace.nsigma)
+        return classes[self.engine_name](
+            subspace.params, subspace.limits, levels=subspace.levels,
+            budget=budget, transform=subspace.transforms, **whitening, **options)
 
     def train(self, engine=None, budget=None, checkpoint=None, chunk=None, batch_size=None,
               mpicomm=None, per_output=None, **kwargs):

@@ -218,12 +218,25 @@ class Training(object):
 
     def _call(self, params):
         """The target takes a dict of parameters, and returns what should be fitted -- any
-        transform it wants to apply is its own business, done inside."""
+        transform it wants to apply is its own business, done inside.
+
+        Non-finite outputs are refused as loudly as exceptions: every engine mixes every node
+        into every coefficient, so ONE NaN node silently poisons the whole emulator -- measured,
+        an emulated posterior came back -inf at its own box centre, one full session after the
+        node that caused it."""
         try:
-            return self.target(params)
+            values = self.target(params)
         except Exception as exc:
             raise NodeEvaluationError(f'node {params} failed: '
                                       f'{type(exc).__name__}: {exc}') from exc
+        bad = {name: int((~np.isfinite(np.asarray(value))).sum()) for name, value in values.items()
+               if not np.isfinite(np.asarray(value)).all()}
+        if bad:
+            raise NodeEvaluationError(f'node {params} returned non-finite values in '
+                                      f'{bad} (output name -> count). One such node poisons '
+                                      f'every coefficient of the fit; shrink the Space to where '
+                                      f'the calculator is finite.')
+        return values
 
     def inputs(self):
         """The node coordinates actually evaluated, ``(n_nodes, n_params)``.

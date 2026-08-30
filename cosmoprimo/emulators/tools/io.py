@@ -84,8 +84,19 @@ def write_state(path, state):
         path = path + HDF5[0]
     import h5py
 
-    with h5py.File(path, 'w') as file:
-        _write(file.create_group('emulator'), state)
+    # Write-then-rename, so a failed write (an unserializable value found halfway through the
+    # state) never leaves a truncated file where a cache lookup will trust it: measured, a
+    # half-written emulator read back as KeyError deep inside _read, one session later.
+    partial = path + '.partial'
+    try:
+        with h5py.File(partial, 'w') as file:
+            _write(file.create_group('emulator'), state)
+    except BaseException:
+        import contextlib
+        with contextlib.suppress(OSError):
+            os.remove(partial)
+        raise
+    os.replace(partial, path)
     return path
 
 

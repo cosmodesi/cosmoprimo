@@ -1,5 +1,9 @@
 """Interpolation engines: fit a set of node evaluations, predict anywhere in the box.
 
+The base geometry here -- the box, the transforms, the whitening -- is shared by every engine,
+including the ones in :mod:`mlp` and :mod:`taylor`. What each engine adds is the node set it
+wants and how it turns those values into a prediction.
+
 The Chebyshev engine is a sparse-grid (Smolyak) interpolant on Chebyshev-Lobatto nodes: exact on
 polynomials, near-minimax over the box, and one coefficient contraction to evaluate. Two
 properties of the node set matter in practice:
@@ -14,6 +18,9 @@ principal axes rather than in a rectangle around them (measured 350x in the medi
 count, the largest single lever). The engine's parameter names stay physical: whitened
 coordinates are not cosmology parameters, and exposing them breaks anything downstream that looks
 parameters up by name.
+
+:class:`~.taylor.TaylorEngine` does not interpolate, it expands about the
+centre, and its knobs are ``order`` and ``accuracy`` rather than ``levels`` and ``budget``.
 """
 
 import itertools
@@ -30,7 +37,14 @@ ENGINES = {}
 
 
 def engine_from_state(state):
-    """Rebuild whichever engine wrote this state."""
+    """Rebuild whichever engine wrote this state.
+
+    The registry only holds the engines whose module has been imported, and reading a saved
+    emulator in a fresh process imports none of them, so the ones that live elsewhere are pulled
+    in here rather than being reported as unknown.
+    """
+    from . import mlp, taylor    # noqa: F401 -- registers MLPEngine and TaylorEngine
+
     name = state.get('name', 'chebyshev')
     if name not in ENGINES:
         raise ValueError(f'unknown engine {name!r} in the saved state; have {sorted(ENGINES)}')

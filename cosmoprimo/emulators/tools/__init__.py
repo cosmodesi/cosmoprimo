@@ -5,7 +5,7 @@ Everything here works on a plain ``target(params) -> dict`` of named arrays::
     from cosmoprimo.emulators.tools import Emulator, Space
 
     emu = Emulator(target, Space(samples=chain))
-    emu.train(engine='taylor', budget=4)
+    emu.train(budget=4)                # or engine='taylor', order=3
     emu.predict(h=0.68, omega_cdm=0.12)
 
 What a particular calculator knows about itself -- that ``Cl ~ A_s``, that a full-shape spectrum

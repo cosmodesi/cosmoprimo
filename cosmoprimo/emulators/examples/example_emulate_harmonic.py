@@ -163,3 +163,12 @@ print("Cosmology(engine='harmonic_emulator.h5') reproduces it exactly")
 # It is a stochastic fit, not an interpolant, so it does not converge the way the grid does: on a
 # 2-parameter CMB space it reached 1.9e-3 from 128 nodes where the grid reached 8e-7 from 13.
 # Reach for it when the dimension is the problem, not the accuracy.
+#
+# The third engine is a genuine Taylor expansion -- derivatives at the centre from a
+# finite-difference stencil, rather than interpolation across the box:
+#
+#     emu.train(engine='taylor', order=3, accuracy=2)
+#
+# Its knobs are `order` and `accuracy`, not `budget`. Over a whole posterior the grid is the
+# better buy; the expansion is what you want when the derivatives are themselves the output, or
+# when reproducing an analysis that was built on one. See `tools/taylor.py`.
