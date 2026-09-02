@@ -3,6 +3,7 @@
 import os
 import sys
 
+
 import numpy as np
 
 from .utils import BaseClass
@@ -48,6 +49,16 @@ class CosmologyInputError(CosmologyError):
 class CosmologyComputationError(CosmologyError):
 
     """Exception raised when error in cosmology computation."""
+
+
+class CosmologyParameterError(CosmologyError):
+
+    """Exception raised when a parameter is neither input nor derivable.
+
+    A subclass of :class:`CosmologyError`, so ``except CosmologyError`` still catches it, and
+    distinct so that ``cosmo.get(name, default)`` can fall back on an unknown name without also
+    swallowing a genuine computation failure -- deriving ``theta_cosmomc`` runs the background.
+    """
 
 
 def is_sequence(item):
@@ -329,7 +340,10 @@ class BaseCosmoParams(BaseClass):
         return self.get(name)
 
     def get(self, *args, **kwargs):
-        """Return an input (or easily derived) parameter."""
+        """Return an input (or easily derived) parameter.
+
+        A one-name wrapper over :meth:`_get_params`, which holds the derivations.
+        """
         if len(args) == 1:
             name = args[0]
             has_default = 'default' in kwargs
@@ -337,61 +351,123 @@ class BaseCosmoParams(BaseClass):
         else:
             name, default = args
             has_default = True
-        params = self.get_params(of='base')
-        derived = self.get_params(of='derived')
         try:
+            return self._get_params(self, [name])[name]
+        except CosmologyParameterError:
+            if has_default:
+                return default
+            raise
+
+    @classmethod
+    def _get_params(cls, params, names, base=None):
+        r"""
+        Derive parameters ``names`` from input ``params``.
+
+        The fundamental parameter accessor: every derivation lives here, and :meth:`get` (hence
+        ``cosmo[name]``) is a one-name wrapper over it. Passing a :class:`Cosmology` as ``params``
+        reuses it instead of building one, which is what makes that wrapper cheap.
+
+        A dict is normalised and merged first, so no engine is instantiated -- the point of the
+        classmethod form. The internal basis is :math:`h, \Omega_{i}` (:meth:`_compile_params`
+        normalises ``omega`` to ``Omega``), but that is not always the basis one wants to work in: the CMB responds
+        simply to the PHYSICAL densities :math:`\omega_{i} = \Omega_{i} h^{2}`, while a chain is
+        usually run in :math:`\Omega_{m}`. Converting between them is not a rescaling -- it mixes
+        in :math:`h`, and :math:`\Omega_{cdm}` also depends on the neutrino content -- so it has
+        to go through the parameter compilation rather than being done by hand.
+
+        Parameters
+        ----------
+        params : dict
+            Input parameters, in any accepted basis.
+        names : list
+            Names to return, derived if need be, e.g. ``['omega_cdm', 'omega_b', 'h']``.
+        base : dict, default=None
+            Input parameters supplying everything ``params`` leaves unspecified, typically a
+            fiducial cosmology's :attr:`_input_params`. Merged conflict-aware, so passing
+            ``Omega_m`` against a base holding ``Omega_cdm`` replaces it rather than clashing.
+
+        Returns
+        -------
+        params : dict
+            ``params``, expressed in ``names``.
+
+        >>> Cosmology._get_params({'Omega_m': 0.31, 'h': 0.68}, ['omega_cdm', 'omega_b', 'h'])
+        {'omega_cdm': 0.1207, 'omega_b': 0.0227, 'h': 0.68}
+        """
+        if isinstance(params, BaseCosmoParams):
+            # already a cosmology or an engine (this is how `get` calls in): deriving must not
+            # rebuild one, since `get` is on the hot path and the derivations below recurse
+            cosmo = params
+        else:
+            # the classmethod form. `get` never lands here; a dict of parameters is a statement
+            # about a cosmology, and an engine class cannot be built from one, so resolve the
+            # class rather than trusting `cls`
+            cosmo_cls = cls if issubclass(cls, Cosmology) else Cosmology
+            params = dict(params)
+            check_params(params, conflicts=cosmo_cls._conflict_parameters)
+            merged = merge_params(dict(base) if base is not None else {}, params,
+                                  conflicts=cosmo_cls._conflict_parameters)
+            cosmo = cosmo_cls(**merged)
+        params = cosmo.get_params(of='base')
+        # a copy, so the `derived[...] =` caches below live only as long as this call -- which is
+        # still worth having, since one call may ask for several names off the same ncdm integral
+        derived = cosmo.get_params(of='derived')
+
+        def derive(name):
+            """One name, or KeyError if something it is built from is missing."""
             if name in params:
                 return params[name]
             if name in derived:
                 return derived[name]
             if name.startswith('omega'):
-                return self.get('O' + name[1:]) * params['h']**2
+                return derive('O' + name[1:]) * params['h']**2
             if name == 'H0':
                 return params['h'] * 100
-            if name in ['logA', 'ln10^{10}A_s', 'ln10^10A_s', 'ln_A_s_1e10']:
-                return self._np.log(1e10 * params['A_s'])
+            if name == 'logA' or name in Cosmology._alias_parameters['logA']:
+                # the alias table, not a second copy of it: the two drifting apart is silent
+                return cosmo._np.log(1e10 * params['A_s'])
             # if name == 'rho_crit':
             #     return constants.rho_crit_Msunph_per_Mpcph3
             if name == 'Omega_g':
                 rho = params['T_cmb']**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
-                return rho / (self.get('h')**2 * constants.rho_crit_over_kgph_per_mph3)
+                return rho / (derive('h')**2 * constants.rho_crit_over_kgph_per_mph3)
             if name == 'T_ur':
                 return params['T_cmb'] * (4. / 11.)**(1. / 3.)
             if name == 'T_ncdm':
-                return self._np.array(params['T_ncdm_over_cmb']) * params['T_cmb']
+                return cosmo._np.array(params['T_ncdm_over_cmb']) * params['T_cmb']
             if name == 'Omega_ur':
-                rho = params['N_ur'] * 7. / 8. * self.get('T_ur')**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
-                return rho / (self.get('h')**2 * constants.rho_crit_over_kgph_per_mph3)
+                rho = params['N_ur'] * 7. / 8. * derive('T_ur')**4 * 4. / constants.c**3 * constants.Stefan_Boltzmann  # density, kg/m^3
+                return rho / (derive('h')**2 * constants.rho_crit_over_kgph_per_mph3)
             if name == 'Omega_r':
-                rho = (params['T_cmb']**4 + params['N_ur'] * 7. / 8. * self.get('T_ur')**4) * 4. / constants.c**3 * constants.Stefan_Boltzmann
-                return rho / (self.get('h')**2 * constants.rho_crit_over_kgph_per_mph3) + self.get('Omega_pncdm_tot')
+                rho = (params['T_cmb']**4 + params['N_ur'] * 7. / 8. * derive('T_ur')**4) * 4. / constants.c**3 * constants.Stefan_Boltzmann
+                return rho / (derive('h')**2 * constants.rho_crit_over_kgph_per_mph3) + derive('Omega_pncdm_tot')
             if name == 'm_ncdm_tot':
                 return sum(params['m_ncdm'])
             if name == 'Omega_ncdm':
-                derived['Omega_ncdm'] = self._get_ncdm(z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
+                derived['Omega_ncdm'] = cosmo._get_ncdm(z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
                 return derived['Omega_ncdm']
             if name == 'Omega_ncdm_tot':
-                return sum(self.get('Omega_ncdm'))
+                return sum(derive('Omega_ncdm'))
             if name == 'Omega_pncdm':
-                derived['Omega_pncdm'] = 3. * self._get_ncdm(z=0, out='p') / constants.rho_crit_over_Msunph_per_Mpcph3
+                derived['Omega_pncdm'] = 3. * cosmo._get_ncdm(z=0, out='p') / constants.rho_crit_over_Msunph_per_Mpcph3
                 return derived['Omega_pncdm']
             if name == 'Omega_pncdm_tot':
-                return sum(self.get('Omega_pncdm'))
+                return sum(derive('Omega_pncdm'))
             if name == 'Omega_m':
-                return self.get('Omega_b') + self.get('Omega_cdm') + self.get('Omega_ncdm_tot') - self.get('Omega_pncdm_tot')
+                return derive('Omega_b') + derive('Omega_cdm') + derive('Omega_ncdm_tot') - derive('Omega_pncdm_tot')
             if name == 'Omega_de':
-                return 1. - sum(self.get(name) for name in ['Omega_cdm', 'Omega_b', 'Omega_g', 'Omega_ur', 'Omega_ncdm_tot', 'Omega_k'])
+                return 1. - sum(derive(name) for name in ['Omega_cdm', 'Omega_b', 'Omega_g', 'Omega_ur', 'Omega_ncdm_tot', 'Omega_k'])
             if name == 'Omega_Lambda':
-                if self._use_jax:
+                if cosmo._use_jax:
                     import jax
-                    return jax.lax.cond(self._has_fld, lambda: 0., lambda: self.get('Omega_de'))
-                if self._has_fld: return 0.
-                return self.get('Omega_de')
+                    return jax.lax.cond(cosmo._has_fld, lambda: 0., lambda: derive('Omega_de'))
+                if cosmo._has_fld: return 0.
+                return derive('Omega_de')
             if name == 'Omega_fld':
-                if self._use_jax:
+                if cosmo._use_jax:
                     import jax
-                    return jax.lax.cond(self._has_fld, lambda: self.get('Omega_de'), lambda: 0.)
-                if self._has_fld: return self.get('Omega_de')
+                    return jax.lax.cond(cosmo._has_fld, lambda: derive('Omega_de'), lambda: 0.)
+                if cosmo._has_fld: return derive('Omega_de')
                 return 0.
             if name == 'K':
                 return - 100.**2 / (constants.c / 1e3)**2 * params['Omega_k']  # in (h / Mpc)^2
@@ -402,17 +478,22 @@ class BaseCosmoParams(BaseClass):
             if name == 'N_eff':
                 return sum(T_ncdm_over_cmb**4 * (4. / 11.)**(-4. / 3.) for T_ncdm_over_cmb in params['T_ncdm_over_cmb']) + params['N_ur']
             if name == 'theta_cosmomc':
-                ba = self.get_background()
-                rs, zstar = _compute_rs_cosmomc(self['omega_b'], self['omega_m'], ba.hubble_function)
-                derived['theta_cosmomc'] = rs * ba.h / ba.comoving_angular_distance(zstar)
+                ba = cosmo.get_background()
+                rs, zstar = _compute_rs_cosmomc(derive('omega_b'), derive('omega_m'), ba.hubble_function)
+                derived['theta_cosmomc'] = rs * ba.h / ba.comoving_transverse_distance(zstar)
                 return derived['theta_cosmomc']
             if name == 'theta_MC_100':
-                return self.get('theta_cosmomc') * 100.
-        except KeyError:
-            pass
-        if has_default:
-            return default
-        raise CosmologyError('Parameter {} not found.'.format(name))
+                return derive('theta_cosmomc') * 100.
+            raise CosmologyParameterError('Parameter {} not found.'.format(name))
+
+        toret = {}
+        for name in names:
+            try:
+                toret[name] = derive(name)
+            except KeyError as exc:
+                # something `name` is built from is not an input parameter of this cosmology
+                raise CosmologyParameterError('Parameter {} not found.'.format(name)) from exc
+        return toret
 
     @property
     def _has_fld(self):
@@ -621,8 +702,15 @@ def get_engine(engine):
             from . import astropy
         elif engine == 'tabulated':
             from . import tabulated
-        elif engine in ['capse', 'cosmopower_bolliet2023']:
-            from cosmoprimo import emulators
+        elif engine == 'ace':
+            from .emulators import ace
+        elif engine.endswith(('.h5', '.hdf5', '.npy', '.npz')) or os.path.exists(engine):
+            # a trained emulator, by path: Cosmology(engine='my_emulator.npy') should behave
+            # exactly like Cosmology(engine='capse') -- a dictionary of arrays is a training
+            # artifact, not a usable cosmology
+            from cosmoprimo.emulators import read_engine
+
+            return read_engine(engine)
 
         try:
             engine = BaseEngine._registry[engine]
@@ -1291,6 +1379,7 @@ class Cosmology(BaseCosmoParams):
             new.set_engine(engine, **extra_params)
         return new
 
+
     def solve(self, param, func, target=0., limits=None, init=None, xtol=1e-6, maxiter=25):
         """
         Return cosmology ``cosmo`` that verifies ``func(cosmo) == target``, by varying parameter ``param``.
@@ -1935,7 +2024,7 @@ class BaseBackground(BaseSection):
             raise CosmologyComputationError from exc
 
 
-from .jax import Interpolator1D, odeint
+from .jax import Interpolator1D, odeint, cumulative_quad, use_jax, scan_numpy
 
 
 
@@ -2004,11 +2093,13 @@ class DefaultBackground(BaseBackground):
         r"""Proper time (age of universe), in :math:`\mathrm{Gy}`."""
         name = 'time'
         if name not in self._cache:
-            def integrand(y, z):
+            def integrand(z):
                 return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
 
             zc = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
-            tmp = odeint(integrand, 0., zc)
+            # y-independent integrand: cumulative Simpson == the RK4 solve, one vectorised
+            # evaluation instead of four per step (see jax.cumulative_quad).
+            tmp = cumulative_quad(integrand, zc)
             self._cache[name] = Interpolator1D(zc, (tmp[-1] - tmp) / self.h / constants.gigayear_over_megaparsec)
         return self._cache[name](z)
 
@@ -2018,11 +2109,11 @@ class DefaultBackground(BaseBackground):
         # Faster to not instiante Interpolator1D
         name = 'age'
         if name not in self._cache:
-            def integrand(y, z):
+            def integrand(z):
                 return constants.c / 1e3 / (1. + z) / (100. * self.efunc(z))
 
             zc = get_default_z_interp(name)
-            tmp = odeint(integrand, 0., zc)
+            tmp = cumulative_quad(integrand, zc)
             self._cache[name] = (tmp[-1] - tmp[0]) / self.h / constants.gigayear_over_megaparsec
         return self._cache[name]
 
@@ -2035,11 +2126,13 @@ class DefaultBackground(BaseBackground):
         """
         name = 'comoving_radial_distance'
         if name not in self._cache:
-            def integrand(y, z):
+            def integrand(z):
                 return constants.c / 1e3 / (100. * self.efunc(z))
 
             zc = get_default_z_interp(name)
-            tmp = odeint(integrand, 0., zc)
+            # y-independent integrand: cumulative Simpson == the RK4 solve exactly, with one
+            # vectorised efunc evaluation instead of four per step (see jax.cumulative_quad).
+            tmp = cumulative_quad(integrand, zc)
             self._cache[name] = Interpolator1D(zc, tmp)  # cubic interpolation takes a lot of time, but is very efficient
         return self._cache[name](z)
 
@@ -2067,19 +2160,72 @@ class DefaultBackground(BaseBackground):
                 z = self._np.exp(- eta) - 1.
                 return 3. / 2. * Omega_mass(z)
 
-            # differential eq.
-            def Deqs(Df, eta):
-                Df, Dprime = Df
-                return self._np.array([Dprime, f2(eta) * Df + f1(eta) * Dprime])
-
             eta = np.linspace(-6., 0., 201)
             zc = self._np.exp(- eta) - 1.
             Df_p0 = Df0 = self._np.exp(eta[0])
 
-            # solution
-            Dplus, Dplusp = odeint(Deqs, self._np.array([Df0, Df_p0]), eta).T
-            self._cache[name_factor] = Interpolator1D(zc[::-1], Dplus[::-1])
-            self._cache[name_rate] = Interpolator1D(zc[::-1], Dplusp[::-1] / Dplus[::-1])
+            # f1 and f2 depend on eta only (the equation is linear in (D, D') with
+            # time-dependent coefficients), so evaluate them ONCE, vectorised, at every
+            # abscissa the RK4 stepper visits -- the grid points and the midpoints --
+            # instead of calling the Omega_* accessors four times per step inside the scan.
+            # Each such call costs several spline evaluations (rho_ncdm and friends are
+            # interpolator-backed), which dominated the solve.  Same stepper, same grid,
+            # same result to round-off.
+            eta_prev = np.concatenate([eta[:1], eta[:-1]])
+            eta_mid = (eta_prev + eta) / 2.
+            eta_all = np.concatenate([eta_prev, eta_mid, eta])
+            f1_all, f2_all = f1(eta_all), f2(eta_all)
+            nsteps = len(eta)
+            coeffs = self._np.stack([eta - eta_prev,
+                                     f1_all[:nsteps], f2_all[:nsteps],
+                                     f1_all[nsteps:2 * nsteps], f2_all[nsteps:2 * nsteps],
+                                     f1_all[2 * nsteps:], f2_all[2 * nsteps:]], axis=-1)
+
+            # The equation is LINEAR in y = (D, D'), so one RK4 step is a fixed 2x2 matrix
+            # map y_{n+1} = M_n y_n.  Building the M_n vectorised and taking their cumulative
+            # product with an associative scan replaces a 201-step SEQUENTIAL scan (whose cost
+            # is per-iteration dispatch overhead, not arithmetic) by batched 2x2 products of
+            # log depth.  Same RK4 map, so the same result up to floating-point reassociation.
+            nplus = self._np
+            h = coeffs[..., 0]
+            f1a, f2a, f1m, f2m, f1b, f2b = (coeffs[..., idx] for idx in range(1, 7))
+            zeros, ones = nplus.zeros_like(h), nplus.ones_like(h)
+
+            def amatrix(f1v, f2v):
+                # y' = A y with A = [[0, 1], [f2, f1]]
+                return nplus.stack([nplus.stack([zeros, ones], axis=-1),
+                                    nplus.stack([f2v, f1v], axis=-1)], axis=-2)
+
+            eye = nplus.stack([nplus.stack([ones, zeros], axis=-1),
+                               nplus.stack([zeros, ones], axis=-1)], axis=-2)
+            amat_a, amat_m, amat_b = amatrix(f1a, f2a), amatrix(f1m, f2m), amatrix(f1b, f2b)
+            hh = h[..., None, None]
+            # k1 = A_a y ; k2 = A_m (I + h/2 A_a) y ; k3 = A_m (I + h/2 K2) y ; k4 = A_b (I + h K3) y
+            kmat1 = amat_a
+            kmat2 = amat_m @ (eye + hh / 2. * kmat1)
+            kmat3 = amat_m @ (eye + hh / 2. * kmat2)
+            kmat4 = amat_b @ (eye + hh * kmat3)
+            steps = eye + hh / 6. * (kmat1 + 2. * kmat2 + 2. * kmat3 + kmat4)
+
+            y0 = self._np.array([Df0, Df_p0])
+            if use_jax(steps):
+                import jax
+                # combine(a, b) = b @ a: later steps multiply on the left.
+                cumulated = jax.lax.associative_scan(lambda a, b: b @ a, steps)
+            else:
+                cumulated = np.empty_like(steps)
+                current = np.eye(2)
+                for index in range(len(steps)):
+                    current = steps[index] @ current
+                    cumulated[index] = current
+            Dplus, Dplusp = (cumulated @ y0).T
+            # ONE spline build for both quantities: Interpolator1D interpolates along axis 0,
+            # so factor and rate travel as two columns and share the knot setup (two separate
+            # builds were ~half the cost of the whole growth call once the ODE was vectorised).
+            both = self._np.stack([Dplus, Dplusp / Dplus], axis=-1)
+            self._cache[name_factor + '_rate'] = Interpolator1D(zc[::-1], both[::-1])
+            self._cache[name_factor] = lambda z, _interp=self._cache[name_factor + '_rate']: _interp(z)[..., 0]
+            self._cache[name_rate] = lambda z, _interp=self._cache[name_factor + '_rate']: _interp(z)[..., 1]
 
         growthz = self._cache[name_factor](z)
         if znorm is not None:

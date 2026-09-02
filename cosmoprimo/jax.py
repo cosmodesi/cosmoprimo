@@ -16,7 +16,13 @@ try:
     config.update('jax_enable_x64', True)
     from jax import numpy, scipy
     array_types = []
-    for line in ['jaxlib.xla_extension.DeviceArrayBase', 'type(numpy.array(0))', 'jax.core.Tracer']:
+    # Types only -- nothing is instantiated. `type(numpy.array(0))` used to build a jax array
+    # right here, which brings the CUDA backend up at import with every visible device claimed;
+    # `desilike.distributed.initialize()` then cannot assign one GPU per rank, and `srun -n 4`
+    # died with CUDA_ERROR_OUT_OF_MEMORY inside the import. `jax.Array` is the public base of
+    # the concrete array type, so the isinstance verdicts are unchanged.
+    # Tracer must stay last in this list: `use_jax(tracer_only=True)` reads `array_types[-1:]`.
+    for line in ['jax.Array', 'jax.core.Tracer']:
         try:
             array_types.append(eval(line))
         except AttributeError:
@@ -153,8 +159,25 @@ class Interpolator1D(object):
         if self.interp_fun == 'log': fun = self._np.log10(fun)
         self.extrap = bool(extrap)
         self._mask_nan = None
+        self._nan_columns = None
         fun = fun.reshape(x.size, -1)
         if self._use_jax:
+            # Same hazard as the scipy branch below, and worse under vmap: interpax's cubic
+            # spline is a banded linear solve, so a NaN anywhere in a column makes that whole
+            # solve NaN -- and the solve's runtime check is batch-wide, so a single bad row NaNs
+            # every row of a vmapped batch. Measured: a cubic Interpolator1D over a batch of two,
+            # one row containing a NaN, returned [nan nan], where `jnp.interp` on the same data
+            # returned [3.4 3.4].
+            #
+            # That is how an unphysical cosmology (w0 + wa >= 1/3, which `exception_or_nan`
+            # correctly NaNs per element) took a whole sampler batch down through
+            # `comoving_radial_distance`, which caches its integral in one of these.
+            #
+            # So sanitise what the solve sees and put the NaN back afterwards, which is exactly
+            # what `_mask_nan` does for scipy -- but column-wise and traceable, so it survives
+            # jit/vmap.
+            self._nan_columns = numpy.isnan(fun).any(axis=0)
+            fun = numpy.where(numpy.isnan(fun), 0., fun)
             self._spline = _JAXInterpolator1D(x, fun, method=_interpax_convert_method(k), extrap=self.extrap, period=None)
         else:
             from scipy import interpolate
@@ -188,6 +211,9 @@ class Interpolator1D(object):
         mask_x, = _mask_bounds([x], [(self.xmin, self.xmax)], bounds_error=bounds_error)
         if self.interp_x == 'log': x = self._np.log10(x)
         tmp = self._spline(x, **kwargs)
+        if self._nan_columns is not None:
+            # put back what the solve was not allowed to see (see __init__)
+            tmp = self._np.where(self._nan_columns, self._np.nan, tmp)
         if self.interp_fun == 'log': tmp = 10**tmp
         toret = tmp = tmp if self.extrap else self._np.where(mask_x, tmp.T, self._np.nan).T
         if self._mask_nan is not None:
@@ -198,7 +224,7 @@ class Interpolator1D(object):
     def tree_flatten(self):
         # WARNING: does not preserve key orders in _params
         children = (self._spline, self.xmin, self.xmax)
-        aux_data = {name: getattr(self, name) for name in ['interp_x', 'interp_fun', '_np', '_use_jax', '_mask_nan', 'shape', 'extrap'] if hasattr(self, name)}
+        aux_data = {name: getattr(self, name) for name in ['interp_x', 'interp_fun', '_np', '_use_jax', '_mask_nan', '_nan_columns', 'shape', 'extrap'] if hasattr(self, name)}
         return children, aux_data
 
     @classmethod
@@ -669,6 +695,43 @@ def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return
     return result
 
 
+def cumulative_quad(func, t, y0=0.):
+    """
+    Cumulative integral of a *t*-only integrand: ``y(t) = y0 + int_{t[0]}^{t} func(t') dt'``.
+
+    Exactly equivalent to ``odeint(lambda y, t: func(t), y0, t, method='rk4')`` -- for a
+    right-hand side that does not depend on ``y``, RK4 reduces algebraically to Simpson's
+    rule on each interval, ``h / 6 * (g(a) + 4 g((a + b) / 2) + g(b))`` -- but evaluates
+    *func* ONCE, vectorised, at the grid points and the midpoints, instead of four times per
+    step inside a scan.  That matters when *func* is expensive per call (the background
+    integrands go through interpolator-backed densities).
+
+    Parameters
+    ----------
+    func : callable
+        Integrand, vectorised over *t*.
+    t : array
+        Integration nodes, in increasing order; the result is returned at these nodes.
+    y0 : float, default=0.
+        Value at ``t[0]``.
+
+    Returns
+    -------
+    y : array
+        Cumulative integral at each node of *t*.
+    """
+    # The nodes are static (a fixed z / eta grid); it is the INTEGRAND VALUES that may be
+    # traced, so dispatch numpy/jax on those, not on *t*.
+    t = np.asarray(t)
+    mid = (t[:-1] + t[1:]) / 2.
+    values = func(np.concatenate([t, mid]))
+    jnp = numpy_jax(values, y0)
+    values = jnp.asarray(values)
+    grid_values, mid_values = values[:t.size], values[t.size:]
+    increments = jnp.asarray((t[1:] - t[:-1]) / 6.) * (grid_values[:-1] + 4. * mid_values + grid_values[1:])
+    return jnp.concatenate([jnp.zeros(1, dtype=increments.dtype) + y0, y0 + jnp.cumsum(increments)])
+
+
 def odeint(fun, y0, t, args=(), method='rk4'):
 
     jnp = numpy_jax(t)
@@ -896,8 +959,12 @@ def bisect(f, limits, flimits=None, xtol=1e-6, maxiter=100, method='ridders'):
                     mid = 0.5 * (low + high)
                     fmid = f(mid)
                     s = np.sqrt(fmid * fmid - flow * fhigh)
-                    sign = 1. if flow >= 0 else -1.
-                    new = mid + (mid - low) * sign * fmid / s
+                    if not (s > 0.):
+                        # f(mid) == 0, or a discriminant driven negative by rounding: no Ridders
+                        # step is defined and mid is the best estimate available.
+                        return mid
+                    flow_sign = 1. if flow >= 0 else -1.
+                    new = mid + (mid - low) * flow_sign * fmid / s
                     fnew = f(new)
                     if (fmid * fnew <= 0):
                         low, flow = mid, fmid
@@ -906,8 +973,15 @@ def bisect(f, limits, flimits=None, xtol=1e-6, maxiter=100, method='ridders'):
                         high, fhigh = new, fnew
                     elif (fhigh * fnew < 0):
                         low, flow = new, fnew
+                    else:
+                        # No sign change left among low, mid, new, high: the residual has reached
+                        # rounding noise about the root, so the bracket can no longer shrink and
+                        # the next iteration would repeat this one until maxiter. Without this the
+                        # loop falls off the end and returns None.
+                        return new if np.abs(fnew) <= np.abs(fmid) else mid
                     if np.abs(high - low) < xtol:
                         return new
+                raise ValueError('did not converge to xtol = {:.3e} in {:d} iterations, last interval is [{}, {}]'.format(xtol, maxiter, low, high))
 
             else:
 

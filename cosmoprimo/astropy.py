@@ -167,9 +167,9 @@ class Background(BaseBackground):
         return np.zeros_like(z1)
 
     @utils.flatarray()
-    def comoving_angular_distance(self, z):
+    def comoving_transverse_distance(self, z):
         r"""
-        Comoving angular distance, in :math:`\mathrm{Mpc}/h`.
+        Comoving transverse distance, in :math:`\mathrm{Mpc}/h`.
 
         See eq. 16 of `astro-ph/9905116 <https://arxiv.org/abs/astro-ph/9905116>`_ for :math:`D_{M}(z)`.
         """
