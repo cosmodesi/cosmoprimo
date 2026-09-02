@@ -17,7 +17,7 @@ The emulation machinery itself knows nothing about cosmology and lives in
 :mod:`cosmoprimo.emulators.cosmology`.
 """
 
-from .tools import Space, Training, Validation, validate, CoverageError, NotTrained
+from .tools import Space, TrainingSet, Validation, validate, CoverageError, NotTrained
 # NOTE `Emulator` here is the cosmology entry point, which dispatches on `section`. The template
 # class to subclass is `cosmoprimo.emulators.tools.Emulator`.
 from .cosmology import (Emulator, emulate, read, SectionEmulator, CosmologyEmulator,

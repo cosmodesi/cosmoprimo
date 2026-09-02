@@ -191,3 +191,37 @@ def lagrange_weights(nodes, x):
         others = jnp.delete(nodes, node_index, assume_unique_indices=True)
         weights.append(jnp.prod((x - others) / (nodes[node_index] - others)))
     return jnp.stack(weights)
+
+
+def logit_transform(low, high):
+    """``(forward, inverse)`` for a variable confined to the open interval ``(low, high)``.
+
+    ``forward = log((x - low) / (high - x))`` maps that interval onto the whole real line, so an
+    expansion variable built with it can never leave it -- which is what lets a Chebyshev box
+    sit against a hard bound (e.g. ``w0 + wa < 0``) without a single node crossing it. A Smolyak
+    grid is unisolvent, so one node past the bound is not a smaller problem, it is a singular one.
+
+    The inverse is written as a sigmoid rather than ``(low + high e^u) / (1 + e^u)``: the latter
+    overflows to ``inf / inf = nan`` for large ``u``, where this saturates cleanly at a bound
+    (past ``|u| ~ 37`` in float64, far outside any box).
+    """
+    low, high = float(low), float(high)
+
+    def forward(value):
+        # the dispatching numpy, not the plain one: this runs inside a jit at every prediction, where plain
+        # numpy raises on a tracer.
+        return numpy_jax(value).log((value - low) / (high - value))
+
+    def inverse(value):
+        xnp = numpy_jax(value)
+        return low + (high - low) / (1. + xnp.exp(-value))
+
+    return forward, inverse
+
+
+#: The dark-energy bound as an expansion variable: ``w0 + wa`` confined to (-5, 0). 0 is CAMB's
+#: PPF limit ("w + wa > 0 gives w>0 at high redshift"), stricter than cosmoprimo's own 1/3 check;
+#: -5 is a floor below any plausible posterior (a CMB-only w0waCDM chain reaches -4.45) and is not
+#: cosmetic -- placed too far below, the logit is strongly right-skewed and a symmetric box cannot
+#: cover both tails. Registered under a name so a trained emulator's geometry stays serialisable.
+TRANSFORMS['logit_w0pwa'] = logit_transform(-5., 0.)

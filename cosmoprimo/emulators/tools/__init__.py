@@ -15,6 +15,6 @@ cosmologies; ``desilike.emulators`` builds them for its calculators; both call t
 
 from .space import Space
 from .emulate import Emulator, CoverageError, NotTrained, StateVersionError
-from .training import Training, NodeEvaluationError
+from .training import TrainingSet, NodeEvaluationError
 from .validation import Validation, validate
 from .io import write_state, read_state

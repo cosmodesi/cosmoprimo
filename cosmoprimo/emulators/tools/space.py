@@ -23,6 +23,8 @@ correlations and hard-bounds one parameter.
 
 import numpy as np
 
+from .utils import TRANSFORMS
+
 
 class Space(object):
     """The region an emulator must be accurate over, in the user's own parameters.
@@ -49,8 +51,12 @@ class Space(object):
         level sets one axis's own error (raising one from 2 to 3 cut that axis 276x for 4 extra
         nodes), the budget buys only interaction terms.
     transforms : dict, default=None
-        {parameter: name}, e.g. ``'sqrt'`` for a neutrino mass, so the nodes are placed in the
-        transformed variable.
+        {parameter: transform}, e.g. ``'sqrt'`` for a neutrino mass. A key into
+        :data:`~.utils.TRANSFORMS`, or a ``(forward, inverse)`` pair of callables where the map
+        carries parameters of its own that a name cannot express -- a logit and its interval.
+
+        Naming one makes it the *expansion variable* for that parameter, which changes what this
+        whole object is measured in, not just where the nodes fall: see the Notes.
 
     Attributes
     ----------
@@ -59,6 +65,29 @@ class Space(object):
     levels : dict
     transforms : dict
     mean : array
+
+    Notes
+    -----
+    Every quantity here -- :attr:`limits`, :attr:`mean`, :attr:`covariance` and :attr:`samples` --
+    is in the expansion variable, and so are the points :meth:`draw` returns and the ones
+    :meth:`contains` expects. Only :attr:`params` keeps the user's own names. Start from
+    :meth:`forward` when you hold a value in the user's parameter and want to compare it with any
+    of them; a comparison made in the wrong variable is silent, and wrong in both directions.
+
+    It has to work this way round. Nodes are placed on the principal axes of :attr:`covariance`,
+    so that covariance must describe the transformed variable -- and it can only be measured
+    there, from transformed samples. Propagating a physical covariance through the map instead
+    would be a linear approximation to a map chosen for being nonlinear: measured on
+    ``sqrt(m_ncdm)`` over 0.02-0.40, a Jacobian puts the mean 13.1% of a sigma off and sigma
+    itself 8.4% off, which tilts the very axes the whitening exists to find. This is also why
+    ``transforms`` cannot simply move to the engine, which sees a covariance and never the samples
+    behind it.
+
+    What this class does not decide is how the region is tiled. Whether a hard bound in
+    :attr:`limits` is honoured by narrowing the box (``shrink_to_limits``) or by holding that axis
+    out of the whitening rotation (``unrotated``) is the engine's choice, and both live on
+    :class:`~.engines.BaseEngine`. :attr:`nsigma` here is descriptive: it says how far out the
+    region reaches, and is never reduced to make a box fit.
     """
     def __init__(self, samples=None, mean=None, covariance=None, limits=None, params=None,
                  nsigma=3., levels=None, transforms=None):
@@ -71,6 +100,17 @@ class Space(object):
             names = list(samples.columns('X.*')) if hasattr(samples, 'columns') else list(samples)
             self.params = [name[2:] if name.startswith('X.') else name for name in names]
             self.samples = np.column_stack([np.asarray(samples[name]) for name in names])
+            # A declared transform makes that parameter the expansion variable: the engine
+            # composes transform-then-whiten, so mean and covariance must describe the
+            # transformed samples, not the raw ones. Doing it here means a caller never
+            # has to know -- passing raw samples and a transform is enough, and the two
+            # cannot drift apart. (Getting this wrong is silent: the box is then in one
+            # variable and the nodes in another.)
+            for _name, _spec in (transforms or {}).items():
+                if _name in self.params:
+                    _forward = TRANSFORMS[_spec][0] if isinstance(_spec, str) else _spec[0]
+                    self.samples[:, self.params.index(_name)] = _forward(
+                        self.samples[:, self.params.index(_name)])
             self.mean = self.samples.mean(axis=0)
             self._covariance = np.cov(self.samples, rowvar=False)
         elif covariance is not None:
@@ -87,16 +127,30 @@ class Space(object):
         else:
             raise ValueError('provide samples=, (mean=, covariance=, params=), or limits=')
 
+        # limits arrive in the user's own parameter; map them into the expansion variable
+        # so they can be compared with mean +- nsigma sigma below.
+        for _name, _spec in (transforms or {}).items():
+            if _name in limits:
+                _forward = TRANSFORMS[_spec][0] if isinstance(_spec, str) else _spec[0]
+                limits[_name] = tuple(sorted(float(_forward(value)) for value in limits[_name]))
+
         unknown = [name for name in limits if name not in self.params]
         if unknown:
             raise ValueError(f'limits name unknown parameters {unknown}; space has {self.params}')
 
-        if self._covariance is not None:                    # mean +- nsigma sigma, then overrides
+        if self._covariance is not None:                 # mean +- nsigma sigma, then tightened
             sigma = np.sqrt(np.diag(self._covariance))
             self.limits = {name: (self.mean[index] - self.nsigma * sigma[index],
                                   self.mean[index] + self.nsigma * sigma[index])
                            for index, name in enumerate(self.params)}
-            self.limits.update(limits)
+            # A supplied limit only ever tightens, never widens. A hard bound -- w0 + wa < 0,
+            # a positive mass -- has to cut the box; one merely describing a range, looser than
+            # mean +- nsigma sigma,
+            # should not inflate it. Taking the intersection makes `limits` mean the same
+            # thing whichever way it was derived, and an empty result raises just below.
+            for name, (low, high) in limits.items():
+                current_low, current_high = self.limits[name]
+                self.limits[name] = (max(current_low, low), min(current_high, high))
         else:
             self.limits = limits
             self.mean = np.array([sum(self.limits[name]) / 2. for name in self.params])
@@ -136,6 +190,31 @@ class Space(object):
         off = np.abs(self.correlation - np.eye(len(self.params)))
         return bool(off.max() > threshold)
 
+    def geometry(self):
+        """The box, as the keyword arguments an engine's constructor takes.
+
+        Here rather than in :meth:`~.emulate.Emulator._engine` so that what the geometry *is*
+        stays with the class that owns it, and an engine keeps taking plain arrays: an engine is
+        serialised and rebuilt in a fresh process, and what it persists is the factorised
+        whitening -- mean, rotation, scale -- not the covariance, nor the chain in :attr:`samples`
+        that a Space may carry. Handing it a Space would only move the unpacking into
+        ``__init__``, and split it from ``__getstate__``.
+
+        The whitening keys are added only when :meth:`is_correlated`, so the nodes go on the
+        posterior's principal axes instead of a rectangle around them: measured 350x in the median
+        at equal node count, the largest single lever. It stays internal -- the engine's parameter
+        names remain physical.
+
+        Describes the region and nothing more. :attr:`nsigma` goes out as given, and it is the
+        engine that decides how to fit a box inside :attr:`limits` -- see
+        :meth:`~.engines.BaseEngine._shrink_to_limits`.
+        """
+        geometry = dict(params=list(self.params), limits=dict(self.limits),
+                        levels=dict(self.levels), transform=dict(self.transforms))
+        if self.is_correlated():
+            geometry.update(mean=self.mean, covariance=self.covariance, nsigma=self.nsigma)
+        return geometry
+
     def marginal(self, names):
         """The space restricted to ``names``, marginalising over the rest.
 
@@ -150,13 +229,12 @@ class Space(object):
             raise ValueError(f'unknown parameters {unknown}; space has {self.params}')
         levels = {name: self.levels[name] for name in names}
         transforms = {name: self.transforms[name] for name in names if self.transforms[name]}
+        limits = {name: self.limits[name] for name in names}
         if self._covariance is None:
-            return Space(limits={name: self.limits[name] for name in names}, nsigma=self.nsigma,
-                         levels=levels, transforms=transforms)
+            return Space(limits=limits, nsigma=self.nsigma, levels=levels, transforms=transforms)
         index = [self.params.index(name) for name in names]
         space = Space(mean=self.mean[index], covariance=self._covariance[np.ix_(index, index)],
-                      params=names, nsigma=self.nsigma,
-                      limits={name: self.limits[name] for name in names},
+                      params=names, nsigma=self.nsigma, limits=limits,
                       levels=levels, transforms=transforms)
         if self.samples is not None:
             space.samples = self.samples[:, index]
@@ -220,9 +298,38 @@ class Space(object):
             values = rng.uniform(low, high, size=(size, len(self.params)))
         return [dict(zip(self.params, row)) for row in values]
 
+    def forward(self, point):
+        """A point in the user's own parameters, mapped into the expansion variable.
+
+        Everything this class holds -- :attr:`limits`, :attr:`mean`, :attr:`covariance`,
+        :attr:`samples` -- is in the expansion variable, because that is what a declared transform
+        makes the interpolant work in, and mean and covariance have to describe the same variable
+        the nodes are placed in. So a value arriving in the user's parameter has to be mapped
+        before it can be compared with any of them.
+
+        This is the whole boundary between the two coordinate systems, and it is worth calling
+        rather than open-coding: a comparison made in the wrong one is silent and wrong in both
+        directions -- it rejects points well inside a declared bound and accepts points outside it.
+        Dispatches through the value, so it survives a jax trace.
+        """
+        mapped = {}
+        for name, value in point.items():
+            # a registry key ('sqrt'), or a (forward, inverse) pair of callables, which is what a
+            # parameterised transform needs -- a logit carries its interval, and a name-keyed
+            # registry cannot express that.
+            spec = self.transforms.get(name)
+            forward = None if spec is None else (TRANSFORMS[spec][0] if isinstance(spec, str)
+                                                 else spec[0])
+            mapped[name] = forward(value) if forward is not None else value
+        return mapped
+
     def contains(self, point):
         """Is this point inside the box? Coverage is a contract: a point outside must be an
-        error, never a silent clip."""
+        error, never a silent clip.
+
+        *point* is in the expansion variable, as :attr:`limits` and :attr:`samples` are; start from
+        :meth:`forward` when you have the user's own parameters.
+        """
         return all(self.limits[name][0] <= point[name] <= self.limits[name][1]
                    for name in self.params)
 

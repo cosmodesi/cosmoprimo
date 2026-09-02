@@ -144,8 +144,44 @@ def test_jax():
     print(odeint(integrand, 0., jnp.linspace(0., 1., 100)))
 
 
+
+
+def test_bisect_numpy():
+    """Non-JAX bisect: both methods, and the rounding regime that used to break ridders."""
+    from cosmoprimo.jax import bisect
+
+    for method in ['ridders', 'bisection']:
+        # 'bisection' used to raise UnboundLocalError: `sign` was assigned in the ridders branch,
+        # which made it a local of the enclosing function everywhere.
+        assert np.allclose(bisect(lambda x: x**2 - 4., [0., 5.], xtol=1e-10, method=method), 2., atol=1e-6), method
+
+    # theta_MC_100 ~ 1.04 has a ulp of 2.2e-16, so theta_MC_100 - target is quantised near the
+    # root and can round to the wrong side of zero. Ridders then finds no sign change among low,
+    # mid, new and high, and cannot shrink the bracket any further: it used to spin to maxiter and
+    # fall off the end of the loop returning None, which Cosmology.solve fed straight back into a
+    # clone as h=None ('unsupported operand type(s) for **: NoneType and int'). Observed with CAMB
+    # while solving h for theta_MC_100, and with CLASS on other nodes.
+    root, target = 0.6533955615074739, 1.0408640431821163
+
+    def residual(h):
+        return (target + 0.336 * (h - root)) - target
+
+    for maxiter in [40, 60]:
+        value = bisect(residual, [0.627865, 0.6536818], xtol=1e-9, maxiter=maxiter)
+        assert value is not None, 'ridders returned None on a stalled bracket'
+        assert np.allclose(value, root, atol=1e-12), value
+
+    # Genuine non-convergence must be an error, never a silent None.
+    try:
+        bisect(lambda x: x - 0.4321, [0., 1.], xtol=1e-15, maxiter=1)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('non-convergence did not raise')
+
 if __name__ == '__main__':
 
     test_jax()
+    test_bisect_numpy()
     test_least_squares()
     test_redshift_array()

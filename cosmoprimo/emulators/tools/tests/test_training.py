@@ -7,7 +7,7 @@ node set whose infeasibility surfaced only at fit time, and a fit fed a partial 
 import numpy as np
 import pytest
 
-from cosmoprimo.emulators.tools.training import Training, NodeEvaluationError, _seconds
+from cosmoprimo.emulators.tools.training import TrainingSet, NodeEvaluationError, _seconds
 
 
 def target(params):
@@ -29,16 +29,16 @@ def test_seconds_parsing():
 def test_resume_reproduces_the_uninterrupted_result(tmp_path):
     """A training that cannot resume loses everything to one kill."""
     checkpoint = str(tmp_path / 'nodes.npz')
-    whole = Training(target, NODES, ['a', 'b'])
+    whole = TrainingSet(target, NODES, ['a', 'b'])
     whole.run()
 
     # a budget shorter than one evaluation: each run must still advance by exactly one node,
     # or resumption never terminates
-    partial = Training(target, NODES, ['a', 'b'], checkpoint=checkpoint, chunk=1e-9, save_every=1)
+    partial = TrainingSet(target, NODES, ['a', 'b'], checkpoint=checkpoint, chunk=1e-9, save_every=1)
     assert not partial.run()
     assert partial.done == 1
-    while not (resumed := Training(target, NODES, ['a', 'b'], checkpoint=checkpoint,
-                                   chunk=1e-9, save_every=1)).run():
+    while not (resumed := TrainingSet(target, NODES, ['a', 'b'], checkpoint=checkpoint,
+                                      chunk=1e-9, save_every=1)).run():
         pass
     assert resumed.done == len(NODES)
     assert np.allclose(np.array(resumed.values['y']), np.array(whole.values['y']))
@@ -51,14 +51,14 @@ def test_a_failing_node_is_reported_not_swallowed():
             raise RuntimeError('solver did not converge')
         return target(params)
 
-    training = Training(flaky, NODES, ['a', 'b'])
+    training = TrainingSet(flaky, NODES, ['a', 'b'])
     with pytest.raises(NodeEvaluationError, match='did not converge'):
         training.run()
 
 
 def test_an_incomplete_node_set_is_refused():
     """A sparse-grid fit needs every node of its combination; a partial set must not look fine."""
-    training = Training(target, NODES, ['a', 'b'], chunk=1e-9, save_every=1)
+    training = TrainingSet(target, NODES, ['a', 'b'], chunk=1e-9, save_every=1)
     training.run()
     assert training.done == 1 and not training.complete
     with pytest.raises(ValueError, match='incomplete'):
@@ -66,7 +66,7 @@ def test_an_incomplete_node_set_is_refused():
 
 
 def test_outputs_round_trip():
-    training = Training(target, NODES, ['a', 'b'])
+    training = TrainingSet(target, NODES, ['a', 'b'])
     training.run()
     assert np.allclose(training.inputs()[:, 0], NODES[:, 0])
     assert np.allclose(training.outputs()['y'][:, 2], NODES[:, 0] * NODES[:, 1])
@@ -77,7 +77,7 @@ def test_the_target_applies_its_own_transform():
     def scaled(params):
         return {name: value / params['a'] for name, value in target(params).items()}
 
-    training = Training(scaled, NODES[1:], ['a', 'b'])
+    training = TrainingSet(scaled, NODES[1:], ['a', 'b'])
     training.run()
     stored = np.array(training.values['y'])
     assert np.allclose(stored[:, 0], 1.)          # y[0] = a, divided by a
@@ -94,7 +94,7 @@ def batched(params):
 
 
 def run(fn, **kwargs):
-    training = Training(fn, NODES, ['a', 'b'], **kwargs)
+    training = TrainingSet(fn, NODES, ['a', 'b'], **kwargs)
     training.run()
     return training
 
@@ -130,9 +130,9 @@ def test_a_batch_that_returns_the_wrong_length_is_caught():
         return {'y': np.ones(3)}          # one node's worth, whatever the batch
 
     with pytest.raises(NodeEvaluationError, match='leading node axis'):
-        Training(wrong, NODES, ['a', 'b'], batch_size=2).run()
+        TrainingSet(wrong, NODES, ['a', 'b'], batch_size=2).run()
 
 
 def test_batch_size_must_be_positive():
     with pytest.raises(ValueError, match='at least 1'):
-        Training(lambda params: {'y': np.ones(3)}, NODES, ['a', 'b'], batch_size=0)
+        TrainingSet(lambda params: {'y': np.ones(3)}, NODES, ['a', 'b'], batch_size=0)

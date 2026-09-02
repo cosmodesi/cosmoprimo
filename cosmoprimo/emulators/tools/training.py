@@ -43,8 +43,12 @@ class NodeEvaluationError(Exception):
     """
 
 
-class Training(object):
-    """Evaluate a target on a node set, resumably.
+class TrainingSet(object):
+    """The training set: a target evaluated on a node set, resumably.
+
+    It builds the data an engine is then fitted to, and stops there -- the fitting is
+    :meth:`~.engines.BaseEngine.fit`, and choosing the nodes is :meth:`~.engines.BaseEngine.nodes`.
+    What is expensive is neither of those; it is this.
 
     Parameters
     ----------
@@ -83,7 +87,7 @@ class Training(object):
         Checkpoint cadence, in nodes.
     """
     def __init__(self, target, nodes, params, fixed=None, checkpoint=None, chunk=None,
-                 save_every=50, batch_size=None, mpicomm=None):
+                 save_every=50, batch_size=None, mpicomm=None, drop_non_finite=False):
         self.target, self.params = target, list(params)
         self.nodes = np.atleast_2d(np.asarray(nodes, dtype='f8'))
         if self.nodes.shape[1] != len(self.params):
@@ -100,6 +104,12 @@ class Training(object):
         self.checkpoint, self.chunk = checkpoint, _seconds(chunk)
         self.save_every = int(save_every)
         self.keys, self.values = [], {}
+        # Only a regression engine may set this; see _call. Counted rather than silent, because
+        # a box that loses many nodes is a box in the wrong place, whatever the engine.
+        self.drop_non_finite = bool(drop_non_finite)
+        self.n_non_finite = 0
+        #: shapes of the first successful call, so a later failure can be turned into NaNs
+        self._output_template = {}
 
     # ── state ──────────────────────────────────────────────────────────────────
     def _load(self):
@@ -124,7 +134,7 @@ class Training(object):
         return self.done >= len(self.nodes)
 
     # ── run ────────────────────────────────────────────────────────────────────
-    logger = logging.getLogger('Training')
+    logger = logging.getLogger('TrainingSet')
 
     def run(self):
         """Evaluate what remains, within the chunk budget. Returns True when complete.
@@ -146,8 +156,13 @@ class Training(object):
                     self.logger.info(f'time budget reached at {self.done}/{len(self.nodes)} '
                                      f'nodes; rerun to continue')
                 break
-            batch = ([todo[index]] if self.batch_size is None
-                     else todo[index:index + self.batch_size])
+            # One row per round leaves every rank but one idle under MPI: the rank-split
+            # happens inside _evaluate, so a round must carry at least one row per rank.
+            # batch_size (the array-call convention) is untouched -- with it None, each rank
+            # still evaluates its rows one at a time.
+            rows_per_round = (self.batch_size if self.batch_size is not None
+                              else (self.mpicomm.size if self.mpicomm is not None else 1))
+            batch = todo[index:index + rows_per_round]
             names, values = self._evaluate(batch)
             for name, value in zip(names, values):
                 self.values.setdefault(name, []).extend(value)
@@ -165,26 +180,73 @@ class Training(object):
         return self.complete
 
     def _evaluate(self, batch):
-        """Evaluate ``batch`` rows, split across MPI ranks when there is a communicator."""
+        """Evaluate ``batch`` rows, split across MPI ranks when there is a communicator.
+
+        One :func:`~.mpi.gather` per output name, and not one ``allgather`` of the whole
+        ``(names, values)`` structure. The lowercase call pickles, which caps a message at 2 GB
+        and holds the serialised copy, the received copy and the reconstructed arrays at once --
+        a monomials node is ~145 MB of tables, so a round of a few nodes per rank overflows the
+        cap, and the peak memory is what turned a 6 GB training set into an OOM at 16 ranks.
+        ``Allgatherv`` writes straight into one preallocated buffer instead.
+        """
         rows = list(batch)
-        if self.mpicomm is not None and self.mpicomm.size > 1:
-            mine = rows[self.mpicomm.rank::self.mpicomm.size]
-            gathered = self.mpicomm.allgather(self._evaluate_local(mine))
-            names = gathered[0][0]
-            merged = {name: [] for name in names}
-            # interleave back into node order: rank r held rows r, r+size, r+2*size, ...
-            per_rank = [dict(zip(chunk_names, chunk_values))
-                        for chunk_names, chunk_values in gathered]
-            for index in range(len(rows)):
-                source = per_rank[index % self.mpicomm.size]
-                position = index // self.mpicomm.size
-                for name in names:
-                    merged[name].append(source[name][position])
-            return list(merged), [merged[name] for name in merged]
-        return self._evaluate_local(rows)
+        if self.mpicomm is None or self.mpicomm.size <= 1:
+            return self._evaluate_local(rows)
+
+        from .mpi import gather
+
+        size = self.mpicomm.size
+        mine = rows[self.mpicomm.rank::size]
+        # A rank that raises here must not leave the collective below: the other ranks would
+        # block in it forever, and the job holds its whole allocation until someone notices and
+        # kills it by hand. Measured, repeatedly, on this training. So every rank reaches the
+        # same exchange, failure or not, and they all raise together afterwards -- which also
+        # gives every rank a traceback rather than hiding it on whichever one happened to fail.
+        try:
+            names, values = self._evaluate_local(mine)
+            failure = None
+        except Exception as exc:
+            names, values, failure = [], [], f'{type(exc).__name__}: {exc}'
+        failures = self.mpicomm.allgather(failure)
+        if any(failure is not None for failure in failures):
+            reported = [(rank, failure) for rank, failure in enumerate(failures)
+                        if failure is not None]
+            rank, first = reported[0]
+            raise NodeEvaluationError(
+                f'{len(reported)}/{size} ranks failed to evaluate their nodes; first was rank '
+                f'{rank}: {first}')
+        # A rank with no rows returns no names and no arrays, but Allgatherv still needs a buffer
+        # of the right trailing shape and dtype from it -- so agree on the layout first. These
+        # are a handful of tuples, so the pickling collective is the right tool here.
+        layouts = self.mpicomm.allgather(
+            [(name, np.asarray(value[0]).shape, np.asarray(value[0]).dtype.str)
+             for name, value in zip(names, values) if len(value)])
+        layout = next((entry for entry in layouts if entry), None)
+        if layout is None:
+            raise NodeEvaluationError('no rank produced any value for this batch')
+        mine_values = dict(zip(names, values))
+
+        merged, counts = {}, [len(rows[rank::size]) for rank in range(size)]
+        offsets = np.cumsum([0] + counts[:-1])
+        for name, shape, dtype in layout:
+            local = mine_values.get(name)
+            local = (np.asarray(local) if local else np.empty((0,) + tuple(shape), dtype=dtype))
+            stacked = gather(local, mpiroot=None, mpicomm=self.mpicomm)
+            # back into node order: rank r held rows r, r + size, r + 2*size, ..., and `stacked`
+            # holds each rank's share contiguously
+            merged[name] = [stacked[offsets[index % size] + index // size]
+                            for index in range(len(rows))]
+        return list(merged), [merged[name] for name in merged]
 
     def _evaluate_local(self, rows):
-        """(names, values) for these rows, on this rank."""
+        """(names, values) for these rows, on this rank.
+
+        Every value is turned into a numpy array at the node itself. That is the device-to-host move:
+        the target is a jax pipeline, so what it returns lives wherever jax put it, and holding
+        a node set of those keeps the whole training set resident on the accelerator. Host
+        memory is the right home for it -- it is written to a checkpoint and fitted with numpy,
+        never used on device again.
+        """
         collected = {}
         if self.batch_size is None:
             for row in rows:
@@ -220,22 +282,49 @@ class Training(object):
         """The target takes a dict of parameters, and returns what should be fitted -- any
         transform it wants to apply is its own business, done inside.
 
-        Non-finite outputs are refused as loudly as exceptions: every engine mixes every node
-        into every coefficient, so ONE NaN node silently poisons the whole emulator -- measured,
-        an emulated posterior came back -inf at its own box centre, one full session after the
-        node that caused it."""
+        Non-finite outputs are refused as loudly as exceptions: an interpolating engine mixes
+        every node into every coefficient, so a single NaN node silently poisons the whole emulator --
+        measured, an emulated posterior came back -inf at its own box centre, one full session
+        after the node that caused it.
+
+        With ``drop_non_finite`` the values are kept as they came instead, NaNs and all, and the
+        node is counted in :attr:`n_non_finite`. That is only correct for a regression engine,
+        where the row is simply left out of the least-squares fit; the caller decides, from
+        ``engine.requires_all_nodes``. The node still enters the checkpoint, so resumption and
+        the done/complete accounting are unaffected -- the filtering happens at fit time."""
         try:
             values = self.target(params)
         except Exception as exc:
-            raise NodeEvaluationError(f'node {params} failed: '
-                                      f'{type(exc).__name__}: {exc}') from exc
+            # A node can fail two ways: return non-finite values, or raise. Both are the same
+            # event for a caller that can drop it -- a Boltzmann code refusing a cosmology
+            # sometimes returns NaN and sometimes throws, and which one it does is not the
+            # caller's business. Without a successful call there is no shape to return, so the
+            # first success is remembered as a template.
+            if self.drop_non_finite and not self._output_template and self.values:
+                # No successful call on this rank yet -- but the checkpoint already holds
+                # results, and their shapes are the same. Without this a rank whose first node
+                # is the bad one has no template and raises, which is how a tolerated failure
+                # still killed the run.
+                self._output_template = {name: np.shape(np.asarray(stored[0]))
+                                         for name, stored in self.values.items() if len(stored)}
+            if not (self.drop_non_finite and self._output_template):
+                raise NodeEvaluationError(f'node {params} failed: '
+                                          f'{type(exc).__name__}: {exc}') from exc
+            self.n_non_finite += 1
+            return {name: np.full(shape, np.nan) for name, shape in self._output_template.items()}
+        if self.drop_non_finite and not self._output_template:
+            self._output_template = {name: np.shape(np.asarray(value))
+                                     for name, value in values.items()}
         bad = {name: int((~np.isfinite(np.asarray(value))).sum()) for name, value in values.items()
                if not np.isfinite(np.asarray(value)).all()}
         if bad:
-            raise NodeEvaluationError(f'node {params} returned non-finite values in '
-                                      f'{bad} (output name -> count). One such node poisons '
-                                      f'every coefficient of the fit; shrink the Space to where '
-                                      f'the calculator is finite.')
+            if not self.drop_non_finite:
+                raise NodeEvaluationError(f'node {params} returned non-finite values in '
+                                          f'{bad} (output name -> count). One such node poisons '
+                                          f'every coefficient of the fit; shrink the Space to '
+                                          f'where the calculator is finite, or use a regression '
+                                          f'engine, which can drop it.')
+            self.n_non_finite += 1
         return values
 
     def inputs(self):

@@ -114,6 +114,14 @@ def validate(predict, truth, points, metric, space=None, proxy=False, metric_nam
         if space is not None and not space.contains(point):
             failures += 1
             continue
-        errors.append(float(metric(predict(dict(point)), truth(dict(point)))))
+        # A refusal is a coverage failure too, not an error of infinite size. The emulator
+        # returns NaN for a point it will not answer -- inside the box but off the node cloud is
+        # the case `space.contains` cannot see -- and folding that into the error distribution
+        # would turn every summary statistic into NaN.
+        error = float(metric(predict(dict(point)), truth(dict(point))))
+        if not np.isfinite(error):
+            failures += 1
+            continue
+        errors.append(error)
     return Validation(errors, coverage_failures=failures, metric=metric_name, proxy=proxy,
                       npoints=len(points))

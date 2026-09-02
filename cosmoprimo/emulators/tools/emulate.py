@@ -44,7 +44,7 @@ import numpy as np
 
 from cosmoprimo.jax import numpy_jax, use_jax
 
-from .training import Training
+from .training import TrainingSet, NodeEvaluationError
 from .space import Space
 from .validation import validate as _validate
 
@@ -147,6 +147,18 @@ class Emulator(object):
         """
         return params
 
+    def from_training(self, params):
+        """Training parameters -> user parameters: the inverse of :meth:`to_training`.
+
+        Needed because the nodes are laid out in the training basis but the calculator is called
+        with them, and it need not accept that basis. Where the change of variables is between two
+        quantities the calculator already understands (``Omega_m`` and ``omega_cdm``, say) the
+        identity here is right; where the expansion variable is not an input at all -- ``w0 + wa``
+        is not -- this is what keeps that fact inside the emulator instead of leaking a special
+        case into the calculator.
+        """
+        return params
+
     def select_params(self, names):
         """Which of the space's parameters the interpolant expands. All of them, by default.
 
@@ -166,6 +178,11 @@ class Emulator(object):
     def inverse_transform(self, values, params):
         """Undone at prediction; must invert :meth:`transform` exactly. Identity by default."""
         return values
+
+    # ── machinery that consumes the hooks (not itself one) ─────────────────
+    def _evaluate_target(self, params):
+        """The calculator, called in its own parameters whatever basis the nodes are in."""
+        return self.target(self.from_training(params))
 
     # ── state ─────────────────────────────────────────────────────────────────
     @property
@@ -192,17 +209,14 @@ class Emulator(object):
         """
         return self._engine(budget=budget, **kwargs).nodes()
 
-    def _subspace(self):
-        return self.training.marginal(self.params) \
-            if len(self.params) < len(self.training.params) else self.training
-
     def _engine(self, budget=None, **kwargs):
         from .engines import ChebyshevEngine
         from .mlp import MLPEngine
         from .taylor import TaylorEngine
 
         classes = {cls.name: cls for cls in (ChebyshevEngine, TaylorEngine, MLPEngine)}
-        subspace = self._subspace()
+        subspace = self.training.marginal(self.params) \
+            if len(self.params) < len(self.training.params) else self.training
         options = {**self.options, **kwargs}
         # `budget` may arrive twice -- once at construction (kept in `options`) and once from
         # `train` -- and passing both to the engine is a TypeError. An explicit one wins; the
@@ -214,19 +228,13 @@ class Emulator(object):
         if self.engine_name not in classes:
             raise ValueError(f'unknown engine {self.engine_name!r}; available '
                              f'{sorted(classes)}')
-        whitening = {}
-        if subspace.is_correlated():
-            # the nodes go on the posterior's principal axes instead of a rectangle around
-            # them: measured 350x in the median at equal node count, the largest single lever.
-            # It stays internal -- the engine's parameter names remain physical.
-            whitening = dict(mean=subspace.mean, covariance=subspace.covariance,
-                             nsigma=subspace.nsigma)
-        return classes[self.engine_name](
-            subspace.params, subspace.limits, levels=subspace.levels,
-            budget=budget, transform=subspace.transforms, **whitening, **options)
+        # the box, whitening included, comes from the space itself (see :meth:`Space.geometry`):
+        # what stays here is only what the space has no say in -- which engine, and how big.
+        return classes[self.engine_name](**subspace.geometry(), budget=budget, **options)
 
     def train(self, engine=None, budget=None, checkpoint=None, chunk=None, batch_size=None,
-              mpicomm=None, per_output=None, **kwargs):
+              mpicomm=None, per_output=None, max_non_finite=0.05, method='auto',
+              basis_budget=None, drop_non_finite=None, **kwargs):
         """Evaluate the calculator on the node set and fit.
 
         Resumable and chunked: pass ``checkpoint`` and ``chunk='30min'`` for anything expensive,
@@ -250,14 +258,30 @@ class Emulator(object):
                          + (f' (whitened, condition number {built.condition_number():.1f})'
                             if whitened else '')
                          + f'; {len(self.exact_params)} handled exactly')
+        # The node box in physical parameters. Cheap, and it makes a whole class of bug
+        # visible at a glance: a declared transform that never reaches the engine, or is
+        # not inverted on the way out, hands the calculator the expansion variable and
+        # the nodes silently land outside the region the box describes.
+        expansions = {name: spec for name, spec in getattr(built, 'transforms', {}).items() if spec}
+        self.logger.info(
+            'node box: ' + ', '.join(
+                f'{name} [{nodes[:, index].min():.5g}, {nodes[:, index].max():.5g}]'
+                for index, name in enumerate(built.params))
+            + (f'; expansion variables {expansions}' if expansions else ''))
 
         # a parameter handled exactly leaves the grid, but the calculator still needs a value for
         # it: hold it at the space centre while sampling, and let `transform` take it out
         centers = self.training.center
         fixed = {name: centers[name] for name in self.exact_params}
-        training = Training(self.target, nodes, self.params, fixed=fixed,
-                            checkpoint=checkpoint, chunk=chunk, batch_size=batch_size,
-                            mpicomm=mpicomm)
+        training = TrainingSet(self._evaluate_target, nodes, self.params, fixed=fixed,
+                               checkpoint=checkpoint, chunk=chunk, batch_size=batch_size,
+                               mpicomm=mpicomm,
+                               # An interpolating engine cannot absorb a hole on its own -- but it
+                               # can if the caller also lowers `basis_budget`, which buys the
+                               # redundancy by giving up polynomial degree. So the tolerance is
+                               # requestable, not merely a property of the engine class.
+                               drop_non_finite=(not built.requires_all_nodes)
+                               if drop_non_finite is None else bool(drop_non_finite))
         if not training.run():
             raise RuntimeError(f'training incomplete ({training.done}/{len(nodes)}); rerun to '
                                f'continue -- the checkpoint holds what is done')
@@ -278,13 +302,39 @@ class Emulator(object):
             raise ValueError(f'per_output names {unknown} are not outputs; '
                              f'have {sorted(transformed)}')
 
+        if (not built.requires_all_nodes) or drop_non_finite:
+            # A regression engine can be fitted on the survivors; an interpolating one never
+            # reaches here, because TrainingSet refuses the node outright. Loud, and bounded: a box
+            # that loses a large share of its nodes is a box in the wrong place, and a fit over
+            # what is left would be extrapolating into the hole rather than covering it.
+            finite = np.ones(len(inputs), dtype='?')
+            for values in transformed.values():
+                stacked = np.asarray(values).reshape(len(values), -1)
+                finite &= np.isfinite(stacked).all(axis=1)
+            lost = int((~finite).sum())
+            if lost:
+                fraction = lost / len(finite)
+                self.logger.info(f'dropping {lost}/{len(finite)} nodes ({fraction:.1%}) whose '
+                                 f'outputs were non-finite; fitting on the rest')
+                if fraction > max_non_finite:
+                    raise NodeEvaluationError(
+                        f'{lost}/{len(finite)} nodes ({fraction:.1%}) returned non-finite '
+                        f'values, above max_non_finite={max_non_finite:.1%}. The box covers a '
+                        f'region the calculator cannot evaluate; move or shrink it rather than '
+                        f'fitting around the hole.')
+                inputs = np.asarray(inputs)[finite]
+                transformed = {name: [value for value, keep in zip(values, finite) if keep]
+                               for name, values in transformed.items()}
+
         # one engine per output, all sharing the node set
         self._engines = {}
         for name, values in transformed.items():
             values = np.asarray(values)
             options = {'budget': budget, **kwargs, **per_output.get(name, {})}
             fit = self._engine(**options)
-            fit.fit(inputs, values.reshape(len(values), -1))
+            fit.fit(inputs, values.reshape(len(values), -1), method=method,
+                    basis_budget=basis_budget) \
+                if fit.name == 'chebyshev' else fit.fit(inputs, values.reshape(len(values), -1))
             self._engines[name] = (fit, values.shape[1:])
         if not self._engines:
             raise RuntimeError('the target returned no outputs, so there is nothing to fit')
@@ -305,20 +355,88 @@ class Emulator(object):
         if missing:
             raise ValueError(f'missing parameters {missing}')
         if use_jax(*params.values()):
+            # Under a trace there is no value to compare, so the box cannot be checked here --
+            # but it can still be enforced on the output by `predict`: see `outside`,
+            # which follows cosmoprimo's usual "raise in eager, NaN inside jax" contract
+            # (`exception_or_nan`). Returning a silent extrapolation was the old behaviour and
+            # it is the dangerous one: a sampler cannot tell a wrong number from a right one,
+            # while a NaN maps to -inf and simply rejects the point.
             return
+        # `limits` is in the expansion variable, the value is in the user's parameter, and where a
+        # transform declares those differ the comparison has to be made in one of them. Reported
+        # values stay the user's: an error naming sqrt(m_ncdm) tells nobody what to change.
+        expansion = self.training.forward(params)
         outside = {name: params[name] for name in self.params
-                   if not (self.training.limits[name][0] <= params[name]
+                   if not (self.training.limits[name][0] <= expansion[name]
                            <= self.training.limits[name][1])}
+        reason = 'outside the trained box'
+        nodes = self._outside_nodes(params)
+        if not outside and nodes is not None and bool(np.asarray(nodes).all()):
+            # Inside every parameter's own range, but off the node cloud: the box is a rectangle
+            # and the nodes fill a band across it (see `BaseEngine.outside`). Same verdict,
+            # different reason, and the message has to say which or it reads as a lie.
+            outside = {name: params[name] for name in self.params}
+            reason = 'inside the box but off the node cloud it was fitted on'
         if outside:
             converted = ('' if self.training is self.space else
                          f' (the training basis; you gave {dict(given)})')
-            message = (f'outside the trained box: {outside}{converted}. Extrapolation here is '
+            message = (f'{reason}: {outside}{converted}. Extrapolation here is '
                        f'catastrophic, not gradual -- widen the Space and retrain (nested nodes '
                        f'mean the existing evaluations are reused), or pass coverage="ignore".')
             if self.coverage == 'raise':
                 raise CoverageError(message)
             import warnings
             warnings.warn(message)
+
+    def _outside_nodes(self, training):
+        """Boolean (or traced) mask: is this point off the node cloud the engines were fitted on?
+
+        Delegated to an engine, which owns the geometry the nodes were laid out with -- the
+        transforms, the whitening rotation, the per-axis domain (see
+        :meth:`~.engines.BaseEngine.outside`). Every engine of one emulator is built from the same
+        Space, so the first answers for all. ``None`` when there is nothing fitted to compare
+        against.
+        """
+        if not self._engines:
+            return None
+        xnp = numpy_jax(*training.values())
+        engine = next(iter(self._engines.values()))[0]
+        values = xnp.stack([xnp.asarray(training[name]) for name in self.params])
+        return engine.outside(values)
+
+    def outside(self, training):
+        """Boolean (or traced) mask: is this point somewhere the emulator cannot answer?
+
+        Public, because "will this be answered?" is a question worth asking without paying for a
+        prediction -- a sampler placing its initial population, a prior wanting to match the
+        emulator's actual support.
+
+        Two separate ways to be outside, and a parameter's own range catches only the first:
+
+        * outside a parameter's own low/high pair -- the axis-aligned box;
+        * inside every one of those, yet off the band the nodes actually fill. For correlated
+          parameters that is most of the box's volume (measured at correlation -0.95: 70.6%; on
+          eight Planck-like parameters only 6% of a uniform draw from the box is on the band),
+          and an interpolant answers there from coefficients nothing constrained.
+
+        *training* is in the training basis, as :meth:`to_training` returns it. Elementwise, so a
+        batched/vmapped call marks only the offending members. ``None`` when nothing can be
+        compared, which is never the case once the values are concrete or traced.
+        """
+        xnp = numpy_jax(*training.values())
+        # into the expansion variable first: `limits` is in it, `training` is not (see
+        # `Space.forward`). `BaseEngine.outside`, called below, does its own equivalent mapping.
+        expansion = self.training.forward(training)
+        mask = None
+        for name in self.params:
+            lo, hi = self.training.limits[name]
+            value = xnp.asarray(expansion[name])
+            this = (value < lo) | (value > hi)
+            mask = this if mask is None else (mask | this)
+        nodes = self._outside_nodes(training)
+        if nodes is not None:
+            mask = nodes if mask is None else (mask | nodes)
+        return mask
 
     def predict(self, **params):
         if not self.trained:
@@ -332,7 +450,20 @@ class Emulator(object):
         predicted = {name: xnp.reshape(engine.predict(values), shape)
                      for name, (engine, shape) in self._engines.items()}
         # `transform` saw training parameters at fit time, so its inverse must see them too
-        return self.inverse_transform(predicted, training)
+        out = self.inverse_transform(predicted, training)
+        if self.coverage != 'ignore':
+            # Enforce the box on the output. Eager calls already raised in `_check`; this is what
+            # makes the guard survive a jit, where the check itself cannot run. NaN propagates to
+            # -inf in a posterior, so an out-of-box point is rejected rather than silently
+            # extrapolated -- the engines' own words: "catastrophic, not gradual".
+            mask = self.outside(training)
+            if mask is not None:
+                xnp = numpy_jax(*training.values())
+                out = {name: xnp.where(xnp.reshape(mask, mask.shape + (1,) * (xnp.ndim(value) - xnp.ndim(mask)))
+                                       if xnp.ndim(value) > xnp.ndim(mask) else mask,
+                                       xnp.nan, value)
+                       for name, value in out.items()}
+        return out
 
     __call__ = predict
 

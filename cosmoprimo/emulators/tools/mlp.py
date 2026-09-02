@@ -56,6 +56,13 @@ class MLPEngine(BaseEngine):
     """
     name = 'mlp'
 
+    #: A fit, not an interpolant: a sample the calculator could not evaluate can simply be left
+    #: out, costing that sample alone. This is what lets an MLP cover a box containing a region
+    #: where the truth does not exist -- the packaged ACE networks span w0_fld in (-3, 0.5) and
+    #: wa_fld in (-3, 2), roughly 18% of which is the unphysical w0 + wa > 0 corner, and no
+    #: collocation grid can be laid over that.
+    requires_all_nodes = False
+
     def __init__(self, params, limits, levels=None, budget=None, nsamples=None,
                  nhidden=(64, 64, 64), activation='silu', epochs=2000, patience=200,
                  learning_rate=1e-3, batch_size=64, validation_frac=0.1, optimizer='adam',
