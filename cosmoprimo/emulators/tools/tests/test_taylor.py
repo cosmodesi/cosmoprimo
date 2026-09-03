@@ -22,7 +22,7 @@ def target(params):
 
 
 def space():
-    return Space(limits={'amplitude': (1., 3.), 'tilt': (-1., 1.)})
+    return Space(bounds={'amplitude': (1., 3.), 'tilt': (-1., 1.)})
 
 
 def trained(**options):
@@ -41,7 +41,7 @@ def test_a_polynomial_within_the_order_is_reproduced_exactly():
         x, y = params['x'], params['y']
         return {'f': np.array([1. + 2. * x - 3. * y + x * y + 0.5 * x**2 - y**3])}
 
-    emulator = Emulator(polynomial, Space(limits={'x': (-1., 1.), 'y': (-1., 1.)}),
+    emulator = Emulator(polynomial, Space(bounds={'x': (-1., 1.), 'y': (-1., 1.)}),
                         engine='taylor')
     emulator.train(order=3)
     for point in [{'x': 0.7, 'y': -0.4}, {'x': -0.9, 'y': 0.9}, {'x': 0., 'y': 0.}]:
@@ -68,7 +68,7 @@ def test_raising_the_order_reduces_the_error_away_from_the_centre():
     the sequence is not monotone at low order, because a truncated series is only ordered once
     it is in its asymptotic regime, and the tilt dependence at the corner is not.
     """
-    small = Space(limits={'amplitude': (1.8, 2.2), 'tilt': (-0.2, 0.2)})
+    small = Space(bounds={'amplitude': (1.8, 2.2), 'tilt': (-0.2, 0.2)})
     edge = {'amplitude': 2.1, 'tilt': 0.18}
     errors = []
     for order in (1, 2, 3):
@@ -84,7 +84,7 @@ def test_the_derivatives_are_the_real_derivatives():
     def quadratic(params):
         return {'f': np.array([3. * params['x']**2 * params['y']])}
 
-    emulator = Emulator(quadratic, Space(limits={'x': (-1., 1.), 'y': (-1., 1.)}),
+    emulator = Emulator(quadratic, Space(bounds={'x': (-1., 1.), 'y': (-1., 1.)}),
                         engine='taylor')
     emulator.train(order=3)
     engine = emulator._engines['f'][0]

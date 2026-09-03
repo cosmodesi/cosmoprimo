@@ -85,7 +85,7 @@ Modified-gravity stability
 mochi_class
 ^^^^^^^^^^^
 
-.. automodule:: cosmoprimo.mochiclass_stability
+.. automodule:: cosmoprimo.emulators.mochiclass
   :members:
   :inherited-members:
   :show-inheritance:
@@ -93,7 +93,7 @@ mochi_class
 HEFTCAMB
 ^^^^^^^^
 
-.. automodule:: cosmoprimo.heftcamb_stability
+.. automodule:: cosmoprimo.emulators.heftcamb
   :members:
   :inherited-members:
   :show-inheritance:

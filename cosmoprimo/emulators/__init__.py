@@ -26,3 +26,8 @@ from .cosmology import (Emulator, emulate, read, SectionEmulator, CosmologyEmula
 
 # `Cosmology(engine='ace')`: the packaged jaxace / jaxmapse / jaxcapse networks. Imported
 # lazily by `get_engine`, so the heavy jax packages are not pulled in by `import cosmoprimo`.
+
+# Physicality gates for the modified-gravity engines: which (alpha_B, alpha_M, ...) a Boltzmann
+# code would accept, decided from the parameters alone, so a training sample or a prediction can
+# be screened without running it. numpy-only, hence imported here rather than lazily.
+from . import heftcamb, mochiclass

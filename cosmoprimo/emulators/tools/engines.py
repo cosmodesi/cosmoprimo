@@ -1,8 +1,11 @@
 """Interpolation engines: fit a set of node evaluations, predict anywhere in the box.
 
 The base geometry here -- the box, the transforms, the whitening -- is shared by every engine,
-including the ones in :mod:`mlp` and :mod:`taylor`. What each engine adds is the node set it
-wants and how it turns those values into a prediction.
+including the ones in :mod:`mlp`, :mod:`polynomial` and :mod:`taylor`. What each engine adds is
+the node set it wants and how it turns those values into a prediction. Of those,
+:class:`ChebyshevEngine` and :class:`~.polynomial.PolynomialEngine` also share their *output*
+form -- ``coefficients @ phi(x)`` over a tensor-product basis -- which is what
+:class:`LinearBasisEngine` holds.
 
 The Chebyshev engine is a sparse-grid (Smolyak) interpolant on Chebyshev-Lobatto nodes: exact on
 polynomials, near-minimax over the box, and one coefficient contraction to evaluate. Two
@@ -26,6 +29,10 @@ and choosing between them needs to know how the nodes are laid out -- which only
 
 :class:`~.taylor.TaylorEngine` does not interpolate, it expands about the
 centre, and its knobs are ``order`` and ``accuracy`` rather than ``levels`` and ``budget``.
+:class:`~.polynomial.PolynomialEngine` does not interpolate either: it declares a small basis and
+fits it by least squares to scattered points, which costs exactness at the nodes and buys a node
+set that need not be complete -- reach for it when part of the box is a region the calculator
+refuses.
 """
 
 import itertools
@@ -35,8 +42,8 @@ import numpy as np
 
 from cosmoprimo.jax import numpy as jnp, numpy_jax
 
-from .utils import (chebyshev_values, chebyshev_lobatto_nodes, chebyshev_vandermonde_inverse,
-                    nested_level_nodes, smolyak_combination, TRANSFORMS)
+from .utils import (chebyshev_lobatto_nodes, chebyshev_vandermonde_inverse,
+                    nested_level_nodes, smolyak_combination, tensor_basis, TRANSFORMS)
 
 
 ENGINES = {}
@@ -49,7 +56,7 @@ def engine_from_state(state):
     emulator in a fresh process imports none of them, so the ones that live elsewhere are pulled
     in here rather than being reported as unknown.
     """
-    from . import mlp, taylor    # noqa: F401 -- registers MLPEngine and TaylorEngine
+    from . import mlp, polynomial, taylor    # noqa: F401 -- registers the engines living elsewhere
 
     name = state.get('name', 'chebyshev')
     if name not in ENGINES:
@@ -92,8 +99,15 @@ class BaseEngine(object):
         wanted. Measured on a CMB-only w0waCDM box with ``w0 + wa < 0``, shrinking pulls nsigma
         3.75 -> 2.771 in all eight directions, where naming that one parameter here leaves the
         other seven at 3.75.
+    bounds : dict, default=None
+        The subset of ``limits`` that are hard bounds -- what the calculator or the analysis
+        refuses, not where a region happens to reach. Only these narrow the box or cap an
+        ``unrotated`` axis; :meth:`_shrink_to_limits` is where the distinction is spelt out, and
+        where the cost of losing it is measured. ``None`` reads every limit as a bound, which is
+        what an engine built by hand, or a state written before the two were told apart, means.
+        :meth:`~.space.Space.geometry` supplies it.
     shrink_to_limits : bool, default=True
-        Narrow the box until it lies inside ``limits``, for those parameters not in ``unrotated``.
+        Narrow the box until it lies inside ``bounds``, for those parameters not in ``unrotated``.
         The other treatment of a hard bound, and the two are alternatives -- see
         :meth:`_shrink_to_limits`.
     """
@@ -107,15 +121,26 @@ class BaseEngine(object):
     #: whose corners the calculator cannot evaluate.
     requires_all_nodes = True
 
+    #: Whether this engine can use the samples the Space was measured from, over and above the
+    #: mean and covariance :meth:`~.space.Space.geometry` hands every engine. Only a scattered
+    #: node set can: a grid's nodes are determined by the box. :meth:`~.emulate.Emulator._engine`
+    #: reads this rather than passing a chain to engines that would ignore it.
+    wants_samples = False
+
     #: Margin, in units of that axis' own sigma, kept between an unrotated axis and a hard
     #: bound. Chebyshev node sets include their endpoints, so a bound used as-is places a node
     #: on the bound itself -- and a bound like ``w0 + wa < 0`` is strict.
     bound_margin = 1e-6
 
     def __init__(self, params, limits, transform=None, mean=None, covariance=None, nsigma=3.,
-                 unrotated=None, shrink_to_limits=True, **unused):
+                 unrotated=None, shrink_to_limits=True, bounds=None, **unused):
         self.params = list(params)
         self.limits = {name: tuple(float(value) for value in limits[name]) for name in self.params}
+        # `None` means "every limit is a bound": that is what a hand-built engine says, and what a
+        # saved state written before the distinction existed meant.
+        bounds = self.limits if bounds is None else bounds
+        self.bounds = {name: tuple(float(value) for value in bounds[name])
+                       for name in self.params if name in bounds}
         self.nsigma = float(nsigma)
         self.transforms = {name: (transform or {}).get(name) for name in self.params}
         self.mean = None if mean is None else np.asarray(mean, dtype='f8')
@@ -174,13 +199,18 @@ class BaseEngine(object):
         bounds the full tensor box, of which a Smolyak grid is a subset, and it shrinks every axis
         by the same factor.
 
-        Two things it must not do. It must not bind on a limit nobody tightened -- every parameter
-        carries one, most just ``mean +- nsigma sigma``, and since ``reach`` exceeds ``sigma``
-        whenever the axes are correlated, taking those at face value shrinks a box that was never
-        constrained (measured, nsigma 3.0 -> 2.863 on a space whose only real bound was elsewhere).
-        Which is why the test is geometric -- is this limit *tighter* than the marginal extent --
-        rather than a record of what the caller passed: that record does not survive
-        :meth:`~.space.Space.marginal`, which hands on every derived limit alongside the real ones.
+        Two things it must not do. It must not bind on anything but a hard bound, which is why it
+        reads :attr:`bounds` and not :attr:`limits`: every parameter carries a limit, most of them
+        derived -- ``mean +- nsigma sigma``, or the bounding box
+        :meth:`~.space.Space.map` measures on the image of a chain -- and since ``reach`` exceeds
+        ``sigma`` whenever the axes are correlated, taking those at face value shrinks a box that
+        was never constrained. A geometric test alone does not catch it: a derived limit falling a
+        little short of ``mean +- nsigma sigma``, which is what a finite sample does, is *tighter*
+        and so passes. Measured on the CMB w0waCDM box, that read the chain's rail at ``w0 = -2``
+        -- 1.57 sigma from the mean -- as a bound on the training region and pulled nsigma
+        3.75 -> 1.27 in all eight directions, leaving the emulator able to answer on 15.8% of the
+        chain it was built from. The geometric test is kept on top, for a bound the caller
+        declared that is looser than the marginal extent and so constrains nothing.
 
         And it must skip :attr:`unrotated` axes, whose bound is already a face of the box (see
         :meth:`_domain`). Shrinking for those is the whole cost the flag exists to avoid: nsigma
@@ -190,9 +220,9 @@ class BaseEngine(object):
         reach = (np.abs(self._rotation) * self._scale).sum(axis=1)
         factor = 1.
         for index, name in enumerate(self.params):
-            if name in self.unrotated or reach[index] <= 0.:
+            if name in self.unrotated or reach[index] <= 0. or name not in self.bounds:
                 continue
-            low, high = self.limits[name]
+            low, high = self.bounds[name]
             for room in (self.mean[index] - low, high - self.mean[index]):
                 # `tightened`: a limit sitting at the marginal extent is the default one, and the
                 # tolerance is there because it arrives via a float round trip, not exact.
@@ -234,7 +264,9 @@ class BaseEngine(object):
                 # stricter of its limits and the usual +- nsigma sigma, asymmetrically if that is
                 # what the limits say. A one-sided bound then costs width on that side only.
                 index = self.params.index(name)
-                low, high = self.limits[name]
+                # `bounds`, for the reason `_shrink_to_limits` reads it: a derived extent is not
+                # something to cut this axis at.
+                low, high = self.bounds.get(name, (-np.inf, np.inf))
                 centre, scale = float(self.mean[index]), float(self._scale[index])
                 lower, upper = -self.nsigma, self.nsigma
                 if np.isfinite(low) and (low - centre) / scale > lower:
@@ -355,6 +387,7 @@ class BaseEngine(object):
 
     def _geometry_state(self):
         return {'name': self.name, 'params': list(self.params), 'limits': dict(self.limits),
+                'bounds': dict(self.bounds),
                 'transforms': dict(self.transforms), 'nsigma': self.nsigma,
                 'unrotated': list(self.unrotated),
                 'mean': self.mean, 'rotation': self._rotation, 'scale': self._scale}
@@ -362,6 +395,10 @@ class BaseEngine(object):
     def _set_geometry(self, state):
         self.params = list(state['params'])
         self.limits = {name: tuple(value) for name, value in state['limits'].items()}
+        # `.get`: a state written before hard bounds were told apart from derived ones read every
+        # limit as a bound, and `nsigma` in that same state was already shrunk accordingly.
+        self.bounds = {name: tuple(value)
+                       for name, value in state.get('bounds', state['limits']).items()}
         self.transforms, self.nsigma = dict(state['transforms']), float(state['nsigma'])
         # Needed by :meth:`_domain`, which is how :meth:`outside` gets its box back when the
         # engine did not save one (only Chebyshev stores `domains`). Left off, the attribute is
@@ -372,7 +409,52 @@ class BaseEngine(object):
         self.mean, self._rotation, self._scale = state['mean'], state['rotation'], state['scale']
 
 
-class ChebyshevEngine(BaseEngine):
+class LinearBasisEngine(BaseEngine):
+    """An engine whose prediction is ``coefficients @ phi(x)`` over a fixed polynomial basis.
+
+    Two engines are of this form and only differ in how they get the coefficients:
+    :class:`ChebyshevEngine` inverts a Vandermonde over a collocation grid,
+    :class:`~.polynomial.PolynomialEngine` solves a least-squares problem over scattered points.
+    Everything downstream of the coefficients is therefore shared, and shared rather than copied
+    because :meth:`predict` and a fit's design matrix must evaluate the *same* basis: two
+    implementations of it drift, and the symptom -- a fit that reproduces its own nodes and
+    nothing else -- points nowhere near the cause.
+
+    Subclasses set :attr:`powers` ``(nterms, nparams)``, :attr:`coefficients`
+    ``(nterms, noutputs)`` and :attr:`domains` ``(nparams, 2)`` when they fit.
+    """
+    #: Which orthogonal family, a key of :data:`~.utils.BASES`. A class attribute where the
+    #: family is fixed, an instance one where the engine lets it be chosen.
+    basis = 'chebyshev'
+
+    def predict(self, values):
+        """``values``: physical parameters, in :attr:`params` order."""
+        if self.coefficients is None:
+            raise ValueError('not fitted')
+        basis = tensor_basis(self._traced(values), self.powers, self.domains, basis=self.basis)
+        return jnp.tensordot(self.coefficients, basis, axes=(0, 0))
+
+    def contract(self, matrix):
+        """Left-multiply the output by a fixed ``matrix``, exactly, by contracting coefficients.
+
+        The prediction is linear in its coefficients, so for any fixed ``M``
+
+            ``M @ predict(x) == (engine with coefficients M @ C).predict(x)``
+
+        identically. Applying ``M`` here rather than downstream therefore costs nothing at
+        evaluation time and, when ``M`` reduces the output size, shrinks the emulator with it.
+        """
+        if self.coefficients is None:
+            raise ValueError('not fitted')
+        matrix = np.asarray(matrix, dtype='f8')
+        if matrix.shape[1] != self.coefficients.shape[1]:
+            raise ValueError(f'matrix is {matrix.shape}, cannot act on an output of '
+                             f'{self.coefficients.shape[1]}')
+        self.coefficients = self.coefficients @ matrix.T
+        return self
+
+
+class ChebyshevEngine(LinearBasisEngine):
     """Sparse-grid Chebyshev interpolation.
 
     Parameters
@@ -412,7 +494,7 @@ class ChebyshevEngine(BaseEngine):
                 for levels, weight in combination.items()], domains
 
     def nodes(self):
-        """The node set, in physical parameters: an ``(n_nodes, n_params)`` array."""
+        """The node set, in physical parameters: an ``(nnodes, nparams)`` array."""
         grids, _ = self._grids()
         seen, rows = set(), []
         for _, _, axes in grids:
@@ -480,15 +562,10 @@ class ChebyshevEngine(BaseEngine):
         # Phi[i, k] = prod_d T_{powers[k, d]}(x_i, d): the interpolant is linear in its
         # coefficients, which is the whole reason a least-squares fit is available at all.
         internal = np.array([self._node_key(row) for row in np.asarray(inputs, dtype='f8')])
-        factors = []
-        for index, name in enumerate(self.params):
-            low, high = domains[name]
-            scaled = (2. * internal[:, index] - low - high) / (high - low)
-            cheb = np.asarray(chebyshev_values(scaled, int(powers[:, index].max())))
-            factors.append(cheb[powers[:, index]])           # (n_terms, n_nodes)
-        design = np.prod(np.stack(factors), axis=0).T        # (n_nodes, n_terms)
+        box = np.array([domains[name] for name in self.params])
+        design = np.asarray(tensor_basis(internal.T, powers, box)).T   # (nnodes, nterms)
 
-        n_nodes, n_terms = design.shape
+        nnodes, nterms = design.shape
         coefficients, _, rank, singular = np.linalg.lstsq(design, outputs, rcond=rcond)
         condition = float(singular.max() / singular.min()) if singular.min() > 0 else np.inf
         # A Smolyak grid is unisolvent -- as many nodes as terms -- so losing even one node
@@ -496,22 +573,22 @@ class ChebyshevEngine(BaseEngine):
         # unconstrained directions rather than measure them. The way to absorb a hole is to fit a
         # smaller basis to the same nodes, which is what `basis_budget` buys: the redundancy comes
         # from giving up polynomial degree, not from wishing the missing node away.
-        deficiency = n_terms - int(rank)
+        deficiency = nterms - int(rank)
         if deficiency:
             raise ValueError(
-                f'the usable nodes span only {rank} of {n_terms} basis directions '
-                f'({deficiency / n_terms:.1%} unconstrained). Lower `basis_budget` so the basis '
+                f'the usable nodes span only {rank} of {nterms} basis directions '
+                f'({deficiency / nterms:.1%} unconstrained). Lower `basis_budget` so the basis '
                 f'is smaller than the node set, or recover the missing nodes; fitting this many '
                 f'free directions would invent structure rather than measure it.')
-        self.logger.info(f'least-squares fit on {n_nodes}/{n_nodes + self._n_missing} nodes, '
-                         f'{n_terms} terms, condition number {condition:.1f}')
+        self.logger.info(f'least-squares fit on {nnodes}/{nnodes + self._n_missing} nodes, '
+                         f'{nterms} terms, condition number {condition:.1f}')
         self.powers = powers
         self.coefficients = coefficients
         self.domains = np.array([domains[name] for name in self.params])
         return self
 
     def fit(self, inputs, outputs, method='auto', rcond=None, basis_budget=None):
-        """``inputs``: (n_nodes, n_params), physical. ``outputs``: (n_nodes, n_outputs).
+        """``inputs``: (nnodes, nparams), physical. ``outputs``: (nnodes, noutputs).
 
         ``method='auto'`` interpolates when every planned node is present -- exact, and the
         cheap tensor algebra -- and falls back to a least-squares fit when some are missing.
@@ -555,39 +632,6 @@ class ChebyshevEngine(BaseEngine):
         self.powers = np.array(powers, dtype='i4')
         self.coefficients = np.array([sparse[index] for index in powers])
         self.domains = np.array([domains[name] for name in self.params])
-        return self
-
-    def predict(self, values):
-        """``values``: physical parameters, in :attr:`params` order."""
-        if self.coefficients is None:
-            raise ValueError('not fitted')
-        xnp = numpy_jax(values)
-        values = self._traced(values)
-        factors = []
-        for index in range(len(self.params)):
-            low, high = self.domains[index]
-            scaled = (2. * values[index] - low - high) / (high - low)
-            cheb = chebyshev_values(scaled, int(self.powers[:, index].max()))
-            factors.append(cheb[self.powers[:, index]])
-        return jnp.tensordot(self.coefficients, jnp.prod(jnp.stack(factors), axis=0), axes=(0, 0))
-
-    def contract(self, matrix):
-        """Left-multiply the output by a fixed ``matrix``, exactly, by contracting coefficients.
-
-        The interpolant is linear in its coefficients, so for any fixed ``M``
-
-            ``M @ predict(x) == (engine with coefficients M @ C).predict(x)``
-
-        identically. Applying ``M`` here rather than downstream therefore costs nothing at
-        evaluation time and, when ``M`` reduces the output size, shrinks the emulator with it.
-        """
-        if self.coefficients is None:
-            raise ValueError('not fitted')
-        matrix = np.asarray(matrix, dtype='f8')
-        if matrix.shape[1] != self.coefficients.shape[1]:
-            raise ValueError(f'matrix is {matrix.shape}, cannot act on an output of '
-                             f'{self.coefficients.shape[1]}')
-        self.coefficients = self.coefficients @ matrix.T
         return self
 
     # ── state ──────────────────────────────────────────────────────────────────

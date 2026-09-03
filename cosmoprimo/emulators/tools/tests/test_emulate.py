@@ -38,7 +38,7 @@ class Exact(Emulator):
 
 
 def space():
-    return Space(limits={'amplitude': (1., 3.), 'tilt': (-1., 1.)})
+    return Space(bounds={'amplitude': (1., 3.), 'tilt': (-1., 1.)})
 
 
 def trained(cls=Emulator, **options):

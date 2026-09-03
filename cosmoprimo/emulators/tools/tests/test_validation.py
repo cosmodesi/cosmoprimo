@@ -30,7 +30,7 @@ def test_scatter_is_what_degrades_ess():
 def test_coverage_failures_are_separated_not_averaged_in():
     """One clipped point gave dchi2 2e4 where every in-box point was below 0.2; averaging them
     together makes both numbers meaningless."""
-    space = Space(limits={'a': (0., 1.)})
+    space = Space(bounds={'a': (0., 1.)})
     points = [{'a': 0.5}, {'a': 0.9}, {'a': 5.0}]      # the last is outside
     report = validate(predict=lambda params: {'y': np.array([params['a']])},
                       truth=lambda params: {'y': np.array([params['a']])},
@@ -53,7 +53,7 @@ def test_proxy_metric_says_so():
 def test_validate_reports_coverage_and_scatter_together():
     """Both numbers matter and neither substitutes for the other: a coverage failure is fixed by
     resizing the box, a large scatter by adding nodes."""
-    space = Space(limits={'a': (0., 1.)})
+    space = Space(bounds={'a': (0., 1.)})
     points = [{'a': value} for value in (0.2, 0.4, 0.6, 5.0)]
     report = validate(predict=lambda params: {'y': np.array([params['a'] + 0.1])},
                       truth=lambda params: {'y': np.array([params['a']])},

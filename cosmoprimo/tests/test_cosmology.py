@@ -945,19 +945,6 @@ def test_error():
         cosmo = Cosmology(Omega_m=-0.1)
 
 
-def test_precompute_ncdm():
-    from cosmoprimo.cosmology import _precompute_ncdm_momenta, _compute_ncdm_momenta
-    import time
-    t0 = time.time()
-    cache = _precompute_ncdm_momenta()
-    print(time.time() - t0)
-    for m_ncdm in [0.06, 0.2, 0.5, 1.]:
-        T_eff = constants.TCMB * constants.TNCDM_OVER_CMB * 0.9
-        z = np.linspace(0., 10., 100)
-        for out in ['p', 'rho', 'drhodm']:
-            assert np.allclose(cache[out](T_eff, m_ncdm, z), _compute_ncdm_momenta(T_eff, m_ncdm, z, out=out), rtol=1e-5, atol=0.)
-
-
 def plot_z_sampling():
     from cosmoprimo.fiducial import DESI
 
@@ -983,7 +970,7 @@ def test_jax():
     from jax import numpy as jnp
     from jax import jit, jacfwd
     from cosmoprimo.fiducial import DESI
-    from cosmoprimo.cosmology import DefaultBackground, _cache, _precompute_ncdm_momenta
+    from cosmoprimo.cosmology import DefaultBackground
 
     from cosmoprimo.bbks import Background
     cosmo = Cosmology(neutrino_hierarchy='normal', m_ncdm=0.1, engine='bbks')
@@ -1610,7 +1597,6 @@ if __name__ == '__main__':
 
     #test_bisect_emu()
     #test_jax()
-    #test_precompute_ncdm()
     #test_interp()
     test_jax()
     test_params()

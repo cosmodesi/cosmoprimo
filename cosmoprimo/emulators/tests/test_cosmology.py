@@ -33,7 +33,7 @@ KGRID = np.logspace(-3., 0., 20)
 
 
 def small_space():
-    return Space(limits=SMALL)
+    return Space(bounds=SMALL)
 
 
 def error_vs_truth(guess, point, spectrum='tt', ellmin=30):
@@ -65,14 +65,14 @@ def count_clones(emulator, params):
 def test_amplitude_leaves_the_grid_only_when_nothing_is_lensed():
     # lensing is not linear in the amplitude -- the deflection power is itself ~A_s -- so for
     # lensed spectra dividing by A_s flattens the dependence but must not remove the parameter
-    lensed = Emulator(fiducial(), Space(limits=AMPLITUDE), of=('lensed_cl',))
+    lensed = Emulator(fiducial(), Space(bounds=AMPLITUDE), of=('lensed_cl',))
     assert lensed.params == ['h', 'logA', 'tau_reio'] and lensed.exact_params == []
-    unlensed = Emulator(fiducial(), Space(limits=AMPLITUDE), of=('unlensed_cl',))
+    unlensed = Emulator(fiducial(), Space(bounds=AMPLITUDE), of=('unlensed_cl',))
     assert unlensed.params == ['h', 'tau_reio'] and unlensed.exact_params == ['logA']
 
 
 def test_optical_depth_screens_the_right_number_of_legs():
-    emu = Emulator(fiducial(), Space(limits=AMPLITUDE), of=('unlensed_cl', 'lens_potential_cl'))
+    emu = Emulator(fiducial(), Space(bounds=AMPLITUDE), of=('unlensed_cl', 'lens_potential_cl'))
     tau = 0.06
     factors = emu.scaling({'tau_reio': tau, 'A_s': 2e-9})
     # 'tt' has two screened legs, 'tp' one, 'pp' none; getting this wrong is a silent exp(tau)
@@ -84,7 +84,7 @@ def test_optical_depth_screens_the_right_number_of_legs():
 def test_the_scaling_cancels_exactly():
     """Whatever `transform` divides out, `inverse_transform` must put back -- to machine
     precision, or the emulator is fitting one thing and reporting another."""
-    emu = Emulator(fiducial(), Space(limits=AMPLITUDE), of=('lensed_cl',))
+    emu = Emulator(fiducial(), Space(bounds=AMPLITUDE), of=('lensed_cl',))
     params = {'h': 0.68, 'tau_reio': 0.055, 'logA': 3.04}
     truth = emu.compute(params)
     restored = emu.inverse_transform(emu.transform(truth, params), params)
@@ -100,7 +100,7 @@ def test_amplitude_is_exact_for_unlensed_spectra():
     rather than physics: the same 2e-4 appears whether the amplitude is given as A_s or logA, and
     is unchanged by `lensing` or `non_linear`. The tolerance is therefore stated at the measured
     value -- tightening it would only make the test fail for a reason it cannot fix."""
-    emu = Emulator(fiducial(), Space(limits=AMPLITUDE), of=('unlensed_cl',))
+    emu = Emulator(fiducial(), Space(bounds=AMPLITUDE), of=('unlensed_cl',))
 
     def scaled(logA):
         params = {'logA': logA, 'tau_reio': 0.055}
@@ -157,7 +157,7 @@ def test_a_subclass_only_has_to_override_what_it_changes():
         pass
 
     emu = Plain(lambda params: {'y': np.array([params['a'], params['a']**2])},
-                Space(limits={'a': (0., 1.)}))
+                Space(bounds={'a': (0., 1.)}))
     emu.train()
     assert np.allclose(emu.predict(a=0.3)['y'], [0.3, 0.09], atol=1e-8)
     # `predict` is all this layer offers. Turning a trained emulator back into the thing the
@@ -280,7 +280,7 @@ def test_a_section_only_scales_its_own_outputs(multi):
 def test_a_parameter_leaves_the_grid_only_if_every_section_is_exact():
     """The sections share the node set, so one section that needs a parameter expanded settles it
     for all of them."""
-    space = Space(limits={'h': (0.66, 0.70), 'logA': (3.00, 3.10)})
+    space = Space(bounds={'h': (0.66, 0.70), 'logA': (3.00, 3.10)})
     # fourier alone: P(k) is exactly linear in A_s, so the amplitude leaves the grid
     assert Emulator(fiducial(), space, section='fourier').exact_params == ['logA']
     # with a lensed harmonic section, which is not linear in the amplitude, it cannot
@@ -462,7 +462,7 @@ def test_mapping_a_space_keeps_every_point_it_accepted():
 
 @pytest.fixture(scope='module')
 def basis_trained():
-    emu = Emulator(fiducial(), Space(limits=OMEGAS), section='harmonic', basis='physical')
+    emu = Emulator(fiducial(), Space(bounds=OMEGAS), section='harmonic', basis='physical')
     return emu.train(budget=1)
 
 
@@ -497,7 +497,7 @@ def test_a_basis_cannot_add_a_direction_the_space_does_not_have():
     """Three physical densities out of a two-parameter space leaves one a deterministic function
     of the others. Saying so here beats the whitening quietly dividing by nothing and the failure
     surfacing later as an unfindable node."""
-    space = Space(limits={'Omega_m': (0.30, 0.32), 'h': (0.66, 0.69)})
+    space = Space(bounds={'Omega_m': (0.30, 0.32), 'h': (0.66, 0.69)})
     with pytest.raises(ValueError, match='reparametrisation'):
         Emulator(fiducial(), space, section='harmonic', basis='physical')
 
@@ -506,7 +506,7 @@ def test_a_basis_cannot_add_a_direction_the_space_does_not_have():
 
 @pytest.fixture(scope='module')
 def jax_trained():
-    return Emulator(fiducial(), Space(limits=WITH_LOGA),
+    return Emulator(fiducial(), Space(bounds=WITH_LOGA),
                     section='harmonic').train(budget=1)
 
 
@@ -573,7 +573,7 @@ def test_the_emulated_table_behaves_like_a_structured_array(jax_trained):
 def test_every_sections_scaling_traces(section, options):
     """The analytic divisors run at every prediction too, so a numpy cast in one of them breaks
     the trace exactly as an np.array() in `predict` did."""
-    emu = Emulator(fiducial(), Space(limits=WITH_LOGA), section=section, **options)
+    emu = Emulator(fiducial(), Space(bounds=WITH_LOGA), section=section, **options)
     for name, factor in emu.scaling(LOGA_POINT).items():
         assert np.all(np.isfinite(np.asarray(factor))), (section, name)
         assert np.all(np.asarray(factor) != 0.), (section, name)

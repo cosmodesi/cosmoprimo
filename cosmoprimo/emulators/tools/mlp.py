@@ -40,7 +40,7 @@ class MLPEngine(BaseEngine):
     Parameters
     ----------
     nsamples : int, default=None
-        How many points to evaluate the calculator at. ``512 * n_params`` by default, which is
+        How many points to evaluate the calculator at. ``512 * nparams`` by default, which is
         a starting point rather than a recommendation -- unlike the grid, there is no node count
         at which this becomes exact, so validate.
     nhidden : tuple, default=(64, 64, 64)
@@ -114,7 +114,7 @@ class MLPEngine(BaseEngine):
         return mean, scale
 
     def fit(self, inputs, outputs):
-        """``inputs``: (n_nodes, n_params), physical. ``outputs``: (n_nodes, n_outputs)."""
+        """``inputs``: (nnodes, nparams), physical. ``outputs``: (nnodes, noutputs)."""
         import jax
         from jax import numpy as jnp
         import optax

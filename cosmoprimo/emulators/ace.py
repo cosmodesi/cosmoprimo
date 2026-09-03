@@ -13,8 +13,10 @@ harmonic            ``camb_lcdm``               lensed TT/TE/EE and the lensing 
 
 The background is not emulated: cosmoprimo solves those ODEs directly, and measured against CAMB
 ``efunc``, ``growth_factor`` and ``growth_rate`` agree to 6e-13 -- there is nothing an emulator
-could add. jaxace is still used for the growth factor handed to the :math:`P(k)` network, so
-that its input matches what it was trained against.
+could add. The growth factor handed to the :math:`P(k)` network is the ACE network's own ``D_z``,
+not either solver's: it is what that network was trained against, and it is also the
+self-consistent choice -- :math:`\sigma_8` recovered from the returned :math:`P(k)` tracks the
+network's own :math:`\sigma_8(z)` to 5e-4, where jaxace's ODE growth leaves 1.1e-3.
 
 Unit conventions, which is where this kind of wiring goes wrong quietly:
 
@@ -75,10 +77,8 @@ EMULATORS = {
 #: harmonic section refuses rather than returning something that looks fine.
 _LCDM_ONLY = ('m_ncdm', 'w0_fld', 'wa_fld', 'Omega_k', 'N_eff')
 
-#: cosmoprimo name for each jaxace ``w0waCDMCosmology`` argument.
-_JAXACE = {'ln10As': 'logA', 'ns': 'n_s', 'h': 'h', 'omega_b': 'omega_b', 'omega_c': 'omega_cdm',
-           'm_nu': 'm_ncdm_tot', 'w0': 'w0_fld', 'wa': 'wa_fld'}
-
+#: The ACE network's outputs, in the order it returns them -- ``rs_drag`` in Mpc.
+_ACE_OUTPUTS = ('sigma8', 'sigma8_z', 'rs_drag', 'H_z', 'r_z', 'D_z', 'f_z')
 
 def _load(kind, name):
     if kind == 'jaxace':
@@ -117,13 +117,19 @@ class AceEngine(BaseEngine):
         return self._emulators[section]
 
     def inputs(self, section, z=None):
-        """The network's inputs, in its order -- read off this cosmology by name.
+        r"""The network's inputs, in its order -- read off this cosmology by name.
 
         A parameter the cosmology cannot supply is an error, not something to guess at. The
-        common case is the amplitude: these networks take ``logA``, and cosmoprimo's default
-        cosmology is parametrised by ``sigma8``, which cannot be converted without the Boltzmann
-        solve the emulator exists to avoid. ``BaseEngine._get_A_s_fid`` would return a
-        fitting-formula guess and every spectrum would be quietly off.
+        common case is the amplitude: these networks take :math:`\ln A`, and cosmoprimo's default
+        cosmology is parametrised by :math:`\sigma_8`, which no network here accepts. That one
+        does not need a Boltzmann solve, though: the linear power spectrum is linear in
+        :math:`A_s`, so :math:`\sigma_8 \propto e^{\ln A / 2}` at fixed shape, and the ACE
+        network's own :math:`\sigma_8` output inverts it in closed form from one evaluation --
+
+        .. math:: \ln A = \ln A_\mathrm{ref} + 2 \ln(\sigma_8 / \sigma_8(\ln A_\mathrm{ref}))
+
+        exactly, for any reference. ``BaseEngine._get_A_s_fid`` would have been the lazy
+        alternative and is a fitting formula: every spectrum would come out quietly off.
         """
         from cosmoprimo.cosmology import CosmologyError
 
@@ -134,7 +140,23 @@ class AceEngine(BaseEngine):
                 values.append(jnp.asarray(z))
                 continue
             if name == 'logA':
-                values.append(self.logA())
+                if self._logA_value is None:
+                    try:
+                        self._logA_value = jnp.asarray(self['logA'])
+                    except CosmologyError:
+                        try:
+                            sigma8 = jnp.asarray(self['sigma8'])
+                        except CosmologyError:
+                            raise CosmologyError(
+                                'these networks take `logA`; give the amplitude as `logA`, '
+                                '`A_s` or `sigma8`') from None
+                        reference = 3.
+                        # at z = 0, `sigma8_z` is the same quantity `sigma8_m` serves --
+                        # inverting on `sigma8` instead leaves the round trip 5e-5 off for
+                        # no reason
+                        predicted = self._get_ace(0., name='sigma8_z', logA=reference)[0]
+                        self._logA_value = reference + 2. * jnp.log(sigma8 / predicted)
+                values.append(self._logA_value)
                 continue
             try:
                 values.append(jnp.asarray(self['m_ncdm_tot' if name == 'm_ncdm' else name]))
@@ -144,65 +166,30 @@ class AceEngine(BaseEngine):
                     f'does not provide {name!r}') from None
         return values
 
-    def logA(self):
-        r"""The amplitude the networks take, solved from :math:`\sigma_8` when that is what was given.
+    def get_ace(self, z, name=None):
+        """The ACE network on a redshift grid, unpacked: ``{name: (nz,) array}`` over
+        :data:`_ACE_OUTPUTS`, or that one array if ``name`` is given."""
+        return self._get_ace(z, name=name)
 
-        cosmoprimo's default cosmology is parametrised by :math:`\sigma_8`, which no network here
-        accepts. It does not need a Boltzmann solve, though: the linear power spectrum is linear
-        in :math:`A_s`, so :math:`\sigma_8 \propto e^{\ln A / 2}` at fixed shape, and the ACE
-        network's own :math:`\sigma_8` output inverts it in closed form from one evaluation --
-
-        .. math:: \ln A = \ln A_\mathrm{ref} + 2 \ln(\sigma_8 / \sigma_8(\ln A_\mathrm{ref}))
-
-        exactly, for any reference. ``_get_A_s_fid`` would have been the lazy alternative and is
-        a fitting formula: every spectrum would come out quietly off.
-        """
-        from cosmoprimo.cosmology import CosmologyError
-
-        if self._logA_value is None:
-            try:
-                self._logA_value = jnp.asarray(self['logA'])
-            except CosmologyError:
-                try:
-                    sigma8 = jnp.asarray(self['sigma8'])
-                except CosmologyError:
-                    raise CosmologyError(
-                        'these networks take `logA`; give the amplitude as `logA`, `A_s` or '
-                        '`sigma8`') from None
-                reference = 3.
-                # output[1] is sigma8_z, and z = 0 makes it the same quantity `sigma8_m` serves
-                # -- inverting on output[0] instead leaves the round trip 5e-5 off for no reason
-                predicted = self._ace(0., logA=reference)[0, 1]
-                self._logA_value = reference + 2. * jnp.log(sigma8 / predicted)
-        return self._logA_value
-
-    def jaxace_cosmology(self):
-        """jaxace's own cosmology object, for the growth the P(k) network was trained against."""
-        import jaxace
-
-        return jaxace.w0waCDMCosmology(**{name: jnp.asarray(self[cosmoprimo])
-                                          for name, cosmoprimo in _JAXACE.items()})
-
-    def ace(self, z):
-        """The ACE network on a redshift grid: ``(nz, 7)`` = (sigma8, sigma8_z, rs_drag [Mpc],
-        H_z, r_z, D_z, f_z)."""
-        return self._ace(z)
-
-    def _ace(self, z, logA=None):
-        """``ace``, with the amplitude overridable -- :meth:`logA` needs to call in before it is
-        known, and would otherwise recurse."""
+    def _get_ace(self, z, name=None, logA=None):
+        """:meth:`get_ace`, with the amplitude overridable -- solving for it in :meth:`inputs`
+        needs to call in before it is known, and would otherwise recurse."""
         z = jnp.atleast_1d(jnp.asarray(z))
         spec = EMULATORS['thermodynamics']
         if logA is not None:
-            values = [jnp.asarray(z) if name == 'z'
-                      else jnp.asarray(logA) if name == 'logA'
-                      else jnp.asarray(self['m_ncdm_tot' if name == 'm_ncdm' else name])
-                      for name in spec['inputs']]
+            values = [jnp.asarray(z) if param == 'z'
+                      else jnp.asarray(logA) if param == 'logA'
+                      else jnp.asarray(self['m_ncdm_tot' if param == 'm_ncdm' else param])
+                      for param in spec['inputs']]
         else:
             values = self.inputs('thermodynamics', z=z)
         stacked = jnp.stack([value if value.ndim else jnp.full(z.shape, value)
                              for value in values], axis=-1)
-        return self.emulator('thermodynamics').run_emulator(stacked)
+        outputs = self.emulator('thermodynamics').run_emulator(stacked)
+        outputs = dict(zip(_ACE_OUTPUTS, outputs.T))
+        if name is not None:
+            return outputs[name]
+        return outputs
 
 
 class Background(DefaultBackground):
@@ -218,7 +205,7 @@ class Thermodynamics(BaseSection):
     @property
     def rs_drag(self):
         r""":math:`r_s(z_\mathrm{drag})`, in :math:`\mathrm{Mpc}/h` -- the network returns Mpc."""
-        return self._engine.ace(0.)[0, 2] * self._engine['h']
+        return self._engine.get_ace(0., name='rs_drag')[0] * self._engine['h']
 
 
 class Fourier(BaseSection):
@@ -234,12 +221,17 @@ class Fourier(BaseSection):
         component = engine.emulator('fourier')['delta_m' if of == 'delta_m' else 'delta_cb']
         values = jnp.array(engine.inputs('fourier'))
         z = jnp.atleast_1d(jnp.asarray(z))
-        growth = engine.jaxace_cosmology().D_z(z)
+        # D_z from the ACE network, in jaxace's normalisation (D -> a early, so D(0) = 0.77,
+        # not 1). jaxace's ODE solves the same quantity and agrees to 8e-4, but it is a solver:
+        # 11x the whole ACE forward pass, which is made here anyway, and it stalls under vmap.
+        # The network's own D_z is also what leaves sigma8 from this P(k) consistent with the
+        # network's sigma8_z -- 5e-4, against 1.1e-3 for the ODE growth
+        growth = engine.get_ace(z, name='D_z')
         pk = component.get_Pk(values, z, growth)
         if of.startswith('theta'):
             # pk_tt = f_z^2 pk_cb at scale-independent growth, with f_z from the ACE network so
             # that sigma8_z(theta_cb) = f_z sigma8_z(delta_cb) exactly
-            pk = engine.ace(z)[:, 6, None]**2 * pk
+            pk = engine.get_ace(z, name='f_z')[:, None]**2 * pk
         h = engine['h']
         return jnp.asarray(component.k_grid) / h, pk * h**3
 
@@ -262,10 +254,10 @@ class Fourier(BaseSection):
         Total-matter, and served for ``delta_cb`` as an approximation -- 0.5% low at the DESI
         fiducial with 0.06 eV, which is the network's own convention, not a choice made here.
         """
-        values = self._engine.ace(z)
-        sigma8 = values[:, 1]
+        values = self._engine.get_ace(z)
+        sigma8 = values['sigma8_z']
         if str(of).startswith('theta'):
-            sigma8 = values[:, 6] * sigma8
+            sigma8 = values['f_z'] * sigma8
         return sigma8 if np.ndim(z) else sigma8[0]
 
     @property

@@ -148,65 +148,10 @@ def _compute_ncdm_momenta(T_eff, m, z, method='laguerre', epsabs=1e-7, epsrel=1e
     return toret.reshape(shape)
 
 
-_cache = {}
-
-
-def _precompute_ncdm_momenta(**kwargs):
-    from .jax import vmap, Interpolator2D
-    zz = 1. / np.logspace(-8, 0., 400)[::-1] - 1.
-    #mm = np.linspace(0., 5., 1000)
-    mm = np.concatenate([[0.], np.geomspace(1e-3, 5., 100)])
-    TEFF = constants.TCMB * constants.TNCDM_OVER_CMB
-    toret = {}
-
-    def get_callable(array, jax=False, out='rho'):
-
-        jnp = np
-        if jax:
-            from .jax import numpy as jnp
-        array = jnp.asarray(array)
-
-        if out == 'drhodm':
-
-            interp = Interpolator2D(mm, zz, array)
-
-            def callable(T_eff, m_ncdm, z):
-                return interp(m_ncdm * TEFF / T_eff, z) * (T_eff / TEFF)**3
-
-        else:
-
-            interp = Interpolator2D(mm, zz, jnp.log10(array))
-
-            def callable(T_eff, m_ncdm, z):
-                return 10**interp(m_ncdm * TEFF / T_eff, z) * (T_eff / TEFF)**4
-
-        return callable
-
-    dirname = os.path.join(os.path.dirname(__file__), '_cache')
-
-    for out in ['rho', 'p', 'drhodm']:
-        name = os.path.join(dirname, '{}.npy'.format(out))
-        if os.path.exists(name):
-            array = np.load(name)
-        else:
-            array = vmap(lambda m: _compute_ncdm_momenta(TEFF, m, zz, out=out, **kwargs))(mm)
-        for jax in ['_jax', '']:
-            toret[out + jax] = get_callable(array, jax=bool(jax), out=out)
-
-    return toret
-
-
-def compute_ncdm_momenta(T_eff, m_ncdm, z, out='rho'):
-    # Evaluating 2D interpolation is actually slower than recomputing the integrals
-    from .jax import use_jax
-    global _cache
-    if 'ncdm' not in _cache:
-        _cache['ncdm'] = _precompute_ncdm_momenta()
-    jax = '_jax' if use_jax(T_eff, m_ncdm, z) else ''
-    return _cache['ncdm'][out + jax](T_eff, m_ncdm, z)
-
-
-#compute_ncdm_momenta(1., 0., 0.)
+#: Public name for the neutrino momenta: the direct quadrature.  A tabulated
+#: interpolant over (m_ncdm, z) was tried and removed (it had been unreachable since
+#: it was written): evaluating the 2d interpolation measured slower than recomputing
+#: the integrals.
 compute_ncdm_momenta = _compute_ncdm_momenta
 
 

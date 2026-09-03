@@ -95,7 +95,7 @@ Usage
 Every parameter broadcasts, so a whole prior sample goes through in one call::
 
     import numpy as np
-    from cosmoprimo import mochiclass_stability as mcs
+    from cosmoprimo.emulators import mochiclass as mcs
 
     n = 1_000_000
     ok = mcs.stable_hill_valley(
@@ -180,7 +180,7 @@ def _build_ncdm_tables():
     Tabulate ``Irho``, ``Ip`` and their ``y`` derivatives, by Gauss-Legendre quadrature.
 
     The derivatives are only needed by :func:`background` with ``derivs=True`` (i.e. by
-    ``heftcamb_stability``, which needs ``d p_tot / d ln a`` to build
+    ``cosmoprimo.emulators.heftcamb``, which needs ``d p_tot / d ln a`` to build
     :math:`d^2\Omega_{\rm smg}/d\ln a^2`); they cost nothing to tabulate alongside.
 
     .. code::
@@ -317,8 +317,8 @@ def background(a, h=0.6736, omega_b=0.02237, omega_cdm=0.12, w0=-1., wa=0.,
         :math:`w_0 + w_a (1 - a)`
 
     With ``derivs=True`` three more entries appear, all :math:`d/d\ln a`:
-    ``dP_tot``, ``dOmega_de`` and ``d2Omega_de``.  ``heftcamb_stability`` needs them
-    because EFTCAMB's :math:`\Omega`, and hence its gradient term, depends on
+    ``dP_tot``, ``dOmega_de`` and ``d2Omega_de``.  ``cosmoprimo.emulators.heftcamb`` needs
+    them because EFTCAMB's :math:`\Omega`, and hence its gradient term, depends on
     :math:`\alpha_T'' \propto \Omega_{\rm smg}''`.
     """
     a = np.asarray(a, dtype='f8')

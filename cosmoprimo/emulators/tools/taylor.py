@@ -29,7 +29,7 @@ import numpy as np
 from cosmoprimo.jax import numpy_jax
 
 from .engines import BaseEngine
-from .utils import fd_stencil
+from .utils import fd_stencil, expand_dict
 
 
 def axis_stencils(order, accuracy, exact_through, half_width):
@@ -68,21 +68,6 @@ def axis_stencils(order, accuracy, exact_through, half_width):
         offsets, coefficients = fd_stencil(k, 2 * nside(k) - k + 1)
         stencils.append((offsets, coefficients / step ** k))
     return step, stencils
-
-
-def expand_dict(value, names, label=''):
-    """``{name: value}`` from an int or a dict, whose ``'*'`` key, if any, is the default."""
-    if not isinstance(value, dict):
-        return {name: value for name in names}
-    default = value.get('*', None)
-    unknown = [name for name in value if name != '*' and name not in names]
-    if unknown:
-        raise ValueError(f'{label} names unknown parameters {unknown}; have {list(names)}')
-    if default is None:
-        missing = [name for name in names if name not in value]
-        if missing:
-            raise ValueError(f'{label} is missing {missing}; give them, or a "*" default')
-    return {name: value.get(name, default) for name in names}
 
 
 class TaylorEngine(BaseEngine):
@@ -128,8 +113,8 @@ class TaylorEngine(BaseEngine):
             if not self.order[name]:
                 continue
             if self.accuracy[name] <= 0 or self.accuracy[name] % 2:
-                raise ValueError(f'accuracy is {self.accuracy[name]} for {name!r}, and must be a '
-                                 f'positive EVEN integer')
+                raise ValueError(f'accuracy is {self.accuracy[name]} for {name!r}, and must be '
+                                 f'a positive even integer')
         if not max(self.order.values()):
             raise ValueError(f'every parameter is at order 0, so the expansion is a constant; '
                              f'give order >= 1 for at least one of {list(self.params)}')
@@ -164,7 +149,7 @@ class TaylorEngine(BaseEngine):
 
     # ── nodes ─────────────────────────────────────────────────────────────────
     def nodes(self):
-        """The node set, in physical parameters: an ``(n_nodes, n_params)`` array.
+        """The node set, in physical parameters: an ``(nnodes, nparams)`` array.
 
         The union over kept terms of the points each one's own stencil needs, so a term dropped
         by ``budget`` takes with it any node no other term asked for.
@@ -183,7 +168,7 @@ class TaylorEngine(BaseEngine):
 
     # ── fit / predict ─────────────────────────────────────────────────────────
     def fit(self, inputs, outputs):
-        """``inputs``: (n_nodes, n_params), physical. ``outputs``: (n_nodes, n_outputs).
+        """``inputs``: (nnodes, nparams), physical. ``outputs``: (nnodes, noutputs).
 
         Each mixed partial is the tensor product of one-dimensional stencils -- the difference
         operators along different axes commute, so an order-``p`` mixed derivative is a weighted

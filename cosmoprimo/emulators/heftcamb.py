@@ -1,7 +1,7 @@
 r"""
 Fast, vectorised stability check for the Horndeski models of HEFTCAMB / EFTCAMB.
 
-The companion of :mod:`mochiclass_stability`, for the other engine.  Same purpose --
+The companion of :mod:`cosmoprimo.emulators.mochiclass`, for the other engine.  Same purpose --
 gate a linear-:math:`P(k)` emulator without running the Boltzmann code -- and the same
 two parametrisations, but a **different set of conditions**, because EFTCAMB's stability
 module is not a re-spelling of mochi_class'.  If the emulator is trained on ``heftcamb``,
@@ -57,7 +57,7 @@ with ``alpha_B^EFT = -alpha_B(hi_class)/2`` (:data:`BRAIDING_EFTCAMB_OVER_HICLAS
 :func:`eft_gradient`.
 
 Everything is analytic: the background is exactly w0waCDM (shared with
-:mod:`mochiclass_stability`, and checked against HEFTCAMB's own ``adotoa`` to 8e-7 and
+:mod:`cosmoprimo.emulators.mochiclass`, and checked against HEFTCAMB's own ``adotoa`` to 8e-7 and
 ``grhov_t`` to 2e-6), and the alphas and their ``a``-derivatives are closed form.
 
 Validating this against the code
@@ -122,7 +122,7 @@ Usage
 ::
 
     import numpy as np
-    from cosmoprimo import heftcamb_stability as hs
+    from cosmoprimo.emulators import heftcamb as hs
 
     ok = hs.stable_hill_valley(
         c_M=np.random.uniform(-0.5, 0.5, n), tau=..., a_t=..., r=2., alpha_K=1e-4,
@@ -130,7 +130,7 @@ Usage
 
 Alphas are in the **hi_class / mochi_class** convention throughout, exactly as
 ``cosmoprimo``'s ``heftcamb`` engine takes them, so the same numbers go into this module
-and into :mod:`mochiclass_stability`.
+and into :mod:`cosmoprimo.emulators.mochiclass`.
 
 .. _Companion files:
 
@@ -157,8 +157,8 @@ engine's, not this module's.
 
 import numpy as np
 
-from . import mochiclass_stability as mcs
-from .mochiclass_stability import background, alphas_hill_valley
+from . import mochiclass as mcs
+from .mochiclass import background, alphas_hill_valley
 
 __all__ = ['stable', 'stable_hill_valley', 'stable_propto_omega',
            'scan_hill_valley', 'scan_propto_omega',
@@ -212,7 +212,7 @@ def eftcamb_a_grid(a_start=A_START, n=N_EFTCAMB_SAMPLE):
 def default_a_grid(na=DEFAULT_NA, a_start=A_START, a_split=1e-3, frac_early=0.25):
     """
     A cheaper stand-in for :func:`eftcamb_a_grid`, in the spirit of
-    :func:`mochiclass_stability.default_a_grid`: log-spaced in two pieces, dense where the
+    :func:`cosmoprimo.emulators.mochiclass.default_a_grid`: log-spaced in two pieces, dense where the
     structure is.
 
     ``validate_heftcamb.py`` measures what it costs relative to the exact sampler.
@@ -269,7 +269,7 @@ def _rph_propto_omega(a, lna, bg, c_k, c_b, c_m, c_t, M2_ini):
     Same tuple for ``propto_omega``, :math:`\alpha_i = c_i \Omega_{\rm smg}(a)`.
 
     HEFTCAMB's ``Ode = grhov/(3 H^2)`` is mochi_class' ``Omega_smg`` (``007p2_RPH.f90``
-    line 1362), so the shape function is shared with :mod:`mochiclass_stability`.
+    line 1362), so the shape function is shared with :mod:`cosmoprimo.emulators.mochiclass`.
     :math:`M_\ast^2` comes from the same cumulative trapezoid of
     :math:`\int \alpha_M\,d\ln a`; ``RPHintegratefromtoday=False`` makes ``M2_ini`` the
     early-time value on both sides.
@@ -372,7 +372,7 @@ def eft_kinetic(f):
 
     the standard Horndeski no-ghost quantity, carrying the same ``18 M2^3 adotoa^2``
     prefactor as ``EFT_gradient = 18 M2^3 adotoa^2 cs2num``.  With the stray ``h0`` it does
-    not.  Checked to 1e-12 relative against :func:`mochiclass_stability.kinetic_D`; the
+    not.  Checked to 1e-12 relative against :func:`cosmoprimo.emulators.mochiclass.kinetic_D`; the
     matching HEFTCAMB fix is in ``heftcamb_upstream_fixes.patch``.
 
     This changes no verdict for ``alpha_K >= 0``: both forms are ``2 alpha_K`` plus a sum of
@@ -457,7 +457,7 @@ def _check_flags(flags):
     on = sorted(k for k in _UNSUPPORTED_FLAGS if flags.get(k))
     if on:
         raise ValueError(
-            'heftcamb_stability reproduces only the ghost and gradient conditions '
+            'cosmoprimo.emulators.heftcamb reproduces only the ghost and gradient conditions '
             '(EFT_ghost_stability / EFT_gradient_stability), which is what cosmoprimo\'s '
             'heftcamb engine switches on. It cannot predict a run with {} enabled.'
             .format(', '.join(on)))
@@ -529,7 +529,7 @@ def scan_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=1e-4, na=DEFAULT_NA
     Returns a dict of arrays: ``min_kinetic`` and ``min_gradient`` are the *margins*
     (term + tolerance, so ``>= 0`` passes), ``min_AT`` / ``min_DT`` /
     ``min_one_plus_Omega`` are the bare minima.  ``alpha_K`` is a real argument here,
-    unlike in :mod:`mochiclass_stability`: it enters ``EFT_kinetic`` through ``Gamma1``.
+    unlike in :mod:`cosmoprimo.emulators.mochiclass`: it enters ``EFT_kinetic`` through ``Gamma1``.
     """
     args = dict(c_M=c_M, tau=tau, a_t=a_t, r=r, M2_ini=M2_ini, alpha_K=alpha_K)
     par, shape, n, grid, ck = _prepare(args, cosmo, na, a_grid, a_start)
@@ -580,7 +580,7 @@ def stable(gravity_model, parameters_smg, flags=None, **cosmo):
     """
     Dispatch on mochi_class' ``gravity_model`` / ``parameters_smg`` pair.
 
-    Deliberately the same signature as :func:`mochiclass_stability.stable`, since
+    Deliberately the same signature as :func:`cosmoprimo.emulators.mochiclass.stable`, since
     ``cosmoprimo``'s ``heftcamb`` engine takes the same arguments as its ``mochiclass``
     one -- so the two gates are drop-in swaps for each other.
     """

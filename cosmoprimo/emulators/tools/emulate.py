@@ -93,7 +93,10 @@ class Emulator(object):
         Where accuracy is required, in the user's own parameters.
     engine : str, default='chebyshev'
         Which engine fits the nodes: ``'chebyshev'`` (sparse-grid interpolation),
-        ``'taylor'`` (a local expansion, see :mod:`taylor`) or ``'mlp'``.
+        ``'taylor'`` (a local expansion, see :mod:`taylor`), ``'polynomial'`` (least-squares
+        regression over a declared basis, see :mod:`polynomial` -- the one to reach for when part
+        of the box is a region the calculator refuses, since it needs no complete node set) or
+        ``'mlp'``.
     coverage : str, default='raise'
         ``'raise'``, ``'warn'`` or ``'ignore'`` outside the trained box.
     options : dict
@@ -212,9 +215,11 @@ class Emulator(object):
     def _engine(self, budget=None, **kwargs):
         from .engines import ChebyshevEngine
         from .mlp import MLPEngine
+        from .polynomial import PolynomialEngine
         from .taylor import TaylorEngine
 
-        classes = {cls.name: cls for cls in (ChebyshevEngine, TaylorEngine, MLPEngine)}
+        classes = {cls.name: cls
+                   for cls in (ChebyshevEngine, TaylorEngine, PolynomialEngine, MLPEngine)}
         subspace = self.training.marginal(self.params) \
             if len(self.params) < len(self.training.params) else self.training
         options = {**self.options, **kwargs}
@@ -230,7 +235,14 @@ class Emulator(object):
                              f'{sorted(classes)}')
         # the box, whitening included, comes from the space itself (see :meth:`Space.geometry`):
         # what stays here is only what the space has no say in -- which engine, and how big.
-        return classes[self.engine_name](**subspace.geometry(), budget=budget, **options)
+        cls = classes[self.engine_name]
+        # The chain, for an engine that places its nodes rather than deriving them from the box.
+        # Not part of `geometry()`, which describes the region and deliberately hands over plain
+        # arrays -- mean, rotation, scale -- and not the samples behind them; this is the one
+        # engine that wants the samples themselves, so it asks for them by name.
+        if cls.wants_samples and 'samples' not in options and subspace.samples is not None:
+            options = {**options, 'samples': subspace.samples}
+        return cls(**subspace.geometry(), budget=budget, **options)
 
     def train(self, engine=None, budget=None, checkpoint=None, chunk=None, batch_size=None,
               mpicomm=None, per_output=None, max_non_finite=0.05, method='auto',

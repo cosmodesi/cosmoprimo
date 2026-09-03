@@ -55,7 +55,7 @@ class TrainingSet(object):
     target : callable
         ``target(**params) -> dict`` of named arrays.
     nodes : array
-        ``(n_nodes, n_params)`` in training coordinates.
+        ``(nnodes, nparams)`` in training coordinates.
     params : list
         Names of the training coordinates, ordered as the columns of ``nodes``.
     batch_size : int, default=None
@@ -107,7 +107,7 @@ class TrainingSet(object):
         # Only a regression engine may set this; see _call. Counted rather than silent, because
         # a box that loses many nodes is a box in the wrong place, whatever the engine.
         self.drop_non_finite = bool(drop_non_finite)
-        self.n_non_finite = 0
+        self.nnonfinite = 0
         #: shapes of the first successful call, so a later failure can be turned into NaNs
         self._output_template = {}
 
@@ -288,7 +288,7 @@ class TrainingSet(object):
         after the node that caused it.
 
         With ``drop_non_finite`` the values are kept as they came instead, NaNs and all, and the
-        node is counted in :attr:`n_non_finite`. That is only correct for a regression engine,
+        node is counted in :attr:`nnonfinite`. That is only correct for a regression engine,
         where the row is simply left out of the least-squares fit; the caller decides, from
         ``engine.requires_all_nodes``. The node still enters the checkpoint, so resumption and
         the done/complete accounting are unaffected -- the filtering happens at fit time."""
@@ -310,7 +310,7 @@ class TrainingSet(object):
             if not (self.drop_non_finite and self._output_template):
                 raise NodeEvaluationError(f'node {params} failed: '
                                           f'{type(exc).__name__}: {exc}') from exc
-            self.n_non_finite += 1
+            self.nnonfinite += 1
             return {name: np.full(shape, np.nan) for name, shape in self._output_template.items()}
         if self.drop_non_finite and not self._output_template:
             self._output_template = {name: np.shape(np.asarray(value))
@@ -324,11 +324,11 @@ class TrainingSet(object):
                                           f'every coefficient of the fit; shrink the Space to '
                                           f'where the calculator is finite, or use a regression '
                                           f'engine, which can drop it.')
-            self.n_non_finite += 1
+            self.nnonfinite += 1
         return values
 
     def inputs(self):
-        """The node coordinates actually evaluated, ``(n_nodes, n_params)``.
+        """The node coordinates actually evaluated, ``(nnodes, nparams)``.
 
         (Distinct from :attr:`nodes`, which is the set planned -- they differ mid-run.)
         """
@@ -336,7 +336,7 @@ class TrainingSet(object):
         return np.array(self.keys)
 
     def outputs(self):
-        """What the calculator returned, ``{name: (n_nodes, ...)}``."""
+        """What the calculator returned, ``{name: (nnodes, ...)}``."""
         self._complete_or_raise()
         return {name: np.array(value) for name, value in self.values.items()}
 
