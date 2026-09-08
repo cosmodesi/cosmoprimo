@@ -873,6 +873,23 @@ def test_mochiclass():
     assert not np.allclose(cosmo_class.get_fourier().pk_interpolator(of='theta_cb')(k=k, z=z), cosmo.get_fourier().pk_interpolator(of='theta_cb')(k=k, z=z), atol=0., rtol=1e-4)
     cosmo.comoving_radial_distance(z)
 
+    # h1 / h3 / h5 splines for fkptjax: refuse non-finite values (a > 1 is outside the background table)
+    from cosmoprimo import CosmologyComputationError
+    try:
+        cosmo.get_background().eft_interpolators(eta=np.linspace(-1., 1., 10))
+    except CosmologyComputationError:
+        pass
+    else:
+        raise AssertionError('eft_interpolators should raise on non-finite h functions')
+    # ... and match the direct evaluation for a smooth model (brans dicke above has a pole in h3 / h5)
+    params = {'Omega_Lambda': 0, 'Omega_fld': 0, 'Omega_smg': -1, 'gravity_model': 'propto_omega', 'parameters_smg': [1., 0.5, 0.3, 0., 1.],
+              'expansion_model': 'wowa', 'expansion_smg': [0.685, -1., 0.]}
+    background = Cosmology(engine='mochiclass', **params).get_background()
+    interps = background.eft_interpolators()
+    eta = np.linspace(-3.9, -0.01, 50)
+    for name in ['h1', 'h3', 'h5']:
+        assert np.allclose(interps['eftcamb_{}_interp'.format(name)](eta), getattr(background, name)(eta), rtol=1e-4, atol=0.)
+
     from cosmoprimo.fiducial import DESI
     cosmo = DESI(engine='mochiclass', **params)
     cosmo['parameters_smg']
