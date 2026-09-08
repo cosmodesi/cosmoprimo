@@ -253,26 +253,54 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
         bg = self._eft_of_de_at_eta(eta)
         return (1. + bg['alpha_T']) / bg['M2']
 
+    @staticmethod
+    def _over_mu2(numerator, bg):
+        r"""
+        ``numerator / (a^2 H^2 mu^2)``, with the general-relativity limit taken where :math:`\mu^{2}` vanishes.
+
+        :math:`\mu^{2}` (eq. 69) is identically zero only when :math:`\alpha_{B} = 0` and :math:`\xi \alpha_{2} = 0`,
+        i.e. for a model with no braiding on a :math:`w = -1` background (there the :math:`c_{s}^{2}` numerator,
+        :math:`\alpha_{1}` and :math:`\alpha_{2}` vanish too): exact GR, e.g. ``propto_omega`` with
+        :math:`c_{B} = c_{M} = c_{T} = 0` on :math:`w_{0} = -1, w_{a} = 0`. Both :math:`h_{3}` and :math:`h_{5}`
+        are then :math:`0 / 0`, while their true limit (approached e.g. as :math:`c_{B} \to 0`) is
+        :math:`h_{3}, h_{5} \to \infty` with :math:`h_{5} / h_{3} \to 1`, so that
+        :math:`\mu(k) = h_{1} (1 + k^{2} h_{5}) / (1 + k^{2} h_{3}) \to h_{1}` at every :math:`k`.
+        Returning :math:`h_{3} = h_{5} = 0` gives that same :math:`\mu = h_{1}` exactly, and is what
+        HEFTCAMB's cancellation-free one-loop kernels return at the same point (see ``heftcamb.Background``),
+        so the two engines agree there. Without this the emulator / sampler could not include the GR point:
+        :meth:`eft_interpolators` refuses non-finite values.
+
+        Only an exact zero is treated: a :math:`\mu^{2}` crossing zero at some :math:`\eta` (a pole of
+        :math:`h_{3}`, :math:`h_{5}`, e.g. the Brans-Dicke test model) is a genuine feature of the model and is
+        left as is, so that :meth:`eft_interpolators` can still warn about it.
+        """
+        mu2 = bg['mu2']
+        with np.errstate(divide='ignore', invalid='ignore'):
+            toret = numerator / (bg['aH']**2 * mu2)
+        return np.where(mu2 == 0., 0., toret)
+
     @_flatarray
     def h3(self, eta):
         r"""
         :math:`h_{3} = \left[(2 - \alpha_{B}) \alpha_{1} + 2 \alpha_{2}\right] / (2 a^{2} H^{2} \mu^{2})`,
         eq. 66 of arXiv:1902.06978, in :math:`(\mathrm{Mpc}/h)^{2}` (i.e. for :math:`k` in :math:`h/\mathrm{Mpc}`),
-        as a function of :math:`\eta = \ln a`.
+        as a function of :math:`\eta = \ln a`. Zero where :math:`\mu^{2}` vanishes identically (exact GR),
+        see :meth:`_over_mu2`.
         """
         bg = self._eft_of_de_at_eta(eta)
-        return bg['cs2num'] / (bg['aH']**2 * bg['mu2'])
+        return self._over_mu2(bg['cs2num'], bg)
 
     @_flatarray
     def h5(self, eta):
         r"""
         :math:`h_{5} = \left[\frac{1 + \alpha_{M}}{1 + \alpha_{T}} \alpha_{1} + \alpha_{2}\right] / (a^{2} H^{2} \mu^{2})`,
         eq. 68 of arXiv:1902.06978, in :math:`(\mathrm{Mpc}/h)^{2}` (i.e. for :math:`k` in :math:`h/\mathrm{Mpc}`),
-        as a function of :math:`\eta = \ln a`.
+        as a function of :math:`\eta = \ln a`. Zero where :math:`\mu^{2}` vanishes identically (exact GR),
+        see :meth:`_over_mu2`.
         """
         bg = self._eft_of_de_at_eta(eta)
         numerator = (1. + bg['alpha_M']) / (1. + bg['alpha_T']) * bg['alpha_1'] + bg['alpha_2']
-        return numerator / (bg['aH']**2 * bg['mu2'])
+        return self._over_mu2(numerator, bg)
 
     def eft_interpolators(self, eta=None, xnow=-3.912023, extrapolate=True, rtol=1e-3):
         r"""
@@ -334,7 +362,9 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
                                                 '(z in [{:.3f}, {:.3f}]); check the smg / EFT parameters or the eta grid'.format(
                                                 name, bad.size, eta.size, bad.min(), bad.max(), np.expm1(-bad.max()), np.expm1(-bad.min())))
             spline = CubicSpline(eta, values, extrapolate=extrapolate)
-            if rtol is not None:
+            # max |values| == 0 is the GR limit (h3 = h5 = 0 identically, see _over_mu2): the spline is exact
+            # and the relative error below would be 0 / 0, so there is nothing to check
+            if rtol is not None and np.max(np.abs(values)) > 0.:
                 exact = np.asarray(func(midpoints), dtype='f8')
                 scale = np.maximum(np.abs(exact), 1e-3 * np.max(np.abs(values)))
                 error = np.abs(spline(midpoints) - exact) / scale

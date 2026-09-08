@@ -905,6 +905,24 @@ def test_mochiclass():
     assert np.allclose(cosmo_clone.h3(eta), cosmo_ref.h3(eta), rtol=1e-10, atol=0.)
     assert np.allclose(cosmo_clone.get_fourier().sigma8_z(0.5, of='delta_cb'), cosmo_ref.get_fourier().sigma8_z(0.5, of='delta_cb'), rtol=1e-8)
 
+    # exact GR (no braiding, no running, w = -1): mu^2 = 0 and cs2num = 0 identically, so h3 and h5 are 0 / 0.
+    # The GR limit is taken (h3 = h5 = 0, hence Y = h1 = 1, as HEFTCAMB gives), the splines must build without
+    # warning, and Y must be continuous with a nearly-GR model
+    import warnings
+    cosmo_gr = Cosmology(engine='mochiclass', c_K=0.1, c_B=0., c_M=0., c_T=0., M2_ini=1., w0_fld=-1., wa_fld=0., **common)
+    background = cosmo_gr.get_background()
+    assert np.all(background.h3(eta) == 0.) and np.all(background.h5(eta) == 0.)
+    assert np.allclose(background.h1(eta), 1., rtol=1e-10, atol=0.)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        interps = background.eft_interpolators()
+    assert np.all(interps['eftcamb_h3_interp'](eta) == 0.) and np.all(interps['eftcamb_h5_interp'](eta) == 0.)
+    kk, zz = np.linspace(0.01, 1., 20), np.linspace(0., 2., 5)
+    assert np.allclose(background.Y(kk, zz), 1., rtol=1e-10, atol=0.)
+    cosmo_near = Cosmology(engine='mochiclass', c_K=0.1, c_B=1e-3, c_M=0., c_T=0., M2_ini=1., w0_fld=-1., wa_fld=0., **common)
+    assert np.all(np.isfinite(cosmo_near.h3(eta))) and np.allclose(cosmo_near.Y(kk, zz), 1., rtol=1e-2, atol=0.)
+    assert np.allclose(cosmo_near.get_fourier().pk_interpolator(of='delta_cb')(k=kk, z=zz), cosmo_gr.get_fourier().pk_interpolator(of='delta_cb')(k=kk, z=zz), rtol=1e-2)
+
     from cosmoprimo.fiducial import DESI
     cosmo = DESI(engine='mochiclass', **params)
     cosmo['parameters_smg']
