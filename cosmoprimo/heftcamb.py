@@ -425,7 +425,10 @@ class Background(CambBackground):
                                                 '(z in [{:.3f}, {:.3f}]); check the smg / EFT parameters or the eta grid'.format(
                                                 name, bad.size, eta.size, bad.min(), bad.max(), np.expm1(-bad.max()), np.expm1(-bad.min())))
             spline = CubicSpline(eta, values, extrapolate=extrapolate)
-            if rtol is not None:
+            # max |values| == 0 is the GR limit (HEFTCAMB's kernels give h3 = h5 = 0 identically there, as
+            # mochiclassy.Background._over_mu2 does): the spline is exact and the relative error below
+            # would be 0 / 0, so there is nothing to check
+            if rtol is not None and np.max(np.abs(values)) > 0.:
                 exact = np.asarray(func(midpoints), dtype='f8')
                 scale = np.maximum(np.abs(exact), 1e-3 * np.max(np.abs(values)))
                 error = np.abs(spline(midpoints) - exact) / scale
