@@ -1054,9 +1054,21 @@ class HEFTCAMBEngine(CambEngine):
                     "parameters_smg was given without gravity_model, so there is no way to know "
                     "what the entries mean")
             if 'parameters_smg' not in spec:
-                raise CosmologyInputError(
-                    "gravity_model = {!r} was given without parameters_smg".format(spec['gravity_model']))
-            model, parameters = self._parse_parameters_smg(spec['gravity_model'], spec['parameters_smg'])
+                # Scalar spelling only: every coefficient of the model given by name (the same
+                # rule as the 'mochiclass' engine: all of them are required).
+                model = self._GRAVITY_MODEL_ALIASES.get(spec['gravity_model'], spec['gravity_model'])
+                names = self._PARAMETERS_SMG_NAMES.get(model, None)
+                missing = [scalar for scalar, name in self._SCALAR_SMG_NAMES.get(model, {}).items()
+                           if name not in overrides]
+                if names is None or missing:
+                    raise CosmologyInputError(
+                        "gravity_model = {!r} was given without parameters_smg{}".format(
+                            spec['gravity_model'],
+                            "" if names is None else ", and the scalar coefficients {} are missing (it takes {})".format(
+                                ', '.join(missing), ', '.join(self._SCALAR_SMG_NAMES[model]))))
+                parameters = {name: overrides[name] for name in names}
+            else:
+                model, parameters = self._parse_parameters_smg(spec['gravity_model'], spec['parameters_smg'])
 
         # A coefficient given by name -- as a top-level Cosmology parameter or an engine
         # keyword (collected by _collect_gravity_model) -- overrides the matching parameters_smg
