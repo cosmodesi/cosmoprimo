@@ -11,6 +11,23 @@ from . import classy
 # Input parameters that switch on the scalar-modified-gravity (smg) sector.
 _smg_parameters = ('gravity_model', 'expansion_model', 'parameters_smg', 'expansion_smg', 'Omega_smg')
 
+# mochi_class' gravity models this engine can also take as SCALAR parameters, mapped to the names
+# of their ``parameters_smg`` entries in mochi_class' order (gravity_smg/gravity_models_smg.c).
+# Same names and order as the 'heftcamb' engine, so the same call describes the same model on
+# either engine, and each coefficient can be a top-level Cosmology parameter -- which is what a
+# sampler (desilike) needs: one scalar per parameter, rather than one list. hill_valley's tau and
+# r are spelled tau_smg and r_smg here: 'tau' is cosmoprimo's alias of tau_reio and 'r' its
+# tensor-to-scalar ratio, so the bare names could never reach the engine.
+_parameters_smg_names = {
+    'propto_omega': ('c_K', 'c_B', 'c_M', 'c_T', 'M2_ini'),
+    'hill_valley': ('alpha_K', 'c_M', 'tau_smg', 'a_t', 'r_smg', 'M2_ini'),
+}
+_gravity_model_aliases = {'no_slip_gravity': 'hill_valley'}
+
+# Initial guess of Omega_smg for mochi_class' closure equation (the first entry of expansion_smg);
+# only has to be in the ballpark of 1 - Omega_m.
+_omega_smg_guess = 0.7
+
 # Verbosity at which mochi_class writes the alpha-functions, M_*^2 and the EFT
 # combinations (cs2num, lambda_i) to the background table; required by
 # :meth:`Background.h1`, :meth:`Background.h3` and :meth:`Background.h5`.
@@ -28,9 +45,10 @@ class MochiClassEngine(classy.ClassEngine):
     def _set_classy(self, params):
 
         if any(name in params for name in _smg_parameters):
-            # Only raise verbosity, never lower a user-provided value.
             params = dict(params)
+            # Only raise verbosity, never lower a user-provided value.
             params['output_background_smg'] = max(int(params.get('output_background_smg', 0)), _output_background_smg)
+            params = self._assemble_smg_params(params)
 
         class _ClassEngine(mochiclass.ClassEngine):
 
@@ -43,6 +61,72 @@ class MochiClassEngine(classy.ClassEngine):
                     raise CosmologyComputationError from exc
 
         self.classy = _ClassEngine(params=params)
+
+    def _assemble_smg_params(self, params):
+        r"""
+        Turn scalar inputs into mochi_class' list-valued ones.
+
+        Two translations, both so that the smg sector can be driven by ordinary scalar
+        ``Cosmology`` parameters (the form a sampler works with) instead of mochi_class' lists:
+
+        - **Horndeski coefficients.** For a known ``gravity_model`` (see
+          :data:`_parameters_smg_names`), the coefficients may be given by name -- ``c_B=1.``
+          rather than ``parameters_smg=[c_K, 1., c_M, c_T, M2_ini]``. A name given alongside
+          ``parameters_smg`` overrides that entry; without ``parameters_smg`` all names are
+          required. The scalar names are removed from the CLASS input, which does not know them.
+        - **w0waCDM background.** With ``expansion_model='wowa'`` (and no fluid, ``Omega_fld=0``),
+          ``expansion_smg=[Omega_smg guess, w0, wa]`` is built from the standard ``w0_fld`` /
+          ``wa_fld`` parameters; with an explicit ``expansion_smg``, a ``w0_fld`` / ``wa_fld``
+          away from its LCDM default (-1, 0) overrides the matching entry and the others are kept.
+          The fluid keys are then dropped from the CLASS input: there is no fluid, the smg
+          sector carries the expansion.
+
+        Nothing changes for a call that spells everything the mochi_class way.
+        """
+        gravity_model = params.get('gravity_model', None)
+        if gravity_model is not None:
+            model = _gravity_model_aliases.get(str(gravity_model), str(gravity_model))
+            names = _parameters_smg_names.get(model, None)
+            if names is not None:
+                given = {name: params.pop(name) for name in names if name in params}
+                if given:
+                    values = params.get('parameters_smg', None)
+                    if values is None:
+                        missing = [name for name in names if name not in given]
+                        if missing:
+                            raise CosmologyInputError('gravity_model={!r}: parameters_smg not given and {} missing among the '
+                                                      'scalar coefficients; it takes {}'.format(model, ', '.join(missing), ', '.join(names)))
+                        values = [given[name] for name in names]
+                    else:
+                        if isinstance(values, str):
+                            values = [float(v) for v in values.split(',')]
+                        values = [float(v) for v in values]
+                        if len(values) != len(names):
+                            raise CosmologyInputError('gravity_model={!r} takes parameters_smg = [{}], got {} entries'.format(
+                                                      model, ', '.join(names), len(values)))
+                        values = [float(given.get(name, value)) for name, value in zip(names, values)]
+                    params['parameters_smg'] = [float(v) for v in values]
+        if params.get('expansion_model', None) == 'wowa' and not float(params.get('Omega_fld', 0.)):
+            w0, wa = float(self._params['w0_fld']), float(self._params['wa_fld'])
+            expansion_smg = params.get('expansion_smg', None)
+            if expansion_smg is None:
+                params['expansion_smg'] = [_omega_smg_guess, w0, wa]
+            else:
+                # Entry-wise: a w0_fld / wa_fld away from its LCDM default (-1, 0) wins over the
+                # matching expansion_smg entry, the others are kept. (A sampled value that lands
+                # exactly on the default is indistinguishable from "not given"; do not mix the
+                # two spellings if that matters -- give w0_fld / wa_fld only.)
+                if isinstance(expansion_smg, str):
+                    expansion_smg = [float(v) for v in expansion_smg.split(',')]
+                expansion_smg = [float(v) for v in expansion_smg]
+                if w0 != -1.:
+                    expansion_smg[1] = w0
+                if wa != 0.:
+                    expansion_smg[2] = wa
+                params['expansion_smg'] = expansion_smg
+            for name in ('w0_fld', 'wa_fld', 'cs2_fld', 'use_ppf', 'fluid_equation_of_state'):
+                params.pop(name, None)
+        return params
 
 
 def _flatarray(func):

@@ -670,6 +670,12 @@ class HEFTCAMBEngine(CambEngine):
         "c_M",
         "c_T",
         "M2_ini",
+        # hill_valley's coefficients as scalars (tau_smg / r_smg, since 'tau' is cosmoprimo's
+        # alias of tau_reio and 'r' its tensor-to-scalar ratio; see _SCALAR_SMG_NAMES)
+        "alpha_K",
+        "tau_smg",
+        "a_t",
+        "r_smg",
         "gravity_model",
         "parameters_smg",
         "hill_valley",
@@ -708,6 +714,13 @@ class HEFTCAMBEngine(CambEngine):
 
     # mochi-class accepts 'no_slip_gravity' as an alias of 'hill_valley'.
     _GRAVITY_MODEL_ALIASES = {"no_slip_gravity": "hill_valley"}
+
+    # The same entries as top-level SCALAR parameters (one per coefficient, what a sampler needs),
+    # mapped to the parameters_smg names above. Same spelling as the 'mochiclass' engine.
+    _SCALAR_SMG_NAMES = {
+        "propto_omega": {"c_K": "c_K", "c_B": "c_B", "c_M": "c_M", "c_T": "c_T", "M2_ini": "M2_ini"},
+        "hill_valley": {"alpha_K": "alpha_K", "c_M": "c_M", "tau_smg": "tau", "a_t": "a_t", "r_smg": "r", "M2_ini": "M2_ini"},
+    }
 
     def __init__(self, *args, **kwargs):
         # ------------------------------------------------------------
@@ -964,6 +977,20 @@ class HEFTCAMBEngine(CambEngine):
                 value = container.get(name, None)
                 if value is not None:
                     toret[name] = value
+        # Coefficients given by name alongside the model, collected here because _set_camb strips
+        # every wrapper-private key from _params / _extra_params right after this call, before
+        # _apply_gravity_model runs. See _apply_gravity_model for the precedence rule.
+        model = toret.get('gravity_model', 'hill_valley' if 'hill_valley' in toret else None)
+        model = self._GRAVITY_MODEL_ALIASES.get(model, model)
+        if model in self._SCALAR_SMG_NAMES:
+            overrides = {}
+            for scalar, name in self._SCALAR_SMG_NAMES[model].items():
+                for container in (getattr(self, '_extra_params', {}), getattr(self, '_params', {})):
+                    value = container.get(scalar, None)
+                    if value is not None:
+                        overrides[name] = float(value)
+            if overrides:
+                toret['overrides'] = overrides
         return toret
 
     @classmethod
@@ -1008,6 +1035,10 @@ class HEFTCAMBEngine(CambEngine):
         """
         if not spec:
             return
+        spec = dict(spec)
+        overrides = spec.pop('overrides', {})
+        if not spec:
+            return
         if 'hill_valley' in spec:
             model, parameters = 'hill_valley', dict(spec['hill_valley'])
             names = self._PARAMETERS_SMG_NAMES['hill_valley']
@@ -1026,6 +1057,13 @@ class HEFTCAMBEngine(CambEngine):
                 raise CosmologyInputError(
                     "gravity_model = {!r} was given without parameters_smg".format(spec['gravity_model']))
             model, parameters = self._parse_parameters_smg(spec['gravity_model'], spec['parameters_smg'])
+
+        # A coefficient given by name -- as a top-level Cosmology parameter or an engine
+        # keyword (collected by _collect_gravity_model) -- overrides the matching parameters_smg
+        # entry. This is what lets a sampler vary one coefficient (a scalar Parameter) on top of
+        # a fiducial that carries the whole list, and it is the same rule as the 'mochiclass'
+        # engine's.
+        parameters.update(overrides)
 
         if model == 'propto_omega':
             # Same five numbers as the c_K/c_B/c_M/c_T/M2_ini alpha basis.

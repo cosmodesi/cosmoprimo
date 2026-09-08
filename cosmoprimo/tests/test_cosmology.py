@@ -890,6 +890,21 @@ def test_mochiclass():
     for name in ['h1', 'h3', 'h5']:
         assert np.allclose(interps['eftcamb_{}_interp'.format(name)](eta), getattr(background, name)(eta), rtol=1e-4, atol=0.)
 
+    # scalar spelling of the smg sector: coefficients by name over / instead of parameters_smg,
+    # and expansion_smg built from w0_fld / wa_fld -- must reproduce the list spelling exactly
+    cosmo = Cosmology(engine='mochiclass', **params)
+    common = {name: params[name] for name in ['Omega_Lambda', 'Omega_fld', 'Omega_smg', 'gravity_model', 'expansion_model']}
+    cosmo_scalars = Cosmology(engine='mochiclass', c_K=1., c_B=0.5, c_M=0.3, c_T=0., M2_ini=1., w0_fld=-1., wa_fld=0., **common)
+    cosmo_override = Cosmology(engine='mochiclass', parameters_smg=[1., 2., 2., 0., 1.], c_B=0.5, c_M=0.3, expansion_smg=[0.685, -1., 0.], **common)
+    for name in ['h1', 'h3', 'h5']:
+        assert np.allclose(getattr(cosmo_scalars, name)(eta), getattr(cosmo, name)(eta), rtol=1e-10, atol=0.)
+        assert np.allclose(getattr(cosmo_override, name)(eta), getattr(cosmo, name)(eta), rtol=1e-10, atol=0.)
+    # a clone that moves one coefficient and w0 on top of the lists
+    cosmo_clone = cosmo_override.clone(base='input', c_B=1.0, w0_fld=-0.9)
+    cosmo_ref = Cosmology(engine='mochiclass', parameters_smg=[1., 1., 0.3, 0., 1.], expansion_smg=[0.685, -0.9, 0.], **common)
+    assert np.allclose(cosmo_clone.h3(eta), cosmo_ref.h3(eta), rtol=1e-10, atol=0.)
+    assert np.allclose(cosmo_clone.get_fourier().sigma8_z(0.5, of='delta_cb'), cosmo_ref.get_fourier().sigma8_z(0.5, of='delta_cb'), rtol=1e-8)
+
     from cosmoprimo.fiducial import DESI
     cosmo = DESI(engine='mochiclass', **params)
     cosmo['parameters_smg']
