@@ -165,6 +165,47 @@ def test_mlp_nodes_are_quasi_random_samples_of_the_box():
     assert nodes[:, 0].min() < 1.2 and nodes[:, 0].max() > 2.8
 
 
+def test_mlp_valid_predicate_keeps_every_node_out_of_the_hole():
+    """A predicate on the physical parameters filters the Sobol pool before any evaluation: the
+    node set is a sample of the valid region, still `nsamples` strong, and an engine built
+    without a predicate is untouched."""
+    from cosmoprimo.emulators.tools.mlp import MLPEngine
+
+    box = space()
+    plain = MLPEngine(box.params, box.limits, nsamples=128).nodes()
+    # vectorised predicate: half the box (tilt > 0), off the pool's own low-discrepancy order
+    nodes = MLPEngine(box.params, box.limits, nsamples=128,
+                      valid=lambda amplitude, tilt: tilt > 0.).nodes()
+    assert nodes.shape == (128, 2) and np.all(nodes[:, 1] > 0.)
+    # the survivors are the pool's first valid rows, so the first nodes of the two sets coincide
+    first_valid = plain[plain[:, 1] > 0.]
+    assert np.allclose(nodes[:len(first_valid)], first_valid)
+    # a scalar predicate works too (row loop fallback)
+    scalar = MLPEngine(box.params, box.limits, nsamples=64,
+                       valid=lambda amplitude, tilt: bool(tilt > 0.)).nodes()
+    assert scalar.shape == (64, 2) and np.all(scalar[:, 1] > 0.)
+    # too little of the box is valid for the samples asked: loud, not a silently smaller set
+    with pytest.raises(ValueError, match='candidates'):
+        MLPEngine(box.params, box.limits, nsamples=128, candidates=128,
+                  valid=lambda amplitude, tilt: tilt > 0.9).nodes()
+
+
+def test_mlp_trains_through_a_valid_predicate():
+    """End to end: `valid` reaches the engine through the emulator's options, the target is never
+    called in the hole, and the fit is still usable on the valid side."""
+    calls = []
+
+    def guarded(params):
+        calls.append(params['tilt'])
+        assert params['tilt'] > 0., 'the target was called inside the hole'
+        return target(params)
+
+    emu = Emulator(guarded, space())
+    emu.train(**{**MLP, 'valid': lambda amplitude, tilt: tilt > 0.})
+    assert len(calls) == MLP['nsamples'] and min(calls) > 0.
+    assert np.max(np.abs(emu.predict(**POINT)['pk'] / target(POINT)['pk'] - 1.)) < 0.1
+
+
 # ── saving ────────────────────────────────────────────────────────────────────
 
 def test_mlp_round_trips_through_a_file(tmp_path):
