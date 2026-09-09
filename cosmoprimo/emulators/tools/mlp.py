@@ -14,6 +14,8 @@ arrays, which is what makes the state a handful of arrays that HDF5 can hold and
 few matrix products that jit like anything else.
 """
 
+import logging
+
 import numpy as np
 
 from cosmoprimo.jax import numpy_jax
@@ -50,11 +52,29 @@ class MLPEngine(BaseEngine):
     epochs, patience, learning_rate, batch_size, validation_frac, optimizer, seed
         Training schedule. ``patience`` stops early once the validation loss has not improved for
         that many epochs, which is what keeps a long ``epochs`` from being wasted.
+    valid : callable, default=None
+        A predicate over the physical parameters, called by name
+        (``valid(w0_fld=..., wa_fld=...)``, vectorised or not), that says where the calculator
+        can be evaluated. The Sobol pool is filtered through it before anything is evaluated,
+        so no sample is spent where the truth does not exist -- and, more to the point, the
+        node set is then a sample of the *valid* region rather than of the box. Dropping the
+        failures afterwards (the engine's tolerance for non-finite nodes) is the right tool for
+        a stray refusal; it is the wrong one for a box that is 70% hole, since
+        :meth:`~.emulate.Emulator.train` refuses a training that loses more than
+        ``max_non_finite`` of its nodes, and it should. As for the polynomial engine, ``valid``
+        is a property of the calculator and not of the fit: it is not saved with the state, and
+        the fit *is* extrapolating across the region it excludes -- keep that region one nothing
+        asks about (a prior that vetoes it).
+    candidates : int, default=None
+        Size of the pool ``valid`` filters, ``4 * nsamples`` by default (rounded up to a power
+        of two, on which Sobol' is balanced). Raise it when the valid region is a small fraction
+        of the box.
 
     ``levels`` and ``budget`` are accepted and ignored: they are the sparse grid's knobs, and are
     passed through by the emulator so that swapping engines needs no other change.
     """
     name = 'mlp'
+    logger = logging.getLogger('MLPEngine')
 
     #: A fit, not an interpolant: a sample the calculator could not evaluate can simply be left
     #: out, costing that sample alone. This is what lets an MLP cover a box containing a region
@@ -66,9 +86,11 @@ class MLPEngine(BaseEngine):
     def __init__(self, params, limits, levels=None, budget=None, nsamples=None,
                  nhidden=(64, 64, 64), activation='silu', epochs=2000, patience=200,
                  learning_rate=1e-3, batch_size=64, validation_frac=0.1, optimizer='adam',
-                 seed=42, **kwargs):
+                 seed=42, valid=None, candidates=None, **kwargs):
         super().__init__(params, limits, **kwargs)
         self.nsamples = int(nsamples) if nsamples is not None else 512 * len(self.params)
+        self.valid = valid
+        self.candidates = None if candidates is None else int(candidates)
         self.nhidden = tuple(int(width) for width in nhidden)
         if activation not in ACTIVATIONS:
             raise ValueError(f'unknown activation {activation!r}; available {list(ACTIVATIONS)}')
@@ -87,18 +109,42 @@ class MLPEngine(BaseEngine):
         Sobol rather than uniform random: a low-discrepancy sequence covers the box far more
         evenly at the same count, and the count here is the entire cost. not nested the way the
         grid's levels are -- raising ``nsamples`` means evaluating a fresh set, so pick it once.
+
+        With ``valid``, a larger pool is drawn, filtered, and the first ``nsamples`` survivors
+        kept -- the pool's own order is low-discrepancy, so truncating it is the whole
+        operation, as in the polynomial engine. Without it the pool *is* the node set, so
+        nothing changes for an engine built without a predicate.
         """
         from scipy.stats import qmc
+        from .engines import valid_mask
 
         dimension = len(self.params)
-        unit = qmc.Sobol(d=dimension, scramble=True, seed=self.seed).random(self.nsamples)
+        npool = self.nsamples
+        if self.valid is not None:
+            npool = self.candidates if self.candidates is not None else 4 * self.nsamples
+            npool = 2 ** int(np.ceil(np.log2(max(npool, self.nsamples, 1))))
+        unit = qmc.Sobol(d=dimension, scramble=True, seed=self.seed).random(npool)
         if self.whitened:
             internal = (2. * unit - 1.) * self.nsigma
-            return np.array([self.unwhiten(row) for row in internal])
-        low = np.array([self._domain(name)[0] for name in self.params])
-        high = np.array([self._domain(name)[1] for name in self.params])
-        internal = low + unit * (high - low)
-        return np.array([self._physical(row) for row in internal])
+            physical = np.array([self.unwhiten(row) for row in internal])
+        else:
+            low = np.array([self._domain(name)[0] for name in self.params])
+            high = np.array([self._domain(name)[1] for name in self.params])
+            internal = low + unit * (high - low)
+            physical = np.array([self._physical(row) for row in internal])
+        if self.valid is None:
+            return physical
+        keep = valid_mask(self.valid, self.params, physical)
+        nvalid = int(keep.sum())
+        if nvalid < self.nsamples:
+            raise ValueError(
+                f'`valid` keeps {nvalid} of {npool} candidates, fewer than the {self.nsamples} '
+                f'samples asked for. Raise `candidates`, or -- if the predicate is rejecting most '
+                f'of the box -- move the box rather than fitting over a region that is mostly not '
+                f'there.')
+        self.logger.info(f'`valid` keeps {nvalid}/{npool} candidates ({nvalid / npool:.1%}); '
+                         f'taking the first {self.nsamples}')
+        return physical[keep][:self.nsamples]
 
     # ── fit ───────────────────────────────────────────────────────────────────
     def _standardise(self, outputs):

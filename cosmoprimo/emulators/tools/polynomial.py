@@ -324,24 +324,10 @@ class PolynomialEngine(LinearBasisEngine):
 
     # ── nodes ─────────────────────────────────────────────────────────────────
     def _valid_mask(self, physical):
-        """Which rows of *physical* the ``valid`` predicate keeps.
-
-        Vectorised first -- ``lambda w0_fld, wa_fld: w0_fld + wa_fld < 0`` is already an array
-        expression, and the pool is large enough that a Python loop over it is the slow part of
-        building an emulator that hasn't run the Boltzmann code yet. Falls back to a row loop when
-        the predicate is not written that way, rather than making the caller declare which it is.
-        """
-        if self.valid is None:
-            return np.ones(len(physical), dtype='?')
-        columns = {name: physical[:, index] for index, name in enumerate(self.params)}
-        try:
-            mask = np.asarray(self.valid(**columns), dtype='?')
-            if mask.shape != (len(physical),):
-                raise ValueError
-        except Exception:
-            mask = np.array([bool(self.valid(**dict(zip(self.params, row))))
-                             for row in physical], dtype='?')
-        return mask
+        """Which rows of *physical* the ``valid`` predicate keeps; see
+        :func:`~.engines.valid_mask`, shared with the mlp engine."""
+        from .engines import valid_mask
+        return valid_mask(self.valid, self.params, physical)
 
     def nodes(self):
         """The points to evaluate the calculator at: an ``(nsamples, nparams)`` array, physical.
