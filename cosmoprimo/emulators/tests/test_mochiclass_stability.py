@@ -63,6 +63,23 @@ def test_ic_test_is_a_thin_band_above_the_gradient_boundary():
     assert 0.02 < rejected < 0.2, rejected      # measured 8.7% on mochi_class itself
 
 
+def test_quasi_static_pole_test():
+    """mu^2 > 0 over fkptjax's range: a model mochi_class accepts but whose h3 / h5 have a pole
+    (the first training node that stalled an emulator training) is refused, the fiducial-like
+    models are kept, and the gate's mu^2 matches the engine's construction."""
+    pole = dict(c_B=0.38771, c_M=2.77861, w0=-0.27208, wa=-2.72407, h=0.50126, omega_b=0.02033, omega_cdm=0.1196, m_ncdm=0.57323, N_ur=2.66887 - 1.0132)
+    cB, cM = pole.pop('c_B'), pole.pop('c_M')
+    assert bool(mcs.stable_propto_omega(cB, cM, alpha_K=0.1, **pole))           # mochi_class runs it
+    assert not bool(mcs.stable_propto_omega(cB, cM, alpha_K=0.1, qs_mu2=True, **pole))
+    s = mcs.scan_propto_omega(cB, cM, alpha_K=0.1, qs_mu2=True, **pole)
+    assert float(s['min_mu2_qs']) < -1e-3
+    for c_B, c_M, w0, wa in [(1., 1., -1., 0.), (1., 1., -0.9, 0.36), (0.05, 0.1, -1., 0.)]:
+        assert bool(mcs.stable_propto_omega(c_B, c_M, alpha_K=0.1, qs_mu2=True, w0=w0, wa=wa, **FID))
+    with pytest.raises(NotImplementedError, match='hill_valley'):
+        mcs._scan('hill_valley', {'c_M': np.array([0.1]), 'tau': np.array([1.]), 'a_t': np.array([0.5]), 'r': np.array([2.]), 'M2_ini': np.array([1.])},
+                  [], mcs.default_a_grid(), False, 0, None, qs=True)
+
+
 def test_hill_valley_placeholders():
     assert isinstance(bool(mcs.stable_hill_valley(0.1, 1., 0.5, alpha_K=0.1, w0=-1., wa=0.)), bool)
     with pytest.raises(NotImplementedError, match='hill_valley'):

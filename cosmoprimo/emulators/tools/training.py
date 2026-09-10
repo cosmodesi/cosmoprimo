@@ -84,10 +84,17 @@ class TrainingSet(object):
         Wall-clock budget for one run, e.g. ``'30min'``. The training stops cleanly and reports
         ``partial``; rerun to continue.
     save_every : int, default=50
-        Checkpoint cadence, in nodes.
+        Checkpoint cadence, in nodes -- a lower bound: see ``save_interval``.
+    save_interval : float, default=120.
+        Minimum seconds between two checkpoints (see the comment in ``__init__``); the final
+        state is always written.
+    rows_per_rank : int, default=1
+        Nodes each MPI rank evaluates between two exchanges (see the comment in ``__init__``);
+        only meaningful with ``mpicomm`` and without ``batch_size``.
     """
     def __init__(self, target, nodes, params, fixed=None, checkpoint=None, chunk=None,
-                 save_every=50, batch_size=None, mpicomm=None, drop_non_finite=False):
+                 save_every=50, batch_size=None, mpicomm=None, drop_non_finite=False,
+                 rows_per_rank=1, save_interval=120.):
         self.target, self.params = target, list(params)
         self.nodes = np.atleast_2d(np.asarray(nodes, dtype='f8'))
         if self.nodes.shape[1] != len(self.params):
@@ -103,22 +110,49 @@ class TrainingSet(object):
         self.fixed = dict(fixed or {})
         self.checkpoint, self.chunk = checkpoint, _seconds(chunk)
         self.save_every = int(save_every)
+        # A checkpoint is written when at least `save_every` nodes AND `save_interval` seconds
+        # have passed since the last one. The count alone made every MPI round save (a round of
+        # 64 ranks is 64 nodes > 50), and each save re-packs and rewrites the whole set. Not the
+        # disk time (1 s at 8000 nodes): the churn of ~80 large numpy buffers mapped and unmapped
+        # per save, which Cray libfabric's memory-registration cache follows (cxil_map /
+        # cxil_unmap, each scanning /proc/self/smaps) at a cost that grows with the process's
+        # mappings. Measured on a 4-node, 64-rank training: rounds went from 20 s to 48 s over
+        # 130 rounds, rank 0 sampled inside util_mr_cache_create while every other rank waited
+        # in Allgatherv; a single process shows no growth at all (2026-09-09).
+        self.save_interval = float(save_interval)
         self.keys, self.values = [], {}
         # Only a regression engine may set this; see _call. Counted rather than silent, because
         # a box that loses many nodes is a box in the wrong place, whatever the engine.
         self.drop_non_finite = bool(drop_non_finite)
         self.nnonfinite = 0
+        # Nodes each rank evaluates between two MPI exchanges. A round ends when the slowest
+        # rank is done, so with one node per rank per round every round costs the MAXIMUM of
+        # `size` evaluation times: measured on 128 ranks of mochiclass runs spread over 8-40 s,
+        # ~45 s per round against ~20 s of average work. Several nodes per rank per round
+        # average that out (the max of sums grows far slower than the sum of maxima). It does
+        # not change what is evaluated, only how often the ranks synchronise -- and how much
+        # is lost to a kill between two checkpoints.
+        self.rows_per_rank = max(int(rows_per_rank), 1)
         #: shapes of the first successful call, so a later failure can be turned into NaNs
         self._output_template = {}
 
     # ── state ──────────────────────────────────────────────────────────────────
     def _load(self):
-        if not (self.checkpoint and os.path.exists(self.checkpoint)):
-            return set()
-        stored = dict(np.load(self.checkpoint, allow_pickle=True))
-        self.keys = [tuple(row) for row in stored['nodes']]
-        self.values = {name: list(stored[name]) for name in stored if name != 'nodes'}
-        return {tuple(np.round(row, 12)) for row in stored['nodes']}
+        # The values live on rank 0 only (see _evaluate); every rank needs the keys (what is
+        # done) and the output shapes (the template a tolerated failure is padded to).
+        rank = self.mpicomm.rank if self.mpicomm is not None else 0
+        keys, shapes = [], {}
+        if rank == 0 and self.checkpoint and os.path.exists(self.checkpoint):
+            stored = dict(np.load(self.checkpoint, allow_pickle=True))
+            keys = [tuple(row) for row in stored['nodes']]
+            self.values = {name: list(stored[name]) for name in stored if name != 'nodes'}
+            shapes = {name: np.shape(value[0]) for name, value in self.values.items() if len(value)}
+        if self.mpicomm is not None and self.mpicomm.size > 1:
+            keys, shapes = self.mpicomm.bcast((keys, shapes), root=0)
+        self.keys = keys
+        if shapes and not self._output_template:
+            self._output_template = shapes
+        return {tuple(np.round(row, 12)) for row in keys}
 
     def _save(self):
         if self.checkpoint:
@@ -146,6 +180,7 @@ class TrainingSet(object):
         todo = [row for row in self.nodes if tuple(np.round(row, 12)) not in finished]
         rank = self.mpicomm.rank if self.mpicomm is not None else 0
         started, index = time.time(), 0
+        saved_at, saved_time = self.done, time.time()
 
         while index < len(todo):
             # always evaluate at least one node per run: a budget shorter than a single
@@ -161,15 +196,18 @@ class TrainingSet(object):
             # batch_size (the array-call convention) is untouched -- with it None, each rank
             # still evaluates its rows one at a time.
             rows_per_round = (self.batch_size if self.batch_size is not None
-                              else (self.mpicomm.size if self.mpicomm is not None else 1))
+                              else (self.mpicomm.size if self.mpicomm is not None else 1) * self.rows_per_rank)
             batch = todo[index:index + rows_per_round]
             names, values = self._evaluate(batch)
-            for name, value in zip(names, values):
-                self.values.setdefault(name, []).extend(value)
+            if rank == 0:
+                for name, value in zip(names, values):
+                    self.values.setdefault(name, []).extend(value)
             self.keys.extend(tuple(row) for row in batch)
             index += len(batch)
-            if rank == 0 and self.done % self.save_every < len(batch):
+            if rank == 0 and self.done - saved_at >= self.save_every \
+                    and time.time() - saved_time >= self.save_interval:
                 self._save()
+                saved_at, saved_time = self.done, time.time()
                 self.logger.info(f'{self.done}/{len(self.nodes)} nodes')
 
         if rank == 0:
@@ -179,15 +217,27 @@ class TrainingSet(object):
                              f'({self.done}/{len(self.nodes)} nodes)')
         return self.complete
 
+    #: Per-rank payload (bytes) up to which a round's results travel as one pickled gather.
+    PICKLE_LIMIT = 64 * 2**20
+
     def _evaluate(self, batch):
         """Evaluate ``batch`` rows, split across MPI ranks when there is a communicator.
 
-        One :func:`~.mpi.gather` per output name, and not one ``allgather`` of the whole
-        ``(names, values)`` structure. The lowercase call pickles, which caps a message at 2 GB
-        and holds the serialised copy, the received copy and the reconstructed arrays at once --
-        a monomials node is ~145 MB of tables, so a round of a few nodes per rank overflows the
-        cap, and the peak memory is what turned a 6 GB training set into an OOM at 16 ranks.
-        ``Allgatherv`` writes straight into one preallocated buffer instead.
+        The results are gathered to rank 0 only, which is the rank that checkpoints and the
+        only one that needs them until :meth:`outputs` (which broadcasts them then). Every rank
+        used to keep its own copy: 1 GB per rank at 40,000 nodes of a full-shape training, 64 GB
+        per node -- and, worse, a growing cost per MPI buffer registration on Cray libfabric,
+        whose page-size probe reads /proc/self/smaps, a walk of the whole process's memory
+        (2026-09-09; rank 0 sampled inside ``cxil_page_size`` while the others waited).
+
+        Small payloads (up to :attr:`PICKLE_LIMIT` per rank -- a full-shape node is 25 KB, a
+        round of four is 100 KB) go as ONE pickled ``gather``: a single registration per round
+        instead of two per output name. Large ones (a monomials node is ~145 MB of tables) take
+        the per-output ``Gatherv`` into a preallocated buffer, because the pickled path caps a
+        message at 2 GB and holds the serialised copy, the received copy and the reconstructed
+        arrays at once -- the peak that turned a 6 GB training set into an OOM at 16 ranks.
+
+        Returns ``(names, values)`` on rank 0 and ``([], [])`` elsewhere.
         """
         rows = list(batch)
         if self.mpicomm is None or self.mpicomm.size <= 1:
@@ -195,10 +245,10 @@ class TrainingSet(object):
 
         from .mpi import gather
 
-        size = self.mpicomm.size
-        mine = rows[self.mpicomm.rank::size]
-        # A rank that raises here must not leave the collective below: the other ranks would
-        # block in it forever, and the job holds its whole allocation until someone notices and
+        size, rank = self.mpicomm.size, self.mpicomm.rank
+        mine = rows[rank::size]
+        # A rank that raises here must not leave the collectives below: the other ranks would
+        # block in them forever, and the job holds its whole allocation until someone notices and
         # kills it by hand. Measured, repeatedly, on this training. So every rank reaches the
         # same exchange, failure or not, and they all raise together afterwards -- which also
         # gives every rank a traceback rather than hiding it on whichever one happened to fail.
@@ -215,27 +265,43 @@ class TrainingSet(object):
             raise NodeEvaluationError(
                 f'{len(reported)}/{size} ranks failed to evaluate their nodes; first was rank '
                 f'{rank}: {first}')
-        # A rank with no rows returns no names and no arrays, but Allgatherv still needs a buffer
+        local = {name: [np.asarray(v) for v in value] for name, value in zip(names, values)}
+        nbytes = sum(v.nbytes for vals in local.values() for v in vals)
+        counts = [len(rows[r::size]) for r in range(size)]
+        offsets = np.cumsum([0] + counts[:-1])
+        if max(self.mpicomm.allgather(nbytes)) <= self.PICKLE_LIMIT:
+            parts = self.mpicomm.gather(local, root=0)
+            if rank != 0:
+                return [], []
+            layout = next((part for part in parts if part), None)
+            if layout is None:
+                raise NodeEvaluationError('no rank produced any value for this batch')
+            # back into node order: rank r held rows r, r + size, r + 2*size, ...
+            merged = {name: [parts[index % size][name][index // size] for index in range(len(rows))]
+                      for name in layout}
+            return list(merged), [merged[name] for name in merged]
+        # A rank with no rows returns no names and no arrays, but Gatherv still needs a buffer
         # of the right trailing shape and dtype from it -- so agree on the layout first. These
         # are a handful of tuples, so the pickling collective is the right tool here.
         layouts = self.mpicomm.allgather(
             [(name, np.asarray(value[0]).shape, np.asarray(value[0]).dtype.str)
-             for name, value in zip(names, values) if len(value)])
+             for name, value in local.items() if len(value)])
         layout = next((entry for entry in layouts if entry), None)
         if layout is None:
             raise NodeEvaluationError('no rank produced any value for this batch')
-        mine_values = dict(zip(names, values))
-
-        merged, counts = {}, [len(rows[rank::size]) for rank in range(size)]
-        offsets = np.cumsum([0] + counts[:-1])
+        merged = {}
         for name, shape, dtype in layout:
-            local = mine_values.get(name)
-            local = (np.asarray(local) if local else np.empty((0,) + tuple(shape), dtype=dtype))
-            stacked = gather(local, mpiroot=None, mpicomm=self.mpicomm)
-            # back into node order: rank r held rows r, r + size, r + 2*size, ..., and `stacked`
-            # holds each rank's share contiguously
-            merged[name] = [stacked[offsets[index % size] + index // size]
-                            for index in range(len(rows))]
+            mine_values = local.get(name)
+            mine_values = (np.asarray(mine_values) if mine_values
+                           else np.empty((0,) + tuple(shape), dtype=dtype))
+            stacked = gather(mine_values, mpiroot=0, mpicomm=self.mpicomm)
+            if rank == 0:
+                # copies, not views: a view keeps the whole gathered buffer alive for the life of
+                # the training set, one mapping per output per round
+                merged[name] = [np.array(stacked[offsets[index % size] + index // size])
+                                for index in range(len(rows))]
+        if rank != 0:
+            return [], []
         return list(merged), [merged[name] for name in merged]
 
     def _evaluate_local(self, rows):
@@ -336,8 +402,17 @@ class TrainingSet(object):
         return np.array(self.keys)
 
     def outputs(self):
-        """What the calculator returned, ``{name: (nnodes, ...)}``."""
+        """What the calculator returned, ``{name: (nnodes, ...)}``.
+
+        Collective under MPI: the values are held by rank 0 alone until here, and are broadcast
+        one output at a time (each well under the 2 GB pickle cap; the whole set need not be).
+        """
         self._complete_or_raise()
+        if self.mpicomm is not None and self.mpicomm.size > 1:
+            names = self.mpicomm.bcast(list(self.values), root=0)
+            for name in names:
+                value = self.mpicomm.bcast(np.array(self.values[name]) if self.mpicomm.rank == 0 else None, root=0)
+                self.values[name] = list(value)
         return {name: np.array(value) for name, value in self.values.items()}
 
     def _complete_or_raise(self):

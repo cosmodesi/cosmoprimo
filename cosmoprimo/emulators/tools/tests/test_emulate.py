@@ -184,10 +184,16 @@ def test_mlp_valid_predicate_keeps_every_node_out_of_the_hole():
     scalar = MLPEngine(box.params, box.limits, nsamples=64,
                        valid=lambda amplitude, tilt: bool(tilt > 0.)).nodes()
     assert scalar.shape == (64, 2) and np.all(scalar[:, 1] > 0.)
-    # too little of the box is valid for the samples asked: loud, not a silently smaller set
-    with pytest.raises(ValueError, match='candidates'):
-        MLPEngine(box.params, box.limits, nsamples=128, candidates=128,
-                  valid=lambda amplitude, tilt: tilt > 0.9).nodes()
+    # a predicate keeping a sliver of the box: the pool doubles until enough survive ...
+    sliver = MLPEngine(box.params, box.limits, nsamples=64, candidates=64,
+                       valid=lambda amplitude, tilt: tilt > 0.95).nodes()
+    assert sliver.shape == (64, 2) and np.all(sliver[:, 1] > 0.95)
+    # ... up to the cap, where it is loud rather than a silently smaller set
+    engine = MLPEngine(box.params, box.limits, nsamples=128, candidates=128,
+                       valid=lambda amplitude, tilt: tilt > 0.999)
+    engine.MAX_CANDIDATES = 1024
+    with pytest.raises(ValueError, match='cap'):
+        engine.nodes()
 
 
 def test_mlp_trains_through_a_valid_predicate():
@@ -204,6 +210,41 @@ def test_mlp_trains_through_a_valid_predicate():
     emu.train(**{**MLP, 'valid': lambda amplitude, tilt: tilt > 0.})
     assert len(calls) == MLP['nsamples'] and min(calls) > 0.
     assert np.max(np.abs(emu.predict(**POINT)['pk'] / target(POINT)['pk'] - 1.)) < 0.1
+
+
+def test_mlp_lr_decay_round_trips_and_fits():
+    """A decaying rate is part of the fit's recipe, so it travels with the state. (Whether it
+    helps depends on the budget: over the suite's 100 epochs a 100-fold decay ends too soon to
+    improve on the constant rate, so only usability is asserted here.)"""
+    from cosmoprimo.emulators.tools.mlp import MLPEngine
+
+    box = space()
+    with pytest.raises(ValueError, match='lr_decay'):
+        MLPEngine(box.params, box.limits, lr_decay=0.)
+    emu = trained(**{**MLP, 'lr_decay': 1e-2})
+    assert emu._engines['pk'][0].lr_decay == 1e-2
+    state = emu._engines['pk'][0].__getstate__()
+    assert MLPEngine.from_state(state).lr_decay == 1e-2
+    assert np.max(np.abs(emu.predict(**POINT)['pk'] / target(POINT)['pk'] - 1.)) < 0.3
+
+
+def test_train_can_stop_after_the_evaluations(tmp_path):
+    """`fit=False`: every node evaluated and checkpointed, no engine fitted -- the CPU half of a
+    build whose network fit is then a second job on a GPU. That second call, with the same
+    checkpoint, evaluates nothing and fits."""
+    calls = []
+
+    def counting(params):
+        calls.append(1)
+        return target(params)
+
+    checkpoint = str(tmp_path / 'nodes.ckpt.npz')
+    emu = Emulator(counting, space())
+    emu.train(**{**MLP, 'checkpoint': checkpoint, 'fit': False})
+    assert not emu.trained and len(calls) == MLP['nsamples']
+    assert np.load(checkpoint)['nodes'].shape == (MLP['nsamples'], 2)
+    emu.train(**{**MLP, 'checkpoint': checkpoint})
+    assert emu.trained and len(calls) == MLP['nsamples']
 
 
 # ── saving ────────────────────────────────────────────────────────────────────

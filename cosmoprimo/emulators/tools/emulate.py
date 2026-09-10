@@ -246,13 +246,40 @@ class Emulator(object):
 
     def train(self, engine=None, budget=None, checkpoint=None, chunk=None, batch_size=None,
               mpicomm=None, per_output=None, max_non_finite=0.05, method='auto',
-              basis_budget=None, drop_non_finite=None, **kwargs):
+              basis_budget=None, drop_non_finite=None, fit=True, rows_per_rank=None,
+              outlier_factor=None, outlier_factor_low=None, **kwargs):
         """Evaluate the calculator on the node set and fit.
 
         Resumable and chunked: pass ``checkpoint`` and ``chunk='30min'`` for anything expensive,
         then rerun until it reports complete. A kill then costs one node, not the training.
         ``batch_size`` calls the target with dicts of arrays of that length instead of one node
         at a time; ``mpicomm`` splits the nodes across ranks.
+
+        ``rows_per_rank`` (MPI only) is how many nodes each rank evaluates between two
+        exchanges; see :class:`~.training.TrainingSet`.
+
+        ``outlier_factor`` (regression engines only) drops, before the fit, every node at which
+        some output component exceeds that factor times the component's median |value| over
+        the nodes. A stability gate says where a calculator *runs*, not where its answer is
+        sane: over the EFT-of-dark-energy box, 8% of the gate-passing nodes returned one-loop
+        tables 1e4 to 1e87 times their typical size (large c_M with w0 > -0.5), and a network
+        fitted with them lost the sane 92% -- its asinh scale followed the maximum. Dropped
+        nodes are logged; the fit then extrapolates there, finite but meaningless, which is
+        what a chain that never visits those models can live with.
+
+        ``outlier_factor_low`` is the mirror cut: a node is dropped when some sign-definite
+        component (one that keeps the same sign over every node -- a component that crosses
+        zero is legitimately tiny near the crossing) falls below the median divided by that
+        factor. The same absurd region has a collapsed face: models whose growth is switched off
+        return tables and growth scalars 1e-3 to 1e-5 times typical, and in the transformed
+        space the network fits they dominate the mean-squared loss by orders of magnitude, so
+        the fit of the sane 96% is spent on them (measured: the growth scalar's median error
+        stayed at 0.6% whatever the schedule until they were removed).
+
+        ``fit=False`` stops once every node is evaluated and checkpointed, leaving the emulator
+        untrained: the two stages want different machines (the node evaluations are Boltzmann
+        and perturbation-theory calls, many CPU ranks; a network fit is one GPU), so a first job
+        evaluates and a second, with the same ``checkpoint``, finds the set complete and fits.
 
         ``per_output`` overrides the engine options for named outputs, e.g.
         ``per_output={'pk': dict(budget=2)}``. Only ever downward: every output is fitted from
@@ -264,7 +291,15 @@ class Emulator(object):
         if engine is not None:
             self.engine_name = engine
         built = self._engine(budget=budget, **kwargs)
-        nodes = built.nodes()
+        # The node set is drawn once, on rank 0, and broadcast: it is deterministic, but an
+        # engine with a `valid` predicate filters a candidate pool that can be a million points
+        # (the EFT-of-DE gate keeps 9%), five minutes of work that 255 other ranks would
+        # otherwise repeat -- and a set every rank must agree on exactly is safer sent than
+        # recomputed.
+        if mpicomm is not None and mpicomm.size > 1:
+            nodes = mpicomm.bcast(built.nodes() if mpicomm.rank == 0 else None, root=0)
+        else:
+            nodes = built.nodes()
         whitened = getattr(built, 'whitened', False)
         self.logger.info(f'training on {len(nodes)} nodes over {len(self.params)} parameters'
                          + (f' (whitened, condition number {built.condition_number():.1f})'
@@ -288,6 +323,7 @@ class Emulator(object):
         training = TrainingSet(self._evaluate_target, nodes, self.params, fixed=fixed,
                                checkpoint=checkpoint, chunk=chunk, batch_size=batch_size,
                                mpicomm=mpicomm,
+                               **({} if rows_per_rank is None else {'rows_per_rank': rows_per_rank}),
                                # An interpolating engine cannot absorb a hole on its own -- but it
                                # can if the caller also lowers `basis_budget`, which buys the
                                # redundancy by giving up polynomial degree. So the tolerance is
@@ -297,6 +333,10 @@ class Emulator(object):
         if not training.run():
             raise RuntimeError(f'training incomplete ({training.done}/{len(nodes)}); rerun to '
                                f'continue -- the checkpoint holds what is done')
+        if not fit:
+            self.logger.info(f'every node evaluated ({training.done}/{len(nodes)}); fit=False, '
+                             f'so the emulator stays untrained -- rerun with the same checkpoint to fit')
+            return self
 
         # transform after collection, node by node: the checkpoint holds physical outputs, so
         # changing what is divided out costs a refit, not another run of the Boltzmann code
@@ -337,17 +377,71 @@ class Emulator(object):
                 inputs = np.asarray(inputs)[finite]
                 transformed = {name: [value for value, keep in zip(values, finite) if keep]
                                for name, values in transformed.items()}
+            if outlier_factor is not None or outlier_factor_low is not None:
+                sane = np.ones(len(inputs), dtype='?')
+                worst, lowest = {}, {}
+                for name, values in transformed.items():
+                    signed = np.asarray(values).reshape(len(values), -1)
+                    stacked = np.abs(signed)
+                    median = np.median(stacked, axis=0)
+                    if outlier_factor is not None:
+                        ratio = stacked / np.where(median > 0., median, np.inf)
+                        over = ratio.max(axis=1)
+                        sane &= over <= outlier_factor
+                        worst[name] = float(over.max())
+                    if outlier_factor_low is not None:
+                        definite = ((signed.min(axis=0) > 0.) | (signed.max(axis=0) < 0.)) & (median > 0.)
+                        if definite.any():
+                            under = (median[definite] / stacked[:, definite]).max(axis=1)
+                            sane &= under <= outlier_factor_low
+                            lowest[name] = float(under.max())
+                lost = int((~sane).sum())
+                if lost:
+                    top = sorted(worst.items(), key=lambda item: -item[1])[:3]
+                    bottom = sorted(lowest.items(), key=lambda item: -item[1])[:3]
+                    self.logger.info(
+                        f'dropping {lost}/{len(sane)} nodes ({lost / len(sane):.1%}) at which an output is '
+                        + (f'above {outlier_factor:g} x its median size (worst: ' + ', '.join(f'{name} at {value:.2g}x' for name, value in top) + ')' if worst else '')
+                        + (' or ' if worst and lowest else '')
+                        + (f'below its median / {outlier_factor_low:g} (lowest: ' + ', '.join(f'{name} at 1/{value:.2g}' for name, value in bottom) + ')' if lowest else '')
+                        + '; fitting on the rest')
+                    inputs = np.asarray(inputs)[sane]
+                    transformed = {name: [value for value, keep in zip(values, sane) if keep]
+                                   for name, values in transformed.items()}
 
-        # one engine per output, all sharing the node set
-        self._engines = {}
-        for name, values in transformed.items():
-            values = np.asarray(values)
+        # one engine per output, all sharing the node set. Under MPI the outputs are dealt
+        # round-robin across the ranks and the fitted engines gathered back, so every rank ends
+        # with the same complete set: with the plain loop every rank fitted every output --
+        # 16 ranks doing 16 identical copies of the work. Measured on an 11-parameter, 78-output
+        # MLP emulator with 5632 samples: the node evaluations took 45 min on 16 ranks and the
+        # redundant per-rank fit then ran for more than 5 h, well past the evaluations. The
+        # Chebyshev fit is a linear solve and never noticed; the network training is what this
+        # is for. States travel through pickle (allgather): an engine's state is a few arrays.
+        names = list(transformed)
+        rank, size = (mpicomm.rank, mpicomm.size) if mpicomm is not None else (0, 1)
+        mine = {}
+        for name in names[rank::size]:
+            values = np.asarray(transformed[name])
             options = {'budget': budget, **kwargs, **per_output.get(name, {})}
             fit = self._engine(**options)
             fit.fit(inputs, values.reshape(len(values), -1), method=method,
                     basis_budget=basis_budget) \
                 if fit.name == 'chebyshev' else fit.fit(inputs, values.reshape(len(values), -1))
-            self._engines[name] = (fit, values.shape[1:])
+            if hasattr(fit, 'validation_loss'):
+                # one line per output, so a job log can be read per quantity (which networks
+                # early-stopped, which are the worst) rather than per anonymous rank
+                self.logger.info(f'output {name!r}: {getattr(fit, "epochs_run", "?")}/{fit.epochs} epochs, '
+                                 f'validation loss {fit.validation_loss:.3e}')
+            mine[name] = (fit.__getstate__(), tuple(values.shape[1:]))
+        if size > 1:
+            from .engines import engine_from_state
+            gathered = {}
+            for part in mpicomm.allgather(mine):
+                gathered.update(part)
+            self._engines = {name: (engine_from_state(gathered[name][0]), gathered[name][1]) for name in names}
+        else:
+            from .engines import engine_from_state
+            self._engines = {name: (engine_from_state(state), shape) for name, (state, shape) in mine.items()}
         if not self._engines:
             raise RuntimeError('the target returned no outputs, so there is nothing to fit')
         return self

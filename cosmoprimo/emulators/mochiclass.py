@@ -142,8 +142,7 @@ import numpy as np
 
 from cosmoprimo.jax import numpy_jax, use_jax
 
-__all__ = ['stable', 'stable_hill_valley', 'stable_propto_omega', 'class_a_grid',
-           'class_a_grid',
+__all__ = ['stable', 'stable_hill_valley', 'stable_propto_omega', 'class_a_grid', 'QS_A_MIN',
            'scan_hill_valley', 'scan_propto_omega',
            'min_cs2num_hill_valley', 'min_cs2num_propto_omega',
            'cs2num', 'kinetic_D', 'background', 'default_a_grid',
@@ -157,6 +156,11 @@ IC_Z_REF = 1e10
 #: mochi_class' ``pert_ic_tolerance_smg``: the model is refused when the attractor growth
 #: exponent exceeds ``3 + IC_TOLERANCE``.  Negative in mochi_class disables the test.
 IC_TOLERANCE = 2e-2
+
+#: Where the quasi-static pole test (``qs_mu2=True``) starts, in ``a``: fkptjax integrates the
+#: one-loop kernels from ``eta = ln a = -3.912023`` (z ~ 49) and probes 0.2 below it, and this is
+#: what its ``mu(k, eta) = h1 (1 + k^2 h5) / (1 + k^2 h3)`` is tabulated over.
+QS_A_MIN = float(np.exp(-3.912023 - 0.2))
 
 
 # --------------------------------------------------------------------------------------
@@ -562,6 +566,42 @@ def kinetic_D(alpha_K, alpha_B):
     return alpha_K + 1.5 * alpha_B**2
 
 
+def _qs_mu2(a, bg, alpha_B, alpha_M, alpha_T, dalpha_B_dlna, M2):
+    r"""
+    :math:`\mu^{2}` of eq. 69 of arXiv:1902.06978 (as ``cosmoprimo.mochiclassy.Background``
+    builds it), on the grid, with :math:`+\infty` where ``a < QS_A_MIN`` so that a minimum over
+    the grid is a minimum over the quasi-static range only.
+
+    Why it is a stability criterion for the pipeline and not for mochi_class: the
+    quasi-static source fkptjax integrates is :math:`\mu(k, \eta) = h_{1} (1 + k^{2} h_{5}) /
+    (1 + k^{2} h_{3})` with :math:`h_{3} = c_{s}^{2}{\rm num} / (a^{2} H^{2} \mu^{2})`.  Where
+    :math:`\mu^{2}` crosses zero, :math:`h_{3}` and :math:`h_{5}` go through a pole (measured on
+    a gate-stable model: :math:`|h_{3}|` up to :math:`2 \times 10^{9}` at :math:`z = 1.7`), the
+    per-function splines are wrong across it, and where :math:`h_{3} < 0` the source itself is
+    singular at the physical scale :math:`k^{2} = -1/h_{3}`.  mochi_class integrates such models
+    happily (its scalar is fine at high :math:`k`; this is the quasi-static approximation
+    breaking), but the one-loop ODE fed with that source crawls -- one such training node
+    stalled all 16 MPI ranks of an emulator training.  With :math:`c_{s}^{2}{\rm num} > 0`
+    (the gradient test) :math:`h_{3} > 0 \Leftrightarrow \mu^{2} > 0`, so the criterion is
+    :math:`\min_{a \ge a_{\rm QS}} \mu^{2} > 0`.
+
+    Ingredients, all background: :math:`\xi = H'/H = -\tfrac{3}{2}(\rho + p)_{\rm tot}/H^{2}`,
+    :math:`p_{\rm tot}'/H^{2}` including the smg fluid (``dp_wo + dp_de`` of
+    :func:`background` with ``derivs=True``), :math:`\alpha_{1} = \alpha_{B} + (\alpha_{B} - 2)
+    \alpha_{T} + 2 \alpha_{M}`, :math:`\alpha_{2} = c_{s}^{2}{\rm num} - (2 - \alpha_{B})
+    \alpha_{1} / 2`, and :math:`\mu^{2} = -3 [\alpha_{B} (\xi \alpha_{M} - \tfrac{3}{2}
+    p_{\rm tot}'/H^{2}) + \xi \alpha_{2}]`.  Agrees with the engine's own to 1e-6 relative.
+    """
+    xnp = numpy_jax(a, alpha_B, alpha_M, alpha_T, dalpha_B_dlna, M2, *bg.values())
+    xi = -1.5 * (bg['X_m'] + bg['X_de'])
+    dp = bg['dp_wo'] + bg['dp_de']
+    cs2 = cs2num(alpha_B, alpha_M, alpha_T, dalpha_B_dlna, M2, bg['X_m'], bg['X_de'])
+    alpha_1 = alpha_B + (alpha_B - 2.) * alpha_T + 2. * alpha_M
+    alpha_2 = cs2 - (2. - alpha_B) * alpha_1 / 2.
+    mu2 = -3. * (alpha_B * (xi * alpha_M - 1.5 * dp) + xi * alpha_2)
+    return xnp.where(xnp.asarray(a) >= QS_A_MIN, mu2, xnp.inf)
+
+
 def ic_growth_exponent(kin, bra, run, ten, dM2, dkin, dbra, R, Pt, Rs, Ps, dPt, dPs, w):
     r"""
     mochi_class' superhorizon attractor growth exponent ``x_growth_smg``, from
@@ -756,7 +796,7 @@ def _refined_grid(a_grid, a_t, tau, u_max=8., n_refine=96):
     return np.concatenate([np.broadcast_to(a_grid, (a_t.size, a_grid.size)), a_ref], axis=-1)
 
 
-def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None):
+def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None, qs=False):
     r"""
     Sweep the ``a`` grid once and return every quantity mochi_class reduces over it.
 
@@ -788,12 +828,17 @@ def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None):
     if model == 'hill_valley' and ic is not None:
         raise NotImplementedError('TODO(hill_valley): the superhorizon IC test is implemented for '
                                   'propto_omega only; see _scan for what hill/valley needs')
+    if model == 'hill_valley' and qs:
+        raise NotImplementedError('TODO(hill_valley): the quasi-static pole test (mu^2 > 0) is implemented for '
+                                  'propto_omega only; it needs alphas_hill_valley with the pressure derivatives '
+                                  'of background(derivs=True), then the same mu^2 expression as _qs_mu2')
     n = len(next(iter(par.values())))
     lna = np.log(a_grid)
     width = a_grid.size + (n_refine if refine else 0)
     nchunk = chunk or max(1, _CHUNK_ELEMENTS // width)
 
-    keys = ('min_cs2num', 'min_bra', 'max_bra', 'min_ten', 'min_M2') + (('x_growth',) if ic else ())
+    keys = (('min_cs2num', 'min_bra', 'max_bra', 'min_ten', 'min_M2') + (('x_growth',) if ic else ())
+            + (('min_mu2_qs',) if qs else ()))
     out = {k: [] for k in keys}
     for i in range(0, n, nchunk):
         sl = slice(i, min(i + nchunk, n))
@@ -805,7 +850,7 @@ def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None):
             bg = background(a, **bgkw)
             al = alphas_hill_valley(a, p['c_M'], p['tau'], p['a_t'], p['r'], p['M2_ini'])
         else:
-            bg = background(a_grid, derivs=ic is not None, **bgkw)
+            bg = background(a_grid, derivs=(ic is not None) or qs, **bgkw)
             al = alphas_propto_omega(a_grid, lna, bg, p['c_b'], p['c_m'], p['c_t'],
                                      p['M2_ini'], return_dM2=ic is not None)
         aB, aM, aT, daB, M2 = al[:5]
@@ -815,6 +860,8 @@ def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None):
         out['max_bra'].append(xnp.broadcast_to(aB, shape).max(axis=-1))
         out['min_ten'].append(xnp.broadcast_to(aT, shape).min(axis=-1))
         out['min_M2'].append(xnp.broadcast_to(M2, shape).min(axis=-1))
+        if qs:
+            out['min_mu2_qs'].append(_qs_mu2(a_grid, bg, aB, aM, aT, daB, M2).min(axis=-1))
         if ic is not None:
             q = {k: v[sl] for k, v in par.items()}
             out['x_growth'].append(_ic_propto_omega(bg, al, q['alpha_K'], q['c_b'], q['c_m'], q['c_t'],
@@ -858,7 +905,7 @@ def scan_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., na=DEFAULT_NA, a_grid=None,
 
 
 def scan_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, na=DEFAULT_NA, a_grid=None,
-                      chunk=None, ic_test=False, ic_omega_ref=None, **cosmo):
+                      chunk=None, ic_test=False, ic_omega_ref=None, qs_mu2=False, **cosmo):
     r"""
     Every quantity mochi_class minimises over ``a``, for ``propto_omega``.
 
@@ -870,12 +917,14 @@ def scan_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, na=DEFAULT_NA, 
     growth exponent at ``z_ref`` (:data:`IC_Z_REF`, inserted into the grid), which needs
     ``alpha_K`` (``parameters_smg[0]``, :math:`\alpha_K = c_K \Omega_{\rm smg}`).
     ``ic_omega_ref`` is the optional :math:`\Omega_{\rm smg}` rescaling of
-    :func:`_ic_propto_omega`.  numpy or jax.numpy, chosen from the inputs.
+    :func:`_ic_propto_omega`.  With ``qs_mu2=True`` the dict also carries ``min_mu2_qs``, the
+    minimum of :math:`\mu^{2}` over the quasi-static range (:func:`_qs_mu2`).  numpy or
+    jax.numpy, chosen from the inputs.
     """
     args = dict(c_b=c_b, c_m=c_m, c_t=c_t, M2_ini=M2_ini)
     if not ic_test:
         par, shape, n, grid = _prepare('propto_omega', args, cosmo, na, a_grid)
-        out = _scan('propto_omega', par, list(cosmo), grid, False, 0, chunk)
+        out = _scan('propto_omega', par, list(cosmo), grid, False, 0, chunk, qs=qs_mu2)
     else:
         if alpha_K is None:
             raise ValueError('the superhorizon IC test needs alpha_K (parameters_smg[0])')
@@ -883,7 +932,7 @@ def scan_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, na=DEFAULT_NA, 
         par, shape, n, grid, iref = _prepare('propto_omega', args, cosmo, na, a_grid,
                                              a_ref=1. / (1. + IC_Z_REF))
         out = _scan('propto_omega', par, list(cosmo), grid, False, 0, chunk,
-                    ic={'iref': iref, 'omega_ref': ic_omega_ref})
+                    ic={'iref': iref, 'omega_ref': ic_omega_ref}, qs=qs_mu2)
     return {k: (v.reshape(shape) if shape else v[0]) for k, v in out.items()}
 
 
@@ -962,6 +1011,9 @@ def _verdict(s, M2_ini, alpha_K, ic_tolerance=None):
     if 'x_growth' in s:
         tol = IC_TOLERANCE if ic_tolerance is None else ic_tolerance
         ok = xnp.logical_and(ok, s['x_growth'] <= 3. + tol)
+    if 'min_mu2_qs' in s:
+        # the quasi-static pole test (see _qs_mu2): not one of mochi_class' own
+        ok = xnp.logical_and(ok, s['min_mu2_qs'] > 0.)
     return ok
 
 
@@ -992,8 +1044,8 @@ def stable_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, ic_test=Fal
 
 
 def stable_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, ic_test=False,
-                        ic_tolerance=None, ic_omega_ref=None, **kwargs):
-    """
+                        ic_tolerance=None, ic_omega_ref=None, qs_mu2=False, **kwargs):
+    r"""
     ``True`` where mochi_class would run the model, ``False`` where it would abort.
 
     As :func:`stable_hill_valley`, including the ``alpha_K`` caveat.  Two conditions that
@@ -1010,13 +1062,18 @@ def stable_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, ic_test=False
     ``ic_omega_ref`` selects the rescaled evaluation of :func:`_ic_propto_omega`;
     ``None`` evaluates the test as mochi_class does.
 
+    ``qs_mu2`` adds the quasi-static pole test, :math:`\min \mu^{2} > 0` over fkptjax's
+    integration range (:func:`_qs_mu2`): NOT one of mochi_class' tests -- it accepts those
+    models -- but a requirement of the quasi-static one-loop source built from :math:`h_{3}`,
+    :math:`h_{5}`.  Off by default here; the DESI-DR2-MG pipeline turns it on.
+
     numpy or jax.numpy, chosen from the inputs: under ``jax.jit`` / ``vmap`` / ``grad``
     every step traces (see the module docstring).
     """
     if ic_test and alpha_K is None:
         raise ValueError('ic_test=True needs alpha_K (parameters_smg[0])')
     return _verdict(scan_propto_omega(c_b, c_m, c_t=c_t, M2_ini=M2_ini, alpha_K=alpha_K,
-                                      ic_test=ic_test, ic_omega_ref=ic_omega_ref, **kwargs),
+                                      ic_test=ic_test, ic_omega_ref=ic_omega_ref, qs_mu2=qs_mu2, **kwargs),
                     M2_ini, alpha_K, ic_tolerance=ic_tolerance)
 
 
