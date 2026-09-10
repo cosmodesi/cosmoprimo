@@ -611,6 +611,7 @@ def get_engine(engine):
     engine : BaseEngine
     """
     if isinstance(engine, str):
+        path = engine   # a file path must keep its case; only the engine NAME is case-insensitive
         engine = engine.lower()
         if engine in ['class', 'classy']:
             from . import classy
@@ -649,13 +650,13 @@ def get_engine(engine):
             from . import tabulated
         elif engine == 'ace':
             from .emulators import ace
-        elif engine.endswith(('.h5', '.hdf5', '.npy', '.npz')) or os.path.exists(engine):
+        elif engine.endswith(('.h5', '.hdf5', '.npy', '.npz')) or os.path.exists(path):
             # a trained emulator, by path: Cosmology(engine='my_emulator.npy') should behave
             # exactly like Cosmology(engine='capse') -- a dictionary of arrays is a training
             # artifact, not a usable cosmology
             from cosmoprimo.emulators import read_engine
 
-            return read_engine(engine)
+            return read_engine(path)
 
         try:
             engine = BaseEngine._registry[engine]
