@@ -52,6 +52,12 @@ class MLPEngine(BaseEngine):
     epochs, patience, learning_rate, batch_size, validation_frac, optimizer, seed
         Training schedule. ``patience`` stops early once the validation loss has not improved for
         that many epochs, which is what keeps a long ``epochs`` from being wasted.
+    lr_decay : float, default=1.
+        Ratio of the learning rate at the last epoch to ``learning_rate``: the rate decays
+        exponentially over ``epochs`` (all of them, whether or not early stopping cuts the run
+        short), and 1 keeps it constant. A fixed rate leaves the fit bouncing around the optimum
+        at a size set by that rate; 1e-2 or so is what takes a percent-level fit to its last
+        factor of a few.
     valid : callable, default=None
         A predicate over the physical parameters, called by name
         (``valid(w0_fld=..., wa_fld=...)``, vectorised or not), that says where the calculator
@@ -65,10 +71,31 @@ class MLPEngine(BaseEngine):
         is a property of the calculator and not of the fit: it is not saved with the state, and
         the fit *is* extrapolating across the region it excludes -- keep that region one nothing
         asks about (a prior that vetoes it).
+    asinh_quantile : float, default=0.5
+        Which quantile of |y| over the samples sets the asinh scale of each component. asinh is
+        linear below its scale and logarithmic above, so the scale is where relative accuracy
+        stops being resolved: with the median (the default), every sample below the median is
+        fitted to an absolute error, and an output spanning six decades (a growth scalar from
+        1e-4 to 300 over the EFT-of-DE box) is unresolved on its lower half. A low quantile
+        (0.01) puts 99% of the samples in the logarithmic regime, at the price of an asinh range
+        as wide as the output's dynamic range in decades. Applied to sign-definite components
+        only; a component that changes sign over the samples keeps the median as its scale.
+    output_transform : str, default='none'
+        ``'asinh'`` fits ``asinh(y / s)`` per output component instead of ``y``, with ``s`` the
+        median |y| of that component over the samples (its typical size), and puts ``sinh`` back
+        at prediction. Sign-preserving and linear for |y| << s, logarithmic beyond: it is what
+        lets one network cover an output whose value spans many decades across the box. The
+        plain standardisation cannot: it makes the network fit ``y`` to a fixed fraction of the
+        component's SPREAD, and where that spread is dominated by a few huge samples the small
+        ones are lost entirely. Measured on the one-loop tables of a full-shape emulator over an
+        11-parameter box (sigma8 from 0.04 to > 1): raw columns spanning 1e18 fitted to 3% of
+        their standard deviation, i.e. relative errors of 1e7 and worse at the small end;
+        see the tests. Not compatible with :meth:`contract` (no longer affine after the last
+        layer).
     candidates : int, default=None
-        Size of the pool ``valid`` filters, ``4 * nsamples`` by default (rounded up to a power
-        of two, on which Sobol' is balanced). Raise it when the valid region is a small fraction
-        of the box.
+        Initial size of the pool ``valid`` filters, ``4 * nsamples`` by default (rounded up to a
+        power of two, on which Sobol' is balanced); it doubles on its own until ``nsamples``
+        survive, up to :attr:`MAX_CANDIDATES`.
 
     ``levels`` and ``budget`` are accepted and ignored: they are the sparse grid's knobs, and are
     passed through by the emulator so that swapping engines needs no other change.
@@ -83,11 +110,22 @@ class MLPEngine(BaseEngine):
     #: collocation grid can be laid over that.
     requires_all_nodes = False
 
+    #: Cap on the candidate pool `valid` filters (see `nodes`): 2^22, about four million.
+    MAX_CANDIDATES = 2 ** 22
+
     def __init__(self, params, limits, levels=None, budget=None, nsamples=None,
                  nhidden=(64, 64, 64), activation='silu', epochs=2000, patience=200,
                  learning_rate=1e-3, batch_size=64, validation_frac=0.1, optimizer='adam',
-                 seed=42, valid=None, candidates=None, **kwargs):
+                 seed=42, valid=None, candidates=None, output_transform='none', lr_decay=1.,
+                 asinh_quantile=0.5, **kwargs):
         super().__init__(params, limits, **kwargs)
+        if output_transform not in ('none', 'asinh'):
+            raise ValueError(f"output_transform must be 'none' or 'asinh'; got {output_transform!r}")
+        self.output_transform = str(output_transform)
+        self.asinh_quantile = float(asinh_quantile)
+        if not 0. < self.asinh_quantile <= 1.:
+            raise ValueError(f'asinh_quantile must be in (0, 1]; got {asinh_quantile}')
+        self._asinh_scale = None
         self.nsamples = int(nsamples) if nsamples is not None else 512 * len(self.params)
         self.valid = valid
         self.candidates = None if candidates is None else int(candidates)
@@ -97,6 +135,9 @@ class MLPEngine(BaseEngine):
         self.activation = activation
         self.epochs, self.patience = int(epochs), int(patience)
         self.learning_rate, self.batch_size = float(learning_rate), int(batch_size)
+        self.lr_decay = float(lr_decay)
+        if not 0. < self.lr_decay <= 1.:
+            raise ValueError(f'lr_decay is the ratio of the final to the initial learning rate, in (0, 1]; got {lr_decay}')
         self.validation_frac, self.optimizer = float(validation_frac), str(optimizer)
         self.seed = int(seed)
         self.layers = None
@@ -119,29 +160,42 @@ class MLPEngine(BaseEngine):
         from .engines import valid_mask
 
         dimension = len(self.params)
-        npool = self.nsamples
-        if self.valid is not None:
-            npool = self.candidates if self.candidates is not None else 4 * self.nsamples
-            npool = 2 ** int(np.ceil(np.log2(max(npool, self.nsamples, 1))))
-        unit = qmc.Sobol(d=dimension, scramble=True, seed=self.seed).random(npool)
-        if self.whitened:
-            internal = (2. * unit - 1.) * self.nsigma
-            physical = np.array([self.unwhiten(row) for row in internal])
-        else:
+
+        def draw(npool):
+            unit = qmc.Sobol(d=dimension, scramble=True, seed=self.seed).random(npool)
+            if self.whitened:
+                internal = (2. * unit - 1.) * self.nsigma
+                return np.array([self.unwhiten(row) for row in internal])
             low = np.array([self._domain(name)[0] for name in self.params])
             high = np.array([self._domain(name)[1] for name in self.params])
             internal = low + unit * (high - low)
-            physical = np.array([self._physical(row) for row in internal])
+            return np.array([self._physical(row) for row in internal])
+
         if self.valid is None:
-            return physical
-        keep = valid_mask(self.valid, self.params, physical)
-        nvalid = int(keep.sum())
+            return draw(self.nsamples)
+        # The pool grows until enough survive, doubling from `candidates` (4 x nsamples by
+        # default) up to MAX_CANDIDATES. A Sobol' sequence with a fixed seed is nested -- a
+        # larger draw starts with the same points -- so the survivors of a larger pool begin with
+        # those of a smaller one and the node set is stable under the growth. Measured need: the
+        # EFT-of-dark-energy box is 11% valid, so 5632 samples take ~ 65000 candidates; the
+        # predicate costs ~0.06 ms per candidate, so a million of them is a minute.
+        npool = self.candidates if self.candidates is not None else 4 * self.nsamples
+        npool = 2 ** int(np.ceil(np.log2(max(npool, self.nsamples, 1))))
+        while True:
+            physical = draw(npool)
+            keep = valid_mask(self.valid, self.params, physical)
+            nvalid = int(keep.sum())
+            if nvalid >= self.nsamples or npool >= self.MAX_CANDIDATES:
+                break
+            self.logger.info(f'`valid` keeps {nvalid}/{npool} candidates, fewer than the {self.nsamples} '
+                             f'samples asked for; doubling the pool')
+            npool *= 2
         if nvalid < self.nsamples:
             raise ValueError(
                 f'`valid` keeps {nvalid} of {npool} candidates, fewer than the {self.nsamples} '
-                f'samples asked for. Raise `candidates`, or -- if the predicate is rejecting most '
-                f'of the box -- move the box rather than fitting over a region that is mostly not '
-                f'there.')
+                f'samples asked for, and the pool is at its cap ({self.MAX_CANDIDATES}). The '
+                f'predicate is rejecting almost all of the box: move the box rather than fitting '
+                f'over a region that is mostly not there.')
         self.logger.info(f'`valid` keeps {nvalid}/{npool} candidates ({nvalid / npool:.1%}); '
                          f'taking the first {self.nsamples}')
         return physical[keep][:self.nsamples]
@@ -170,6 +224,30 @@ class MLPEngine(BaseEngine):
         if len(inputs) != len(outputs):
             raise ValueError(f'{len(inputs)} inputs against {len(outputs)} outputs')
         internal = np.array([self._internal(row) for row in inputs])
+        if self.output_transform == 'asinh':
+            # The component's typical size: its median |y|. A component that is zero in more
+            # than half the samples but not all falls back to its maximum, and one that is zero
+            # everywhere to 1. The scale must NOT be tied to the maximum otherwise: a first
+            # version floored it at 1e-12 x max|y|, meant for all-zero columns, and on a
+            # training set holding a few absurd nodes (|y| up to 1e75 against a median of 50,
+            # models the stability gate let through) that floor became the scale for 50 of 78
+            # outputs -- asinh then linear over the whole sane range, the network fitted
+            # y / 1e13 and predicted 1e68 (2026-09-10). Outliers are the training set's
+            # problem to drop (see Emulator.train); the transform keeps the sane range.
+            # Per component: a sign-definite one (never crossing zero over the samples) takes the
+            # requested quantile, so a low quantile puts it in the logarithmic regime over most
+            # of its range; a sign-changing one keeps the median. Near a zero crossing |y| is
+            # legitimately tiny, a low quantile then makes the scale tiny too and the transform
+            # nearly log|y| with a sign flip, which a network cannot fit: measured on a one-loop
+            # table column, 3% of the row maximum at the 1st percentile against ~0.1% at the
+            # median (2026-09-10).
+            absolute = np.abs(outputs)
+            definite = (outputs.min(axis=0) > 0.) | (outputs.max(axis=0) < 0.)
+            quantile = np.where(definite, self.asinh_quantile, max(self.asinh_quantile, 0.5))
+            scale = np.array([np.quantile(absolute[:, index], quantile[index]) for index in range(absolute.shape[1])])
+            fallback = absolute.max(axis=0)
+            self._asinh_scale = np.where(scale > 0., scale, np.where(fallback > 0., fallback, 1.))
+            outputs = np.arcsinh(outputs / self._asinh_scale)
         self._output_mean, self._output_scale = self._standardise(outputs)
         targets = (outputs - self._output_mean) / self._output_scale
 
@@ -203,26 +281,55 @@ class MLPEngine(BaseEngine):
         def loss_fn(layers, x, y):
             return jnp.mean((forward(layers, x) - y)**2)
 
-        gradient = jax.jit(jax.value_and_grad(loss_fn))
-        evaluate = jax.jit(loss_fn)
-        tx = getattr(optax, self.optimizer)(self.learning_rate)
-        state = tx.init(layers)
-
         x_train = jnp.asarray(internal[training])
         y_train = jnp.asarray(targets[training])
         x_validation = jnp.asarray(internal[validation])
         y_validation = jnp.asarray(targets[validation])
         batch = min(self.batch_size, len(training))
+        # whole batches only: the ragged tail of a shuffled epoch is a different subset each
+        # time, so nothing is systematically left out, and a fixed batch count is what lets the
+        # whole epoch be one traced loop below
+        nbatches = len(training) // batch
+        schedule = self.learning_rate
+        if self.lr_decay < 1.:
+            schedule = optax.exponential_decay(self.learning_rate, transition_steps=nbatches * self.epochs,
+                                               decay_rate=self.lr_decay)
+        tx = getattr(optax, self.optimizer)(schedule)
+        state = tx.init(layers)
+
+        # One traced call per epoch: the gradient, the optimiser update and the parameter update
+        # for every batch, scanned. The alternative -- a Python loop dispatching one jitted
+        # gradient per batch, with the optax update eager between them -- costs a few ms of
+        # overhead per batch whatever the device, so a GPU ran it no faster than a CPU core and a
+        # 78-output emulator over 5632 samples took more than 5 h to fit. The data are arguments
+        # of the jitted function, not constants closed over, so a large training set is not
+        # baked into the executable (`step` closes over the traced arguments, which is fine).
+        @jax.jit
+        def epoch(layers, state, order, x_train, y_train, x_validation, y_validation):
+
+            def step(carry, index):
+                layers, state = carry
+                grads = jax.grad(loss_fn)(layers, x_train[index], y_train[index])
+                updates, state = tx.update(grads, state, layers)
+                return (optax.apply_updates(layers, updates), state), None
+
+            (layers, state), _ = jax.lax.scan(step, (layers, state), order)
+            return layers, state, loss_fn(layers, x_validation, y_validation)
 
         best, best_loss, waited = layers, np.inf, 0
-        for epoch in range(self.epochs):
-            shuffled = rng.permutation(len(training))
-            for start in range(0, len(training), batch):
-                index = shuffled[start:start + batch]
-                _, grads = gradient(layers, x_train[index], y_train[index])
-                updates, state = tx.update(grads, state, layers)
-                layers = optax.apply_updates(layers, updates)
-            loss = float(evaluate(layers, x_validation, y_validation))
+        iepoch = -1
+        for iepoch in range(self.epochs):
+            order = jnp.asarray(rng.permutation(len(training))[:nbatches * batch].reshape(nbatches, batch))
+            layers, state, loss = epoch(layers, state, order, x_train, y_train, x_validation, y_validation)
+            loss = float(loss)
+            if not np.isfinite(loss):
+                # A divergence (a non-finite loss) never recovers: the parameters are non-finite
+                # from here on and every later epoch is wasted while `best` stays where it was.
+                # Measured on a growth scalar at a 1e-3 rate decayed only 1e-4 over 8000 epochs:
+                # the best epoch was ~300 and the remaining 7700 changed nothing. Stop, keep best.
+                self.logger.warning(f'non-finite validation loss at epoch {iepoch + 1}; stopping with the best state '
+                                    f'(epoch of best loss {best_loss:.3e})')
+                break
             if loss < best_loss:
                 # keep the best validation loss, not the last one: past the optimum the training
                 # loss keeps falling while the prediction gets worse
@@ -233,6 +340,12 @@ class MLPEngine(BaseEngine):
                     break
         self.layers = [(np.asarray(weight), np.asarray(bias)) for weight, bias in best]
         self.validation_loss = best_loss
+        self.epochs_run = iepoch + 1
+        # The one line that says whether the fit converged or stopped early, and how far it got:
+        # a standardised validation MSE of 1e-4 is a relative error of ~1% on an asinh-transformed
+        # output, 1e-6 is ~0.1%. Without it a 78-network job log said nothing about the fit.
+        self.logger.info(f'{targets.shape[1]} components, {len(training)} samples: {self.epochs_run}/{self.epochs} epochs, '
+                         f'best validation loss {best_loss:.3e} (standardised MSE)')
         return self
 
     # ── predict ───────────────────────────────────────────────────────────────
@@ -246,7 +359,10 @@ class MLPEngine(BaseEngine):
             x = _activate(x @ xnp.asarray(weight) + xnp.asarray(bias), self.activation, xnp)
         weight, bias = self.layers[-1]
         x = x @ xnp.asarray(weight) + xnp.asarray(bias)
-        return x * xnp.asarray(self._output_scale) + xnp.asarray(self._output_mean)
+        x = x * xnp.asarray(self._output_scale) + xnp.asarray(self._output_mean)
+        if self.output_transform == 'asinh':
+            x = xnp.sinh(x) * xnp.asarray(self._asinh_scale)
+        return x
 
     def contract(self, matrix):
         """Left-multiply the output by a fixed ``matrix``, exactly.
@@ -258,6 +374,8 @@ class MLPEngine(BaseEngine):
         """
         if self.layers is None:
             raise ValueError('not fitted')
+        if self.output_transform != 'none':
+            raise ValueError(f'contract is exact only for an affine output; output_transform={self.output_transform!r} is not')
         matrix = np.asarray(matrix, dtype='f8')
         weight, bias = self.layers[-1]
         if matrix.shape[1] != weight.shape[1]:
@@ -276,7 +394,9 @@ class MLPEngine(BaseEngine):
                       'activation': self.activation, 'epochs': self.epochs,
                       'patience': self.patience, 'learning_rate': self.learning_rate,
                       'batch_size': self.batch_size, 'validation_frac': self.validation_frac,
-                      'optimizer': self.optimizer, 'seed': self.seed,
+                      'optimizer': self.optimizer, 'seed': self.seed, 'lr_decay': self.lr_decay,
+                      'output_transform': self.output_transform, 'asinh_quantile': self.asinh_quantile,
+                      'asinh_scale': self._asinh_scale if self._asinh_scale is not None else np.zeros(0),
                       'output_mean': self._output_mean, 'output_scale': self._output_scale,
                       'nlayers': 0 if self.layers is None else len(self.layers)})
         for index, (weight, bias) in enumerate(self.layers or []):
@@ -291,6 +411,11 @@ class MLPEngine(BaseEngine):
                      'batch_size', 'validation_frac', 'optimizer', 'seed'):
             setattr(new, name, state[name])
         new.nhidden = tuple(new.nhidden)
+        new.lr_decay = float(state.get('lr_decay', 1.))
+        new.output_transform = str(state.get('output_transform', 'none'))
+        new.asinh_quantile = float(state.get('asinh_quantile', 0.5))
+        scale = state.get('asinh_scale', None)
+        new._asinh_scale = None if scale is None or np.size(scale) == 0 else np.asarray(scale)
         new._output_mean, new._output_scale = state['output_mean'], state['output_scale']
         nlayers = int(state['nlayers'])
         new.layers = [(state[f'weight.{index}'], state[f'bias.{index}'])
