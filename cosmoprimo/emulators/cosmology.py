@@ -51,7 +51,7 @@ from .tools import Emulator as _Emulator, NotTrained
 # the formulae divided out live in `analytic`, shared with desilike's cosmology emulators
 from .analytic import (AMPLITUDES as _AMPLITUDES, nonzero as _nonzero,
                        eisenstein_hu_scales as _eisenstein_hu_scales, harmonic_scaling,
-                       theta_analytic, solve_theta_analytic, theta_background_kwargs, dilate)
+                       theta_analytic, solve_theta_analytic, dilate)
 
 # the columns each cosmoprimo harmonic getter returns, so the scaling can be built without a run
 _SPECTRA = {'lensed_cl': ('tt', 'ee', 'bb', 'te'),
@@ -218,9 +218,15 @@ class SectionEmulator(_Emulator):
         """What :func:`~.analytic.theta_analytic` needs besides the densities: the dark energy
         and the radiation content, varied when the space varies them and the fiducial's
         otherwise."""
+        # Each read the same way: the sampled value where the space varies it, the cosmology's
+        # otherwise. None may be captured as a constant -- a captured one evaluates the emulator's
+        # basis at the fiducial while the calculator uses the sampled value, and the two bases then
+        # disagree point by point. That is what put an earlier box 5.3 sigma off its posterior.
         kwargs = {'w0': params.get('w0_fld', self.cosmo['w0_fld']),
                   'wa': params.get('wa_fld', self.cosmo['wa_fld']),
-                  **theta_background_kwargs(params, self.cosmo)}
+                  'm_ncdm': params.get('m_ncdm', self.cosmo['m_ncdm']),
+                  'N_ur': params.get('N_ur', self.cosmo['N_ur']),
+                  'T_cmb': params.get('T_cmb', self.cosmo['T_cmb'])}
         # as an array, so a compiled `theta_analytic` sees one argument structure rather than
         # retracing between a tuple of masses and an array of them
         kwargs['m_ncdm'] = np.atleast_1d(kwargs['m_ncdm'])

@@ -138,14 +138,40 @@ class TrainingSet(object):
 
     # ── state ──────────────────────────────────────────────────────────────────
     def _load(self):
-        # The values live on rank 0 only (see _evaluate); every rank needs the keys (what is
-        # done) and the output shapes (the template a tolerated failure is padded to).
+        """Evaluations from the checkpoint, restricted to nodes this run actually wants.
+
+        A checkpoint is keyed by the emulator's cache filename, and that name does not cover the
+        node set: change what the space is whitened on, or a level, and the same file is picked up
+        by a run whose design is different. Loading it wholesale then hands :meth:`inputs` and
+        :meth:`outputs` more (node, value) pairs than the design has -- a Chebyshev or Smolyak fit
+        wants exactly its own unisolvent set, not a superset from another one -- and makes
+        ``done`` count past ``len(nodes)``, so :attr:`complete` reports success while nodes of the
+        current set are still missing. Observed as ``256/240 nodes``.
+
+        So the stored rows are filtered to the current set. What does not belong is dropped, not
+        carried: it is another design's evaluation, and the only thing it could do here is get
+        fitted.
+
+        Reading happens on rank 0, which is where the values live (see :meth:`_evaluate`); what
+        every rank needs is the keys (what is done, hence what each round evaluates) and the
+        output shapes (the template a tolerated failure is padded to), so those two are broadcast.
+        """
         rank = self.mpicomm.rank if self.mpicomm is not None else 0
         keys, shapes = [], {}
         if rank == 0 and self.checkpoint and os.path.exists(self.checkpoint):
             stored = dict(np.load(self.checkpoint, allow_pickle=True))
-            keys = [tuple(row) for row in stored['nodes']]
-            self.values = {name: list(stored[name]) for name in stored if name != 'nodes'}
+            wanted = {tuple(np.round(row, 12)) for row in self.nodes}
+            keep = [index for index, row in enumerate(stored['nodes'])
+                    if tuple(np.round(row, 12)) in wanted]
+            dropped = len(stored['nodes']) - len(keep)
+            if dropped:
+                self.logger.info(f'checkpoint holds {len(stored["nodes"])} nodes for a set of '
+                                 f'{len(self.nodes)}; {dropped} belong to another design and are '
+                                 f'ignored (delete {os.path.basename(self.checkpoint)} to retrain '
+                                 f'from scratch)')
+            keys = [tuple(stored['nodes'][index]) for index in keep]
+            self.values = {name: [stored[name][index] for index in keep]
+                           for name in stored if name != 'nodes'}
             shapes = {name: np.shape(value[0]) for name, value in self.values.items() if len(value)}
         if self.mpicomm is not None and self.mpicomm.size > 1:
             keys, shapes = self.mpicomm.bcast((keys, shapes), root=0)
@@ -165,7 +191,11 @@ class TrainingSet(object):
 
     @property
     def complete(self):
-        return self.done >= len(self.nodes)
+        # `==`, not `>=`: `done` counts rows that belong to this node set (`_load` filters them),
+        # so exceeding `len(nodes)` is not extra progress but a bug, and `>=` would report success
+        # while nodes of the current set were still missing -- which is how a stale checkpoint used
+        # to pass, at `256/240`.
+        return self.done == len(self.nodes)
 
     # ── run ────────────────────────────────────────────────────────────────────
     logger = logging.getLogger('TrainingSet')
@@ -179,6 +209,13 @@ class TrainingSet(object):
         finished = self._load()
         todo = [row for row in self.nodes if tuple(np.round(row, 12)) not in finished]
         rank = self.mpicomm.rank if self.mpicomm is not None else 0
+        if rank == 0:
+            # Where the resumable state lives, said once and in full. It is derived from the
+            # emulator's cache filename rather than chosen, so it is not obvious from the outside
+            # -- and it is what to delete when a run should start over.
+            self.logger.info(f'{len(todo)}/{len(self.nodes)} nodes to evaluate; '
+                             + (f'checkpointing to {self.checkpoint}' if self.checkpoint
+                                else 'no checkpoint (nothing is resumable)'))
         started, index = time.time(), 0
         saved_at, saved_time = self.done, time.time()
 

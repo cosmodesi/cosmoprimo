@@ -87,7 +87,7 @@ def test_extent_widens_where_a_bound_would_have_cut():
     space = correlated_space()
     sigma = np.sqrt(np.diag(space.covariance))
     far = {'a': (space.mean[0] - 9. * sigma[0], space.mean[0] + 9. * sigma[0])}
-    widened = Space(mean=space.mean, covariance=space.covariance, params=space.params, extent=far)
+    widened = Space(mean=space.mean, covariance=space.covariance, params=space.params).widen(**far)
     assert widened.limits['a'] == far['a']
     assert widened.limits['b'] == space.limits['b']
     # and it is not a bound, so nothing may shrink for it
@@ -96,19 +96,25 @@ def test_extent_widens_where_a_bound_would_have_cut():
     assert cut.limits['a'] == space.limits['a']         # a bound only ever tightens
 
 
-def test_map_records_a_bounding_box_as_extent_not_as_a_bound():
-    """The failure this exists for: the image of a railed chain stops short of
-    `mean +- nsigma sigma` on the railed axis, and read as a bound that pulled nsigma 3.75 -> 1.27
-    in all eight directions of a CMB w0waCDM box."""
+def test_map_boxes_an_introduced_parameter_by_its_image():
+    """An introduced parameter's box is the image's own bounding box, never `mean +- nsigma
+    sigma` of it -- three sigma about the mean of a skewed image reaches outside it, and measured
+    on `Omega_cdm = omega_cdm / h^2` that put a node at -0.053, where CLASS is non-finite.
+
+    A pass-through parameter keeps the source's box instead, so nothing re-measures an axis the
+    mapping never touched."""
     rng = np.random.default_rng(42)
     draws = rng.multivariate_normal(np.array([1., 2., 3.]), correlated_space().covariance,
                                     size=5000)
     space = Space(samples={name: draws[:, index] for index, name in enumerate('abc')})
     mapped = space.map(lambda point: {'a': point['a'], 'bc': point['b'] * point['c']})
-    assert mapped.bounds == {}
-    for name in mapped.params:
-        assert mapped.limits[name][0] <= mapped.samples[:, mapped.params.index(name)].min()
-        assert mapped.limits[name][1] >= mapped.samples[:, mapped.params.index(name)].max()
+    # 'a' passes through, so it keeps the source's box and is not re-measured
+    assert mapped.limits['a'] == space.limits['a']
+    assert 'a' not in mapped.bounds
+    # 'bc' is introduced, so its box is exactly the image's bounding box
+    column = mapped.samples[:, mapped.params.index('bc')]
+    assert mapped.limits['bc'] == pytest.approx((column.min(), column.max()))
+    assert mapped.bounds['bc'] == mapped.limits['bc']
 
 
 def test_marginal_keeps_bounds_bounds_and_derived_limits_derived():
@@ -150,7 +156,7 @@ def test_engine_shrinks_for_a_bound_and_not_for_a_measured_extent():
     assert engine(free).nsigma == pytest.approx(3.75)
 
     measured = Space(mean=space.mean, covariance=space.covariance, params=space.params,
-                     nsigma=3.75, extent=short)
+                     nsigma=3.75).clone(limits=short)
     assert engine(measured).nsigma == pytest.approx(3.75)
 
     declared = Space(mean=space.mean, covariance=space.covariance, params=space.params,
@@ -228,12 +234,130 @@ def test_bad_weights_raise():
         Space(samples=samples, weights=np.zeros(len(weights)))
 
 
-def test_a_bound_cuts_an_extent_even_with_no_covariance():
-    """The order -- `mean +- nsigma sigma`, widened to `extent`, cut by `bounds` -- has to hold
-    whether or not there is a covariance underneath it. With none, the box used to start from the
-    bounds and then be widened by the extent, which is their union: a declared bound simply was
-    not enforced."""
-    space = Space(bounds={'x': (0., 1.)}, extent={'x': (-1., 2.), 'y': (0., 3.)})
-    assert space.limits['x'] == (0., 1.)         # the bound cuts, and the extent does not undo it
-    assert space.limits['y'] == (0., 3.)         # an extent alone still defines its axis
-    assert space.bounds == {'x': (0., 1.)}
+def test_bound_cuts_and_widen_does_not_undo_it():
+    """`bound` and `widen` are opposite verbs and must stay so: bounding then widening leaves the
+    bound recorded, and widening is not a way to escape one. With no covariance underneath, the
+    box used to start from the bounds and then be unioned with the extent, which silently made a
+    declared bound unenforced."""
+    space = Space(bounds={'x': (0., 1.), 'y': (0., 3.)})
+    assert space.limits['x'] == (0., 1.) and space.bounds['x'] == (0., 1.)
+    widened = space.widen(x=(-1., 2.))
+    assert widened.limits['x'] == (-1., 2.)      # widen unions
+    assert widened.bounds['x'] == (0., 1.)       # and does not touch what was declared hard
+    assert widened.bound(x=(0., 1.)).limits['x'] == (0., 1.)   # a bound cuts it back
+
+
+# ── the derivation verbs, and the invariant they exist to keep ────────────────
+#
+# `__init__` is the only method that maps a range from the user's parameter into the expansion
+# variable. Everything below derives a new Space from an existing one's state, so a range that is
+# already expanded is never expanded twice -- `sqrt` twice, or the logit of a logit, which is nan.
+
+def test_uncorrelated_keeps_the_pool_and_drops_the_rotation():
+    """The wish `BackgroundEmulator` used to hand-roll in twenty lines: `Omega_b` and `Omega_cdm`
+    are both `omega / h^2`, so their correlation is the basis change talking, not the posterior.
+    A whitened grid follows that band and then refuses a point moving `omega_cdm` at fixed `h`.
+    The samples must survive, because `measure='samples'` draws its candidates from them."""
+    rng = np.random.default_rng(7)
+    raw = rng.normal(size=(4000, 3))
+    raw[:, 1] += 0.9 * raw[:, 0]                      # a strong, deliberate correlation
+    space = Space(samples={name: raw[:, index] for index, name in enumerate('abc')})
+    assert space.is_correlated()
+
+    plain = space.uncorrelated()
+    assert not plain.is_correlated()
+    assert plain.samples is not None and plain.samples.shape == space.samples.shape
+    assert plain.limits == space.limits                # the box is untouched
+    assert 'mean' not in plain.geometry() and 'covariance' not in plain.geometry()
+    assert 'mean' in space.geometry()                  # the engine would have whitened before
+
+
+def test_bound_and_widen_reject_unknown_names():
+    space = Space(bounds={'a': (0., 1.)})
+    for call in (lambda: space.bound(zz=(0., 1.)),
+                 lambda: space.widen(zz=(0., 1.))):
+        with pytest.raises(ValueError, match='unknown parameters'):
+            call()
+
+
+def test_bound_to_an_empty_range_is_an_error_not_an_empty_box():
+    space = Space(bounds={'a': (0., 1.)})
+    with pytest.raises(ValueError, match='empty range'):
+        space.bound(a=(2., 3.))
+
+
+def test_inverse_round_trips_forward():
+    """`forward` and `inverse` are the two halves of the one boundary between the user's
+    parameters and the expansion variable. Callers used to reach into `TRANSFORMS[spec][1]` by
+    hand for want of the second."""
+    space = Space(bounds={'m': (0.02, 0.4), 'a': (0., 1.)}, transforms={'m': 'sqrt'})
+    point = {'m': 0.09, 'a': 0.5}
+    expanded = space.forward(point)
+    assert expanded['m'] == pytest.approx(0.3)         # sqrt applied
+    assert expanded['a'] == pytest.approx(0.5)         # untransformed passes through
+    back = space.inverse(expanded)
+    assert back['m'] == pytest.approx(point['m'])
+    assert back['a'] == pytest.approx(point['a'])
+
+
+# ── map ───────────────────────────────────────────────────────────────────────
+
+def test_map_carries_the_source_transform_without_applying_it_twice():
+    """A pass-through arrives from the mapping already in the source's expansion variable, since
+    the points fed to it are the stored (transformed) samples. Re-applying its transform is the
+    'logit of a logit is nan' failure; dropping the declaration is worse still, leaving the engine
+    to read a transformed value as a raw one and place nodes accordingly."""
+    rng = np.random.default_rng(3)
+    space = Space(samples={'m': rng.uniform(0.05, 0.3, size=2000),
+                           'x': rng.normal(size=2000)}, transforms={'m': 'sqrt'})
+    mapped = space.map(lambda point: {'m': point['m'], 'y': 2. * point['x']})
+    assert mapped.transforms['m'] == 'sqrt'                     # carried
+    assert mapped.transforms['y'] is None
+    # still sqrt-space values, not sqrt(sqrt(...))
+    index = mapped.params.index('m')
+    assert mapped.samples[:, index].min() == pytest.approx(space.samples[:, space.params.index('m')].min())
+    assert np.all(np.isfinite(list(mapped.limits['m'])))
+
+
+def test_map_refuses_a_transform_on_a_pass_through_parameter():
+    """A pass-through keeps the source's limits, which are already expanded; declaring a different
+    transform for it would need them re-expressed, and applying one twice is silent."""
+    space = Space(bounds={'a': (0., 1.), 'b': (0., 1.)})
+    with pytest.raises(ValueError, match='pass-through'):
+        space.map(lambda point: {'a': point['a'], 'c': point['b']}, transforms={'a': 'sqrt'})
+
+
+def test_map_drops_points_outside_a_declared_transform_domain():
+    """One map that both renames and derives, with a logit on the derived name.
+
+    A uniform draw from a rectangle in (w0, wa) reaches w0 + wa >= 0, where `logit_w0pwa` is
+    undefined. Keeping those puts nan in the limits, which is why the caller used to need two
+    separate maps; they are outside the region the transform asserts, so they are dropped exactly
+    as `contains` drops a point outside the box."""
+    space = Space(bounds={'w0_fld': (-1.2, -0.8), 'wa_fld': (-0.6, 1.5), 'h': (0.6, 0.7)})
+    mapped = space.map(
+        lambda point: {'h': point['h'], 'w0_fld': point['w0_fld'],
+                       'w0pwa': point['w0_fld'] + point['wa_fld']},
+        transforms={'w0pwa': 'logit_w0pwa'})
+    assert np.all(np.isfinite(list(mapped.limits['w0pwa'])))
+    # every surviving point is inside the transform's domain, so the box is too
+    assert mapped.inverse({'w0pwa': mapped.limits['w0pwa'][1]})['w0pwa'] < 0.
+    assert mapped.limits['h'] == (0.6, 0.7)          # pass-through keeps the declared box
+    assert mapped.samples.shape[0] < 100000          # some were dropped
+
+
+def test_map_raises_when_no_point_is_in_the_transform_domain():
+    space = Space(bounds={'w0_fld': (0.5, 1.0), 'wa_fld': (0.5, 1.0)})
+    with pytest.raises(ValueError, match='outside the domain'):
+        space.map(lambda point: {'w0pwa': point['w0_fld'] + point['wa_fld']},
+                  transforms={'w0pwa': 'logit_w0pwa'})
+
+
+def test_map_does_not_reinflate_a_pass_through_axis():
+    """The bug `map_space` existed to patch: re-measuring a bounds-defined axis as
+    `mean +- nsigma sigma` of a uniform image widens it by 3/sqrt(12) ~ 1.7x, on axes the mapping
+    never touched. Measured in production, a `wa_fld` box of +-0.9 came back +-1.56 and training
+    died on a node at w0 + wa = 0.56."""
+    space = Space(bounds={'a': (-0.9, 0.9), 'b': (0.5, 1.5)})
+    mapped = space.map(lambda point: {'a': point['a'], 'ab': point['a'] * point['b']})
+    assert mapped.limits['a'] == (-0.9, 0.9)
