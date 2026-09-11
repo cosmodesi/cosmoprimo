@@ -212,7 +212,7 @@ class Emulator(object):
         """
         return self._engine(budget=budget, **kwargs).nodes()
 
-    def _engine(self, budget=None, **kwargs):
+    def _engine(self, budget=None, geometry=None, **kwargs):
         from .engines import ChebyshevEngine
         from .mlp import MLPEngine
         from .polynomial import PolynomialEngine
@@ -222,6 +222,11 @@ class Emulator(object):
                    for cls in (ChebyshevEngine, TaylorEngine, PolynomialEngine, MLPEngine)}
         subspace = self.training.marginal(self.params) \
             if len(self.params) < len(self.training.params) else self.training
+        # `geometry` overrides the space's own box: the engine that draws the extra nodes of an
+        # augmented training (see :meth:`_augmented_nodes`) is the same class with the same
+        # options over a narrower box, and nothing else about it differs.
+        if geometry is None:
+            geometry = subspace.geometry()
         options = {**self.options, **kwargs}
         # `budget` may arrive twice -- once at construction (kept in `options`) and once from
         # `train` -- and passing both to the engine is a TypeError. An explicit one wins; the
@@ -242,13 +247,77 @@ class Emulator(object):
         # engine that wants the samples themselves, so it asks for them by name.
         if cls.wants_samples and 'samples' not in options and subspace.samples is not None:
             options = {**options, 'samples': subspace.samples}
-        return cls(**subspace.geometry(), budget=budget, **options)
+        return cls(**geometry, budget=budget, **options)
+
+    def _augmented_nodes(self, augment, budget=None, **kwargs):
+        """The extra nodes of an augmented training: ``(n, nparams)`` in physical parameters.
+
+        ``augment`` is one specification or a list of them, each ``{'bounds': {name: (low,
+        high)}, 'nsamples': n, ...}``: the engine's own node draw (Sobol' through ``valid``, for
+        the scattered engines) over the training box cut down to ``bounds`` on the named axes,
+        the others left at their full range. Any other key overrides an engine option for that
+        draw alone -- ``seed`` most usefully; it defaults to the engine's seed plus the
+        specification's index so a sub-box is not the base draw rescaled.
+
+        Bounds are given in the user's parameters, like a :class:`Space`'s; they are mapped
+        through the axis transforms into the engine's expansion variable here, as the space
+        does for its own bounds. Only for a box-shaped space: a whitened engine draws on the
+        posterior's principal axes and a cut on one physical axis is not a face of that box.
+        """
+        specs = [augment] if isinstance(augment, dict) else list(augment or [])
+        if not specs:
+            return np.empty((0, len(self.params)))
+        from .space import _ranges
+        subspace = self.training.marginal(self.params) \
+            if len(self.params) < len(self.training.params) else self.training
+        geometry = subspace.geometry()
+        if 'covariance' in geometry:
+            raise ValueError('augment needs a box-shaped Space (bounds only); this one is '
+                             'whitened, so a cut on a physical axis would not be a face of its box')
+        extra = []
+        for index, spec in enumerate(specs):
+            spec = dict(spec)
+            bounds = dict(spec.pop('bounds', None) or {})
+            unknown = [name for name in bounds if name not in geometry['params']]
+            if unknown:
+                raise ValueError(f'augment bounds name {unknown}, not among the emulated '
+                                 f'parameters {geometry["params"]}')
+            narrowed = _ranges(bounds, geometry['transform'])
+            limits = dict(geometry['limits'])
+            for name, (low, high) in narrowed.items():
+                low, high = max(limits[name][0], low), min(limits[name][1], high)
+                if not low < high:
+                    raise ValueError(f'augment bounds for {name!r} ({bounds[name]}) do not overlap '
+                                     f'the training box {limits[name]}')
+                limits[name] = (low, high)
+            options = {**self.options, **kwargs, **spec}
+            options['seed'] = int(spec.get('seed', int(options.get('seed', 42)) + 1 + index))
+            engine = self._engine(budget=budget, geometry={**geometry, 'limits': limits,
+                                                           'bounds': {**geometry['bounds'], **narrowed}},
+                                  **{name: value for name, value in options.items() if name != 'budget'})
+            nodes = np.atleast_2d(np.asarray(engine.nodes(), dtype='f8'))
+            self.logger.info(f'augmenting with {len(nodes)} nodes over '
+                             + ', '.join(f'{name} [{low:.5g}, {high:.5g}]' for name, (low, high) in bounds.items()))
+            extra.append(nodes)
+        return np.concatenate(extra, axis=0)
 
     def train(self, engine=None, budget=None, checkpoint=None, chunk=None, batch_size=None,
               mpicomm=None, per_output=None, max_non_finite=0.05, method='auto',
               basis_budget=None, drop_non_finite=None, fit=True, rows_per_rank=None,
-              outlier_factor=None, outlier_factor_low=None, **kwargs):
+              outlier_factor=None, outlier_factor_low=None, augment=None, **kwargs):
         """Evaluate the calculator on the node set and fit.
+
+        ``augment`` adds nodes where accuracy is wanted most: one or several
+        ``{'bounds': {name: (low, high)}, 'nsamples': n}`` specifications, each a draw of the
+        engine's own kind (Sobol' through ``valid``) over the training box narrowed on the named
+        axes, appended to the base node set (see :meth:`_augmented_nodes`). A box-uniform draw
+        spends its nodes in proportion to volume, and the region a chain settles in is a small
+        fraction of it -- the near-GR corner of the EFT-of-dark-energy box held 28 of 65536 nodes
+        within 0.05 of GR, and the error there was 10x the box median (2026-09-10). Extra nodes
+        go through the same outlier cuts as the rest, which matters: 8% of the gated near-GR
+        draw was still absurd. The checkpoint keys nodes by coordinates, so a checkpoint of the
+        un-augmented training, copied under the augmented name, is resumed with only the extra
+        nodes to evaluate.
 
         Resumable and chunked: pass ``checkpoint`` and ``chunk='30min'`` for anything expensive,
         then rerun until it reports complete. A kill then costs one node, not the training.
@@ -296,10 +365,19 @@ class Emulator(object):
         # (the EFT-of-DE gate keeps 9%), five minutes of work that 255 other ranks would
         # otherwise repeat -- and a set every rank must agree on exactly is safer sent than
         # recomputed.
+        def draw():
+            nodes = np.atleast_2d(np.asarray(built.nodes(), dtype='f8'))
+            if augment:
+                # appended, not merged: the base draw keeps its order, so a checkpoint of the
+                # un-augmented training is a prefix of this one and resumes with the extra
+                # nodes alone
+                nodes = np.concatenate([nodes, self._augmented_nodes(augment, budget=budget, **kwargs)])
+            return nodes
+
         if mpicomm is not None and mpicomm.size > 1:
-            nodes = mpicomm.bcast(built.nodes() if mpicomm.rank == 0 else None, root=0)
+            nodes = mpicomm.bcast(draw() if mpicomm.rank == 0 else None, root=0)
         else:
-            nodes = built.nodes()
+            nodes = draw()
         whitened = getattr(built, 'whitened', False)
         self.logger.info(f'training on {len(nodes)} nodes over {len(self.params)} parameters'
                          + (f' (whitened, condition number {built.condition_number():.1f})'
