@@ -320,26 +320,6 @@ def theta_analytic(h, omega_b, omega_cdm, w0=-1., wa=0., m_ncdm=(0.06,), N_ur=2.
     return rs / jnp.trapezoid(one_over_a2H(a_dm), a_dm)
 
 
-def theta_background_kwargs(params, cosmo=None):
-    """``m_ncdm``, ``N_ur``, ``T_cmb`` for :func:`theta_analytic`.
-
-    From *params* when they are being varied, and only otherwise from *cosmo*. They must not be
-    captured as constants: any of them can be sampled, and a captured one would evaluate the
-    emulator's basis at the fiducial while the calculator used the sampled value -- the two bases
-    then disagree point by point, which is the failure that put an earlier box 5.3 sigma off its
-    posterior.
-    """
-    kwargs = {}
-    for name in ('m_ncdm', 'N_ur', 'T_cmb'):
-        if name in params:
-            kwargs[name] = params[name]
-        elif cosmo is not None:
-            kwargs[name] = cosmo[name]
-        else:
-            raise ValueError(f'the analytic theta basis needs {name}, which is neither varied '
-                             f'nor available from a cosmology')
-    return kwargs
-
 
 @jit(static_argnames=('iterations', 'na'))
 def solve_theta_analytic(target, omega_b, omega_cdm, limits=(0.2, 2.5), iterations=44, na=2048,
