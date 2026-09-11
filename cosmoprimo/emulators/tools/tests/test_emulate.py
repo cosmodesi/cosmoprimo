@@ -247,6 +247,52 @@ def test_train_can_stop_after_the_evaluations(tmp_path):
     assert emu.trained and len(calls) == MLP['nsamples']
 
 
+def test_train_can_augment_the_node_set(tmp_path):
+    """`augment`: extra nodes of the engine's own kind over a sub-box, through the same `valid`
+    predicate, appended AFTER the base draw -- so a checkpoint of the un-augmented training is
+    a prefix of the augmented one and resumes with the extra nodes alone."""
+    calls = []
+
+    def counting(params):
+        calls.append(params['tilt'])
+        return target(params)
+
+    def valid(amplitude, tilt):
+        return tilt > 0.
+
+    checkpoint = str(tmp_path / 'nodes.ckpt.npz')
+    emu = Emulator(counting, space())
+    emu.train(**{**MLP, 'checkpoint': checkpoint, 'fit': False, 'valid': valid})
+    base = len(calls)
+    assert base == MLP['nsamples']
+    augment = {'bounds': {'tilt': (0.5, 0.7)}, 'nsamples': 32}
+    emu.train(**{**MLP, 'checkpoint': checkpoint, 'valid': valid, 'augment': augment})
+    # only the extra nodes were evaluated, every one inside the sub-box (and the gate)
+    assert len(calls) == base + 32
+    assert all(0.5 <= tilt <= 0.7 for tilt in calls[base:])
+    stored = np.load(checkpoint)['nodes']
+    assert stored.shape == (base + 32, 2)
+    assert np.all((stored[base:, 1] >= 0.5) & (stored[base:, 1] <= 0.7))
+    assert emu.trained
+    # a list of specifications draws each with its own seed; the sub-box draw is not the base
+    # draw rescaled
+    two = emu._augmented_nodes([augment, {'bounds': {'amplitude': (2.5, 3.)}, 'nsamples': 8}],
+                               valid=valid, nsamples=MLP['nsamples'])
+    assert two.shape == (40, 2) and np.all(two[32:, 0] >= 2.5) and np.all(two[:, 1] > 0.)
+    assert not np.allclose(two[:32, 0], stored[:32, 0])
+    # loud on a name outside the box, on bounds that miss it, and on a whitened space
+    with pytest.raises(ValueError, match='not among'):
+        emu._augmented_nodes({'bounds': {'slope': (0., 1.)}, 'nsamples': 4})
+    with pytest.raises(ValueError, match='overlap'):
+        emu._augmented_nodes({'bounds': {'tilt': (5., 6.)}, 'nsamples': 4})
+    rng = np.random.default_rng(0)
+    chain = {'amplitude': rng.normal(2., 0.2, 500), 'tilt': rng.normal(0.3, 0.1, 500)}
+    chain['tilt'] += 0.5 * (chain['amplitude'] - 2.)
+    whitened = Emulator(target, Space(samples=chain))
+    with pytest.raises(ValueError, match='whitened'):
+        whitened._augmented_nodes({'bounds': {'tilt': (0.2, 0.4)}, 'nsamples': 4})
+
+
 # ── saving ────────────────────────────────────────────────────────────────────
 
 def test_mlp_round_trips_through_a_file(tmp_path):
