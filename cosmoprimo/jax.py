@@ -115,8 +115,59 @@ except ImportError:
     pass
 
 
-def _interpax_convert_method(k):
-    return  {1: 'linear', 3: 'cubic2'}[k]
+#: The interpax method each spline order means, and the names a caller may pass as an order
+#: instead. Both cubics are order 3; ``cubic2`` is the C2 spline, ``cubic`` the C1 one -- see
+#: :func:`_interpax_method` for what separates them.
+_SPLINE_METHODS = {'linear': 1, 'cubic': 3, 'cubic2': 3}
+_SPLINE_ORDERS = {1: 'linear', 3: 'cubic2'}
+
+
+def _supported_order(k, size):
+    """The spline order *size* nodes can carry, which is not always the one asked for.
+
+    A cubic through fewer than four nodes is not a cubic: interpax builds it anyway and hands the
+    solver a tridiagonal system smaller than its stencil, which numpy tolerates and a GPU does
+    not -- `jaxlib/gpu/sparse_kernels.cc: operation kernel(...) failed`, measured on an A100 for a
+    2-node grid where a 5-node one is fine, in the 1-D interpolator and the 2-D one alike. Two
+    nodes is an ordinary axis, not a corner: a tracer split into two caps gives two effective
+    redshifts.
+
+    So the order drops to what the nodes support, the way scipy's splines have always done, and
+    the failure becomes a slightly coarser interpolation instead of a crash on one platform.
+
+    *k* is an order, or one of :data:`_SPLINE_METHODS` naming the method itself.
+    """
+    if isinstance(k, str) and k not in _SPLINE_METHODS:
+        raise ValueError(f'unknown spline {k!r}; available {sorted(_SPLINE_METHODS)} '
+                         f'or an order in {sorted(_SPLINE_ORDERS)}')
+    order = _SPLINE_METHODS[k] if isinstance(k, str) else int(k)
+    return 1 if size is not None and size < order + 1 else order
+
+
+def _interpax_method(k, size=None):
+    """The interpax method for *k*, lowered to ``linear`` when *size* nodes cannot carry it.
+
+    *k* is an order, or one of :data:`_SPLINE_METHODS` for a caller who wants to name the method:
+    both of interpax's cubics are order 3, and which one is a cost decision as much as an accuracy
+    one. ``cubic2``, what order 3 means, is the C2 spline: it solves a tridiagonal system along
+    every axis, and on a GPU that solve is what an evaluation is made of, since cuSPARSE launches a
+    kernel per system. ``cubic`` estimates the derivatives locally instead and solves nothing.
+
+    Which is more accurate depends on the grid, so neither is right everywhere. On a spectrum over
+    (516 k, 8 z) read back over 0.002 < k < 0.5 h/Mpc and 0.2 < z < 2.6 against CLASS, ``cubic``
+    wins on both counts -- worst relative error 7.7e-4 against 1.4e-3, and 0.28 ms against 10.5 --
+    because local estimates do better on the short axis, which dominates the residual there. On the
+    background's own grids it loses: :class:`~cosmoprimo.cosmology.DefaultBackground` with
+    ``m_ncdm = 0.4`` reproduces its numpy self to 1.4e-4 in comoving distance with ``cubic``
+    against 1e-6 or better with ``cubic2``. So order 3 stays the C2 spline and a caller whose grid
+    is fine in every direction asks for ``cubic`` by name.
+
+    Only the jax backend makes the distinction: scipy's cubic is C2 either way.
+    """
+    method = k if isinstance(k, str) else _SPLINE_ORDERS[int(k)]
+    if _SPLINE_METHODS[method] > _supported_order(k, size):
+        method = 'linear'
+    return method
 
 
 def _scipy_convert_method(k):
@@ -178,7 +229,7 @@ class Interpolator1D(object):
             # jit/vmap.
             self._nan_columns = numpy.isnan(fun).any(axis=0)
             fun = numpy.where(numpy.isnan(fun), 0., fun)
-            self._spline = _JAXInterpolator1D(x, fun, method=_interpax_convert_method(k), extrap=self.extrap, period=None)
+            self._spline = _JAXInterpolator1D(x, fun, method=_interpax_method(k, x.size), extrap=self.extrap, period=None)
         else:
             from scipy import interpolate
             self._mask_nan = ~np.isnan(fun).all(axis=0)  # hack: scipy returns NaN for all shape[1] if any is NaN
@@ -197,7 +248,7 @@ class Interpolator1D(object):
                         def _spline(x, dx=0):
                             return spline(x, nu=dx)
                 else:
-                    _spline = interpolate.interp1d(x, fun, kind=_scipy_convert_method(k), axis=0, bounds_error=False, fill_value='extrapolate' if self.extrap else numpy.nan, assume_sorted=True)
+                    _spline = interpolate.interp1d(x, fun, kind=_scipy_convert_method(_supported_order(k, x.size)), axis=0, bounds_error=False, fill_value='extrapolate' if self.extrap else numpy.nan, assume_sorted=True)
 
             self._spline = _spline
 
@@ -258,14 +309,38 @@ class Interpolator2D(object):
         if self.interp_y == 'log': y = self._np.log10(y)
         if self.interp_fun == 'log': fun = self._np.log10(fun)
         self.extrap = bool(extrap)
+        self._nan = None
         if self._use_jax:
-            methodx = _interpax_convert_method(kx)
-            methody = _interpax_convert_method(ky)
-            assert methody == methodx, 'interpax supports ky = ky only'
+            # interpax takes one method for the pair, so the axes cannot differ: the lesser of
+            # the two is used, and a y axis too short for a cubic takes x down with it. The
+            # alternative is the degenerate solve `_supported_order` exists to avoid, and the
+            # caller's remedy is to give the short axis enough nodes rather than to accept a
+            # linear interpolation along the long one.
+            method = min((_interpax_method(kx, x.size), _interpax_method(ky, y.size)),
+                         key=lambda name: (_SPLINE_METHODS[name], name != 'cubic'))
+            methodx = methody = method
+            # The hazard :class:`Interpolator1D` sanitises, in two dimensions. There the cubic
+            # solve is per column and a NaN costs only its own column; here the tensor-product
+            # solve couples both axes, so one NaN anywhere makes the whole surface NaN -- and
+            # worse, it does not come back as one: interpax's solve carries a runtime check that
+            # RAISES ("a linear solver received non-finite (NaN or inf) input"), which turns a
+            # point a sampler should simply reject into a dead run.
+            #
+            # So the same treatment: sanitise what the solve sees and put the NaN back on the way
+            # out, traceably. Whole-surface rather than column-wise, because that is what the 2D
+            # solve makes of it. Checked after the log, which is what makes a non-positive
+            # spectrum -- an extrapolation that has gone wrong -- take the same path rather than
+            # producing a silent NaN inside the solve.
+            self._nan = numpy.isnan(fun).any()
+            fun = numpy.where(numpy.isnan(fun), 0., fun)
             self._spline = _JAXInterpolator2D(x, y, fun, method=methodx, extrap=self.extrap, period=None)
         else:
             from scipy.interpolate import RectBivariateSpline
-            self._spline = RectBivariateSpline(x, y, fun, kx=kx, ky=ky, s=0)
+            # per axis here, unlike interpax above: scipy takes an order for each, so a short y
+            # axis costs nothing along x. Without it a two-node axis reaches FITPACK, which
+            # refuses it ("(my>ky) failed for hidden my") rather than lowering the order.
+            self._spline = RectBivariateSpline(x, y, fun, kx=_supported_order(kx, x.size),
+                                               ky=_supported_order(ky, y.size), s=0)
 
     def __call__(self, x, y, grid=True, bounds_error=False):
         from .utils import _bcast_dtype
@@ -296,12 +371,16 @@ class Interpolator2D(object):
             else:
                 tmp = self._spline(x, y, grid=False)
         if self.interp_fun == 'log': tmp = 10**tmp
+        if self._nan is not None:
+            # what was taken out of the solve, put back: see the constructor
+            tmp = self._np.where(self._nan, self._np.nan, tmp)
         toret = tmp if self.extrap else self._np.where(mask_x, tmp, self._np.nan)
         return toret.astype(dtype).reshape(toret_shape)
 
     def tree_flatten(self):
         # WARNING: does not preserve key orders in _params
-        children = (self._spline, self.xmin, self.xmax, self.ymin, self.ymax)
+        # `_nan` is a child, not aux data: it may be a traced boolean, and aux data is static
+        children = (self._spline, self.xmin, self.xmax, self.ymin, self.ymax, self._nan)
         aux_data = {name: getattr(self, name) for name in ['interp_x', 'interp_y', 'interp_fun', '_np', '_use_jax', 'extrap'] if hasattr(self, name)}
         return children, aux_data
 
@@ -309,7 +388,7 @@ class Interpolator2D(object):
     def tree_unflatten(cls, aux_data, children):
         new = cls.__new__(cls)
         new.__dict__.update(aux_data)
-        new._spline, new.xmin, new.xmax, new.ymin, new.ymax = children
+        new._spline, new.xmin, new.xmax, new.ymin, new.ymax, new._nan = children
         return new
 
 

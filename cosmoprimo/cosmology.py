@@ -13,6 +13,30 @@ from . import utils, constants
 
 _Sections = ['Background', 'Thermodynamics', 'Primordial', 'Perturbations', 'Transfer', 'Harmonic', 'Fourier']
 
+#: Newton steps allowed to :meth:`Cosmology._compile_params`'s neutrino mass solve. The iteration
+#: tests convergence inside a fixed-length loop body (so that it stays reverse-mode
+#: differentiable), which means it always runs its full length: every step costs, whether it is
+#: needed or not, and on a GPU each one is a kernel launch. Measured over
+#: 1e-5 <= omega_ncdm <= 0.1 and 0.716 <= T_ncdm/T_cmb <= 1, the mass is converged to 1e-15 in
+#: 2 to 4 steps and the answer at any cut-off above 4 is identical to the last bit. The exception
+#: is a nearly relativistic species (omega_ncdm <~ 1e-5 at T_ncdm = T_cmb), where the absolute
+#: 1e-15 tolerance is unreachable and the iterate wanders indefinitely -- there no bound converges,
+#: 1000 steps included, so a large one buys nothing. It was 1000, which cost 31 ms per evaluation
+#: on an A100.
+_NCDM_SOLVE_MAXITER = 16
+
+#: How far back :meth:`DefaultBackground.growth_factor` integrates, as a redshift. The growth
+#: equation is solved on a fixed grid in :math:`\ln a`, so this is where that grid starts, and
+#: above it the growth is nan while the distances are still fine -- which is worse than a coarser
+#: solve, since anything dividing one by the other then has a nan region rather than a slightly
+#: less accurate one. Starting deeper is more accurate where it starts, since `D = D' = a` is
+#: imposed there: against CLASS at z = 400, the growth factor is 4.2e-2 off starting at 402,
+#: 3.4e-2 at 500 and 2.1e-2 at 1000, and the growth rate 7.8e-2, 5.8e-2 and 2.3e-2. Below
+#: z ~ 100 the three agree (1.2e-2 at z = 100, 7e-4 at z = 0.5, exact at z = 0), so the choice is
+#: about the far end alone -- where what a background emulator wants is a divisor that is finite
+#: and smooth rather than one that is accurate, since the fit takes the ratio either way.
+_GROWTH_ZMAX = 500.
+
 
 class class_or_instancemethod(classmethod):
     def __get__(self, instance, type_):
@@ -940,6 +964,8 @@ class Cosmology(BaseCosmoParams):
 
         from .jax import use_jax, exception_or_nan
 
+        from .jax import for_cond_loop_numpy
+
         if use_jax(*params.values()):
             from jax import numpy as jnp
             from .jax import array_types as jax_array_types
@@ -969,6 +995,11 @@ class Cosmology(BaseCosmoParams):
             set_alias(name, cls._alias_parameters.get(name, ()))
 
         h = params['h']
+        # the physical densities as given, kept alongside the reduced ones: the neutrino mass solve
+        # below wants a density that does not carry h, and `Omega * h**2` is not that -- it is a
+        # round trip through a traced h, so the solve ends up depending on a parameter its answer
+        # does not, and jax cannot fold a loop whose input is traced
+        input_omegas = {}
         for name, value in list(params.items()):
             if name.startswith('omega'):
                 omega = params.pop(name)
@@ -976,6 +1007,7 @@ class Cosmology(BaseCosmoParams):
                 params_name = name.replace('omega', 'Omega')
                 assert params_name not in params, 'found both {} and {}, must be added to _conflict_parameters'.format(name, params_name)
                 params[params_name] = Omega
+                input_omegas[params_name] = omega
 
         for name, aliases in cls._alias_parameters.items():
             if name in omegas: continue
@@ -1024,7 +1056,7 @@ class Cosmology(BaseCosmoParams):
                 m_ncdm = []
                 h = params['h']
 
-                def solve_newton(omega_ncdm, m, T_eff):
+                def solve_newton(omega_ncdm, m, T_eff, loop):
                     # m is a starting guess
                     omega_check = compute_ncdm_momenta(T_eff, m, z=0, out='rho') / constants.rho_crit_over_Msunph_per_Mpcph3
 
@@ -1037,15 +1069,38 @@ class Cosmology(BaseCosmoParams):
 
                     def cond_fun(i, args):
                         m, omega_check = args
-                        return jnp.abs(omega_ncdm - omega_check) > 1e-15
+                        # dispatching, since the solve runs in numpy whenever its own inputs are
+                        # numpy, whatever the rest of the cosmology is doing
+                        xnp = numpy_jax(omega_ncdm, omega_check)
+                        return xnp.abs(omega_ncdm - omega_check) > 1e-15
 
-                    m, omega_check = for_cond_loop(0, 1000, cond_fun, body_fun, (m, omega_check))
+                    m, omega_check = loop(0, _NCDM_SOLVE_MAXITER, cond_fun, body_fun, (m, omega_check))
 
                     return m
 
-                for Omega, T in zip(Omega_ncdm, T_ncdm_over_cmb):
-                    # print(m, Omega * h**2 * 93.14)
-                    m_ncdm.append(cond(Omega == 0., lambda: 0., lambda: solve_newton(Omega * h**2, Omega * h**2 * 93.14, params['T_cmb'] * T)))
+                # the physical density as the caller gave it, one entry per species however it was
+                # spelled (`omega_ncdm=0.0006` and `omega_ncdm=[0.0006]` are the same cosmology).
+                # `Omega_ncdm * h**2` would be the same number, but it is a round trip through a
+                # traced `h`, and that is what used to put this solve -- whose answer does not
+                # depend on `h` at all -- inside the trace at every evaluation.
+                omega_ncdm = input_omegas.get('Omega_ncdm', None)
+                if omega_ncdm is not None:
+                    omega_ncdm = (jnp if use_jax(omega_ncdm) else np).ravel(omega_ncdm)
+                for index, (Omega, T) in enumerate(zip(Omega_ncdm, T_ncdm_over_cmb)):
+                    omega = Omega * h**2 if omega_ncdm is None else omega_ncdm[index]
+                    T_eff = params['T_cmb'] * T
+                    if use_jax(omega, T_eff, tracer_only=True):
+                        m_ncdm.append(cond(omega == 0., lambda: 0.,
+                                           lambda: solve_newton(omega, omega * 93.14, T_eff,
+                                                                for_cond_loop)))
+                    else:
+                        # nothing the solve reads is traced, so it is arithmetic done once at
+                        # tracing time and no loop reaches the trace: on a GPU that is the
+                        # difference between 16 kernel launches per evaluation and none. The
+                        # numpy loop also stops as soon as it has converged, which is 2 to 4 steps.
+                        m_ncdm.append(0. if omega == 0. else
+                                      solve_newton(omega, omega * 93.14, T_eff,
+                                                   for_cond_loop_numpy))
 
                 if single_ncdm: m_ncdm = m_ncdm[0]
 
@@ -2105,7 +2160,9 @@ class DefaultBackground(BaseBackground):
                 z = self._np.exp(- eta) - 1.
                 return 3. / 2. * Omega_mass(z)
 
-            eta = np.linspace(-6., 0., 201)
+            # a hair beyond, so that `_GROWTH_ZMAX` itself is inside the solved range rather
+            # than exactly on its edge, where rounding puts it out and returns a nan
+            eta = np.linspace(-np.log(1. + _GROWTH_ZMAX) - 1e-6, 0., 201)
             zc = self._np.exp(- eta) - 1.
             Df_p0 = Df0 = self._np.exp(eta[0])
 

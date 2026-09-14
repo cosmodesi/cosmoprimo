@@ -337,6 +337,25 @@ def test_nan():
     assert np.isnan(interp(k, z=1.)).all()
 
 
+def test_too_few_nodes_for_a_cubic():
+    """A cubic spline needs four nodes; with fewer, the interpolator falls back to linear.
+
+    An emulated cosmology reaches this: a redshift axis is as short as the requirement asks for,
+    and two z nodes used to send a cubic build into the solver, which on a GPU took cuSPARSE's
+    tridiagonal kernel down (jaxlib/gpu/sparse_kernels.cc, no python-level error).
+    """
+    for size in [2, 3, 4]:
+        x = np.linspace(0.1, 0.4, size)
+        y = 1. + 2. * x
+        interp = PowerSpectrumInterpolator1D(x, y, interp_order_k=3, extrap_kmin=0.05, extrap_kmax=1.)
+        assert np.allclose(interp(x), y, rtol=1e-9)
+        z = np.linspace(0., 1., size)
+        pk = y[:, None] * (1. + z)[None, :]
+        interp2d = PowerSpectrumInterpolator2D(x, z, pk, interp_order_k=3, interp_order_z=3,
+                                               extrap_kmin=0.05, extrap_kmax=1.)
+        assert np.allclose(interp2d(x, z), pk, rtol=1e-9)
+
+
 if __name__ == '__main__':
 
     test_power_spectrum()
@@ -345,3 +364,4 @@ if __name__ == '__main__':
     test_extrap_2d(plot=False)
     test_jax()
     test_nan()
+    test_too_few_nodes_for_a_cubic()
