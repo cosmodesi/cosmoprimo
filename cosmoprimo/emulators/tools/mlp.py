@@ -117,7 +117,7 @@ class MLPEngine(BaseEngine):
                  nhidden=(64, 64, 64), activation='silu', epochs=2000, patience=200,
                  learning_rate=1e-3, batch_size=64, validation_frac=0.1, optimizer='adam',
                  seed=42, valid=None, candidates=None, output_transform='none', lr_decay=1.,
-                 asinh_quantile=0.5, **kwargs):
+                 asinh_quantile=0.5, fit_seed=None, loss='mse', huber_delta=1., **kwargs):
         super().__init__(params, limits, **kwargs)
         if output_transform not in ('none', 'asinh'):
             raise ValueError(f"output_transform must be 'none' or 'asinh'; got {output_transform!r}")
@@ -140,6 +140,27 @@ class MLPEngine(BaseEngine):
             raise ValueError(f'lr_decay is the ratio of the final to the initial learning rate, in (0, 1]; got {lr_decay}')
         self.validation_frac, self.optimizer = float(validation_frac), str(optimizer)
         self.seed = int(seed)
+        # `seed` draws the nodes AND seeds the fit (the validation split, the initial weights,
+        # the batch order), so changing it changes the training set. `fit_seed` reseeds the fit
+        # alone: the same nodes, refitted from different weights -- which is how the fit-to-fit
+        # variance of a recipe is measured, and without that number no comparison between two
+        # recipes fitted once each means anything (two 4x512 fits of the EFT-of-DE emulator on
+        # node sets differing by 3% landed 2-5x apart in every output group, 2026-09-12).
+        self.fit_seed = None if fit_seed is None else int(fit_seed)
+        # The training loss, on the standardised (and asinh-transformed, if asked) targets.
+        # 'mse' is the plain mean square. 'huber' is quadratic up to `huber_delta` standard
+        # deviations of residual and linear beyond, so a node the network cannot fit stops
+        # dominating the gradient. Measured on the EFT-of-dark-energy emulator (2026-09-12, two
+        # seeds of one 4x512 recipe): the worst 1% of the held-out nodes carried 60-99% of each
+        # network's squared error, the held-out rms was 3-4x the training rms, and the median
+        # error of the sigma8 network differed 5x between the seeds -- the fit is steered by a
+        # tail of wild models (large c_M, w0 > 0) at the expense of the bulk, and which way it
+        # is steered is a draw.
+        if loss not in ('mse', 'huber'):
+            raise ValueError(f"loss must be 'mse' or 'huber'; got {loss!r}")
+        self.loss, self.huber_delta = str(loss), float(huber_delta)
+        if not self.huber_delta > 0.:
+            raise ValueError(f'huber_delta must be positive; got {huber_delta}')
         self.layers = None
         self._output_mean = self._output_scale = None
 
@@ -251,7 +272,8 @@ class MLPEngine(BaseEngine):
         self._output_mean, self._output_scale = self._standardise(outputs)
         targets = (outputs - self._output_mean) / self._output_scale
 
-        rng = np.random.default_rng(self.seed)
+        seed = self.seed if self.fit_seed is None else self.fit_seed
+        rng = np.random.default_rng(seed)
         order = rng.permutation(len(inputs))
         nvalidation = max(int(len(inputs) * self.validation_frac + 0.5), 1)
         if nvalidation >= len(inputs):
@@ -260,7 +282,7 @@ class MLPEngine(BaseEngine):
         validation, training = order[:nvalidation], order[nvalidation:]
 
         widths = (internal.shape[1],) + self.nhidden + (targets.shape[1],)
-        key = jax.random.PRNGKey(self.seed)
+        key = jax.random.PRNGKey(seed)
         layers = []
         for index in range(len(widths) - 1):
             key, subkey = jax.random.split(key)
@@ -278,8 +300,17 @@ class MLPEngine(BaseEngine):
             weight, bias = layers[-1]
             return x @ weight + bias
 
+        loss_name, delta = self.loss, self.huber_delta
+
         def loss_fn(layers, x, y):
-            return jnp.mean((forward(layers, x) - y)**2)
+            residual = forward(layers, x) - y
+            if loss_name == 'huber':
+                # 0.5 r^2 inside |r| <= delta, delta (|r| - 0.5 delta) outside; scaled by 2 so it
+                # coincides with the mean square where every residual is small
+                magnitude = jnp.abs(residual)
+                quadratic = jnp.minimum(magnitude, delta)
+                return jnp.mean(quadratic**2 + 2. * delta * (magnitude - quadratic))
+            return jnp.mean(residual**2)
 
         x_train = jnp.asarray(internal[training])
         y_train = jnp.asarray(targets[training])
@@ -314,7 +345,10 @@ class MLPEngine(BaseEngine):
                 return (optax.apply_updates(layers, updates), state), None
 
             (layers, state), _ = jax.lax.scan(step, (layers, state), order)
-            return layers, state, loss_fn(layers, x_validation, y_validation)
+            # the validation metric is the mean square whatever the training loss, so that the
+            # early stopping, the best-state choice and the logged number mean the same thing
+            # across recipes
+            return layers, state, jnp.mean((forward(layers, x_validation) - y_validation)**2)
 
         best, best_loss, waited = layers, np.inf, 0
         iepoch = -1
@@ -395,6 +429,8 @@ class MLPEngine(BaseEngine):
                       'patience': self.patience, 'learning_rate': self.learning_rate,
                       'batch_size': self.batch_size, 'validation_frac': self.validation_frac,
                       'optimizer': self.optimizer, 'seed': self.seed, 'lr_decay': self.lr_decay,
+                      'fit_seed': -1 if self.fit_seed is None else self.fit_seed,
+                      'loss': self.loss, 'huber_delta': self.huber_delta,
                       'output_transform': self.output_transform, 'asinh_quantile': self.asinh_quantile,
                       'asinh_scale': self._asinh_scale if self._asinh_scale is not None else np.zeros(0),
                       'output_mean': self._output_mean, 'output_scale': self._output_scale,
@@ -412,6 +448,9 @@ class MLPEngine(BaseEngine):
             setattr(new, name, state[name])
         new.nhidden = tuple(new.nhidden)
         new.lr_decay = float(state.get('lr_decay', 1.))
+        fit_seed = int(state.get('fit_seed', -1))
+        new.fit_seed = None if fit_seed < 0 else fit_seed
+        new.loss, new.huber_delta = str(state.get('loss', 'mse')), float(state.get('huber_delta', 1.))
         new.output_transform = str(state.get('output_transform', 'none'))
         new.asinh_quantile = float(state.get('asinh_quantile', 0.5))
         scale = state.get('asinh_scale', None)

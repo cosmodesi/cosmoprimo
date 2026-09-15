@@ -1012,8 +1012,21 @@ def _verdict(s, M2_ini, alpha_K, ic_tolerance=None):
         tol = IC_TOLERANCE if ic_tolerance is None else ic_tolerance
         ok = xnp.logical_and(ok, s['x_growth'] <= 3. + tol)
     if 'min_mu2_qs' in s:
-        # the quasi-static pole test (see _qs_mu2): not one of mochi_class' own
-        ok = xnp.logical_and(ok, s['min_mu2_qs'] > 0.)
+        # The quasi-static pole test (see _qs_mu2): not one of mochi_class' own. `mu2 > 0` is
+        # the criterion where the scalar exists; it must not reject the one point where it does
+        # not. At exact GR on a LambdaCDM background (propto_omega with c_b = c_m = c_t = 0 and
+        # w = -1: alpha_B = alpha_M = alpha_T = 0 and X_de = 0) every term of cs2num and of mu2
+        # is an exact zero, so the scan returns min_cs2num = 0 and min_mu2_qs = -0.0, and the
+        # strict test refused GR itself -- the truth of every LambdaCDM mock -- while accepting
+        # c_b = 1e-3 (measured 2026-09-12). There is no pole there: h3 = cs2num / (a^2 H^2 mu2) is
+        # 0/0, which mochiclassy.Background._over_mu2 defines as h3 = h5 = 0 exactly where mu2 == 0,
+        # i.e. the GR source mu = h1; the live pt and the exact pipeline agree at that point to
+        # 0.2% in logL. A genuine crossing of mu2 through zero, the case the test exists for,
+        # has cs2num > 0 there and a strictly negative minimum, and is still refused. Exact
+        # zeros, not a tolerance: the degenerate case produces them by construction (products of
+        # exact zeros), and -0.0 == 0. is True.
+        mu2, cs2 = s['min_mu2_qs'], s['min_cs2num']
+        ok = xnp.logical_and(ok, xnp.logical_or(mu2 > 0., xnp.logical_and(mu2 == 0., cs2 == 0.)))
     return ok
 
 

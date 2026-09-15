@@ -36,6 +36,13 @@ world, and this layer has no notion of one. :meth:`predict` is what it offers.
 ``transform`` is applied after training, to the collected values, never before they are stored:
 the checkpoint holds physical outputs, so changing what you divide out costs a refit, not another
 run of the Boltzmann code.
+
+A fourth hook, :meth:`Emulator.select_node_params`, says which of the exact parameters the NODES
+should vary anyway. By default an exact parameter is held at the centre of the box while the nodes
+are evaluated; a subclass may instead have it sampled alongside the expanded ones, so that a node
+set (and its checkpoint) drawn before the parameter was made exact is reused as it stands -- the
+transform divides the parameter out of every node, and the fit sees the same nodes projected onto
+fewer parameters.
 """
 
 import logging
@@ -127,6 +134,15 @@ class Emulator(object):
         if not expanded:
             raise ValueError(f'{type(self).__name__}.select_params left nothing to expand')
         self.params = expanded
+        # Which parameters the NODES vary. The expanded ones, unless a subclass asks for some of
+        # the exact parameters to be sampled as well (`select_node_params`): those are then node
+        # coordinates the fit does not see -- `transform` has taken them out.
+        sampled = list(self.select_node_params(names))
+        unknown = [name for name in sampled if name not in names]
+        if unknown:
+            raise ValueError(f'{type(self).__name__}.select_node_params returned {unknown}, not in '
+                             f'the training space ({names})')
+        self.node_params = self._node_params(names, expanded, sampled)
 
     # ── the hooks: override any, ignore the rest ───────────────────────────────
     def training_space(self):
@@ -174,6 +190,47 @@ class Emulator(object):
         """
         return list(names)
 
+    def select_node_params(self, names):
+        """Which of the EXACT parameters the nodes should vary anyway. None, by default.
+
+        A parameter left out of :meth:`select_params` is normally held at the centre of the box
+        while the nodes are evaluated: its dependence is divided out by :meth:`transform`, so
+        sampling it would only spend nodes on a direction the fit never sees. Returning some of
+        those parameters here samples them at the nodes regardless. The transform still takes them
+        out, node by node, and the fit is made over the node set PROJECTED onto the expanded
+        parameters -- as many nodes as before, over fewer inputs.
+
+        Two reasons to want that. A node set drawn while the parameter was still expanded -- and
+        the checkpoint holding its evaluations -- is then reused as it stands when the parameter is
+        later made exact, instead of being evaluated again with the parameter pinned: the
+        checkpoint matches nodes by their coordinates, and the coordinates are unchanged. And it is
+        a check of the transform itself: a dependence the transform failed to remove is, in the
+        projected set, a scatter no fit over the remaining parameters can absorb, and shows in the
+        fit residual rather than silently in every prediction.
+
+        ``names`` are the training parameters, as :meth:`select_params` receives them. The names
+        returned must be among them and not among the expanded ones (an expanded parameter is
+        sampled anyway).
+        """
+        return []
+
+    @staticmethod
+    def _node_params(names, expanded, sampled):
+        """The node coordinates, in a FIXED order: the training order whenever an exact parameter
+        is sampled, the expanded order otherwise.
+
+        The order is the column order of the node array, and so of every checkpoint, so it must not
+        depend on how a subclass happens to list its selections: a node set drawn when every
+        parameter was expanded (``expanded == names``) has to come out identical once one of them
+        becomes exact-but-sampled, or the whole point of sampling it is lost. Without a sampled
+        parameter the expanded order is kept as it was, so files and checkpoints written before
+        this hook existed are unaffected.
+        """
+        if not sampled:
+            return list(expanded)
+        wanted = set(expanded) | set(sampled)
+        return [name for name in names if name in wanted]
+
     def transform(self, values, params):
         """Applied to the target's output before fitting. Identity by default."""
         return values
@@ -210,9 +267,9 @@ class Emulator(object):
         evaluation already made; the Taylor engine's stencils are not, so there the order is
         worth choosing before paying (see :class:`~.taylor.TaylorEngine`).
         """
-        return self._engine(budget=budget, **kwargs).nodes()
+        return self._engine(budget=budget, params=self.node_params, **kwargs).nodes()
 
-    def _engine(self, budget=None, geometry=None, **kwargs):
+    def _engine(self, budget=None, geometry=None, params=None, **kwargs):
         from .engines import ChebyshevEngine
         from .mlp import MLPEngine
         from .polynomial import PolynomialEngine
@@ -220,8 +277,12 @@ class Emulator(object):
 
         classes = {cls.name: cls
                    for cls in (ChebyshevEngine, TaylorEngine, PolynomialEngine, MLPEngine)}
-        subspace = self.training.marginal(self.params) \
-            if len(self.params) < len(self.training.params) else self.training
+        # `params`: which parameters the engine is over. The expanded ones, i.e. the engines that
+        # are fitted; the node parameters for the engine that DRAWS the nodes, which differ when an
+        # exact parameter is sampled at the nodes (see `select_node_params`).
+        params = list(self.params if params is None else params)
+        subspace = self.training.marginal(params) \
+            if len(params) < len(self.training.params) else self.training
         # `geometry` overrides the space's own box: the engine that draws the extra nodes of an
         # augmented training (see :meth:`_augmented_nodes`) is the same class with the same
         # options over a narrower box, and nothing else about it differs.
@@ -266,10 +327,11 @@ class Emulator(object):
         """
         specs = [augment] if isinstance(augment, dict) else list(augment or [])
         if not specs:
-            return np.empty((0, len(self.params)))
+            return np.empty((0, len(self.node_params)))
         from .space import _ranges
-        subspace = self.training.marginal(self.params) \
-            if len(self.params) < len(self.training.params) else self.training
+        # over the node parameters, like the base draw: the extra nodes join the same array
+        subspace = self.training.marginal(self.node_params) \
+            if len(self.node_params) < len(self.training.params) else self.training
         geometry = subspace.geometry()
         if 'covariance' in geometry:
             raise ValueError('augment needs a box-shaped Space (bounds only); this one is '
@@ -294,6 +356,7 @@ class Emulator(object):
             options['seed'] = int(spec.get('seed', int(options.get('seed', 42)) + 1 + index))
             engine = self._engine(budget=budget, geometry={**geometry, 'limits': limits,
                                                            'bounds': {**geometry['bounds'], **narrowed}},
+                                  params=self.node_params,
                                   **{name: value for name, value in options.items() if name != 'budget'})
             nodes = np.atleast_2d(np.asarray(engine.nodes(), dtype='f8'))
             self.logger.info(f'augmenting with {len(nodes)} nodes over '
@@ -304,7 +367,8 @@ class Emulator(object):
     def train(self, engine=None, budget=None, checkpoint=None, chunk=None, batch_size=None,
               mpicomm=None, per_output=None, max_non_finite=0.05, method='auto',
               basis_budget=None, drop_non_finite=None, fit=True, rows_per_rank=None,
-              outlier_factor=None, outlier_factor_low=None, augment=None, **kwargs):
+              outlier_factor=None, outlier_factor_low=None, outlier_on='transformed', augment=None,
+              **kwargs):
         """Evaluate the calculator on the node set and fit.
 
         ``augment`` adds nodes where accuracy is wanted most: one or several
@@ -345,6 +409,16 @@ class Emulator(object):
         the fit of the sane 96% is spent on them (measured: the growth scalar's median error
         stayed at 0.6% whatever the schedule until they were removed).
 
+        ``outlier_on`` says which values the two cuts look at: ``'transformed'`` (the default, what
+        the engines are fitted to), ``'raw'`` (the calculator's outputs as the checkpoint holds
+        them), or ``'both'`` (a node must pass both). They differ whenever :meth:`transform` changes
+        the dynamic range: dividing the one-loop tables of the EFT-of-dark-energy emulator by the
+        primordial amplitude squared brought 1446 nodes under the ``1e4 x median`` cut that the raw
+        tables had failed, and those were the odd-growth models the cut existed for (sigma8 at fixed
+        amplitude at half the median, f(k) shapes deviating twice as much); fitted with them, the
+        growth-rate row and the sigma^2 scalars came out 2.5-3.5x worse in the likelihood (2026-09-11).
+        ``'both'`` keeps the raw cut's node set and adds whatever the transformed outputs reject.
+
         ``fit=False`` stops once every node is evaluated and checkpointed, leaving the emulator
         untrained: the two stages want different machines (the node evaluations are Boltzmann
         and perturbation-theory calls, many CPU ranks; a network fit is one GPU), so a first job
@@ -359,7 +433,11 @@ class Emulator(object):
         per_output = dict(per_output or {})
         if engine is not None:
             self.engine_name = engine
-        built = self._engine(budget=budget, **kwargs)
+        # The engine that draws the nodes: over the node parameters, which include any exact
+        # parameter a subclass asked to have sampled (`select_node_params`). The engines that are
+        # FITTED, below, are over the expanded parameters alone.
+        built = self._engine(budget=budget, params=self.node_params, **kwargs)
+        sampled = [name for name in self.node_params if name not in self.params]
         # The node set is drawn once, on rank 0, and broadcast: it is deterministic, but an
         # engine with a `valid` predicate filters a candidate pool that can be a million points
         # (the EFT-of-DE gate keeps 9%), five minutes of work that 255 other ranks would
@@ -382,7 +460,9 @@ class Emulator(object):
         self.logger.info(f'training on {len(nodes)} nodes over {len(self.params)} parameters'
                          + (f' (whitened, condition number {built.condition_number():.1f})'
                             if whitened else '')
-                         + f'; {len(self.exact_params)} handled exactly')
+                         + f'; {len(self.exact_params)} handled exactly'
+                         + (f', of which {sampled} sampled at the nodes and divided out'
+                            if sampled else ''))
         # The node box in physical parameters. Cheap, and it makes a whole class of bug
         # visible at a glance: a declared transform that never reaches the engine, or is
         # not inverted on the way out, hands the calculator the expansion variable and
@@ -395,10 +475,11 @@ class Emulator(object):
             + (f'; expansion variables {expansions}' if expansions else ''))
 
         # a parameter handled exactly leaves the grid, but the calculator still needs a value for
-        # it: hold it at the space centre while sampling, and let `transform` take it out
+        # it: hold it at the space centre while sampling, and let `transform` take it out -- unless
+        # it is one the subclass wants sampled, in which case it is a node coordinate like the rest
         centers = self.training.center
-        fixed = {name: centers[name] for name in self.exact_params}
-        training = TrainingSet(self._evaluate_target, nodes, self.params, fixed=fixed,
+        fixed = {name: centers[name] for name in self.exact_params if name not in self.node_params}
+        training = TrainingSet(self._evaluate_target, nodes, self.node_params, fixed=fixed,
                                checkpoint=checkpoint, chunk=chunk, batch_size=batch_size,
                                mpicomm=mpicomm,
                                **({} if rows_per_rank is None else {'rows_per_rank': rows_per_rank}),
@@ -421,7 +502,7 @@ class Emulator(object):
         inputs, outputs = training.inputs(), training.outputs()
         transformed = {}
         for index, row in enumerate(inputs):
-            params = {**fixed, **dict(zip(self.params, row))}
+            params = {**fixed, **dict(zip(self.node_params, row))}
             values = self.transform({name: value[index] for name, value in outputs.items()},
                                     params)
             for name, value in values.items():
@@ -456,33 +537,25 @@ class Emulator(object):
                 transformed = {name: [value for value, keep in zip(values, finite) if keep]
                                for name, values in transformed.items()}
             if outlier_factor is not None or outlier_factor_low is not None:
+                if outlier_on not in ('transformed', 'raw', 'both'):
+                    raise ValueError(f"outlier_on must be 'transformed', 'raw' or 'both'; got {outlier_on!r}")
                 sane = np.ones(len(inputs), dtype='?')
-                worst, lowest = {}, {}
-                for name, values in transformed.items():
-                    signed = np.asarray(values).reshape(len(values), -1)
-                    stacked = np.abs(signed)
-                    median = np.median(stacked, axis=0)
-                    if outlier_factor is not None:
-                        ratio = stacked / np.where(median > 0., median, np.inf)
-                        over = ratio.max(axis=1)
-                        sane &= over <= outlier_factor
-                        worst[name] = float(over.max())
-                    if outlier_factor_low is not None:
-                        definite = ((signed.min(axis=0) > 0.) | (signed.max(axis=0) < 0.)) & (median > 0.)
-                        if definite.any():
-                            under = (median[definite] / stacked[:, definite]).max(axis=1)
-                            sane &= under <= outlier_factor_low
-                            lowest[name] = float(under.max())
+                if outlier_on in ('raw', 'both'):
+                    # the calculator's own outputs, on the rows that survived the finite mask (the
+                    # transformed values decide finiteness: a log or a ratio can fail where the
+                    # raw value is fine, never the other way round)
+                    # `rows` rather than a sliced copy of the whole set: every rank holds the raw
+                    # set already (~2 GB for the EFT-of-DE training), and a second copy per rank
+                    # OOM-killed 32 ranks on a 241 GB node (2026-09-11)
+                    sane &= self._outlier_mask(outputs, outlier_factor, outlier_factor_low,
+                                               'the raw outputs', rows=finite if lost else None)
+                if outlier_on in ('transformed', 'both'):
+                    sane &= self._outlier_mask(transformed, outlier_factor, outlier_factor_low,
+                                               'the transformed outputs')
                 lost = int((~sane).sum())
                 if lost:
-                    top = sorted(worst.items(), key=lambda item: -item[1])[:3]
-                    bottom = sorted(lowest.items(), key=lambda item: -item[1])[:3]
-                    self.logger.info(
-                        f'dropping {lost}/{len(sane)} nodes ({lost / len(sane):.1%}) at which an output is '
-                        + (f'above {outlier_factor:g} x its median size (worst: ' + ', '.join(f'{name} at {value:.2g}x' for name, value in top) + ')' if worst else '')
-                        + (' or ' if worst and lowest else '')
-                        + (f'below its median / {outlier_factor_low:g} (lowest: ' + ', '.join(f'{name} at 1/{value:.2g}' for name, value in bottom) + ')' if lowest else '')
-                        + '; fitting on the rest')
+                    self.logger.info(f'dropping {lost}/{len(sane)} nodes ({lost / len(sane):.1%}) in all '
+                                     f'(outlier_on={outlier_on!r}); fitting on the rest')
                     inputs = np.asarray(inputs)[sane]
                     transformed = {name: [value for value, keep in zip(values, sane) if keep]
                                    for name, values in transformed.items()}
@@ -496,10 +569,36 @@ class Emulator(object):
         # Chebyshev fit is a linear solve and never noticed; the network training is what this
         # is for. States travel through pickle (allgather): an engine's state is a few arrays.
         names = list(transformed)
+        # The fit sees the expanded parameters only: a sampled exact parameter was a node
+        # coordinate up to here, and `transform` has taken its dependence out of every output, so
+        # its column is dropped and the nodes stand projected onto the remaining ones.
+        if sampled:
+            columns = [self.node_params.index(name) for name in self.params]
+            inputs = np.asarray(inputs)[:, columns]
         rank, size = (mpicomm.rank, mpicomm.size) if mpicomm is not None else (0, 1)
+        # Rank-local reduction before the fits. Up to here every rank holds the whole raw set
+        # (`outputs`, and the TrainingSet's own copy of it) plus every transformed output, and
+        # nothing below reads any of it but this rank's own outputs: ~6 GB per rank on the
+        # 65536-node EFT-of-DE training, which bounded a 241 GB node to 26 ranks and OOM-killed
+        # 32 of them in the final allgather AFTER all 64 networks had been fitted (2026-09-12).
+        # Keeping only what this rank fits, as stacked arrays, leaves a few hundred MB.
+        transformed = {name: np.asarray(transformed[name]) for name in names[rank::size]}
+        del outputs
+        training.release()
+        # ... provided the memory actually goes back to the system. The per-node values are
+        # millions of small arrays, allocated through malloc's heap rather than mmap, and glibc
+        # keeps freed heap for the process: measured, RSS stayed at 199 GB across 32 ranks after
+        # the release (2026-09-12). Freed heap is reused by this process, so the fits and the
+        # gather can run in it, but a co-scheduled process (or the cgroup accounting) does not
+        # see it -- trim explicitly where libc offers it, and silently do nothing elsewhere.
+        try:
+            import ctypes
+            ctypes.CDLL('libc.so.6').malloc_trim(0)
+        except (OSError, AttributeError):
+            pass
         mine = {}
         for name in names[rank::size]:
-            values = np.asarray(transformed[name])
+            values = transformed[name]
             options = {'budget': budget, **kwargs, **per_output.get(name, {})}
             fit = self._engine(**options)
             fit.fit(inputs, values.reshape(len(values), -1), method=method,
@@ -523,6 +622,47 @@ class Emulator(object):
         if not self._engines:
             raise RuntimeError('the target returned no outputs, so there is nothing to fit')
         return self
+
+    def _outlier_mask(self, values, outlier_factor, outlier_factor_low, what, rows=None):
+        """The nodes the two outlier cuts keep, over ``{name: (nnodes, ...) or list}``; logged.
+        ``rows`` (a boolean mask) restricts every output to those nodes first, one output at a
+        time, so the whole set is never copied.
+
+        The high cut: some component of some output above ``outlier_factor`` times that
+        component's median |value| over the nodes. The low cut: some SIGN-DEFINITE component (one
+        that keeps its sign over every node) below the median divided by ``outlier_factor_low``.
+        See :meth:`train` for why either exists.
+        """
+        sane, worst, lowest = None, {}, {}
+        for name, value in values.items():
+            signed = np.asarray(value)
+            if rows is not None:
+                signed = signed[rows]
+            signed = signed.reshape(len(signed), -1)
+            if sane is None:
+                sane = np.ones(len(signed), dtype='?')
+            stacked = np.abs(signed)
+            median = np.median(stacked, axis=0)
+            if outlier_factor is not None:
+                over = (stacked / np.where(median > 0., median, np.inf)).max(axis=1)
+                sane &= over <= outlier_factor
+                worst[name] = float(over.max())
+            if outlier_factor_low is not None:
+                definite = ((signed.min(axis=0) > 0.) | (signed.max(axis=0) < 0.)) & (median > 0.)
+                if definite.any():
+                    under = (median[definite] / stacked[:, definite]).max(axis=1)
+                    sane &= under <= outlier_factor_low
+                    lowest[name] = float(under.max())
+        lost = int((~sane).sum())
+        if lost:
+            top = sorted(worst.items(), key=lambda item: -item[1])[:3]
+            bottom = sorted(lowest.items(), key=lambda item: -item[1])[:3]
+            self.logger.info(
+                f'{what}: {lost}/{len(sane)} nodes ({lost / len(sane):.1%}) have an output '
+                + (f'above {outlier_factor:g} x its median size (worst: ' + ', '.join(f'{name} at {value:.2g}x' for name, value in top) + ')' if worst else '')
+                + (' or ' if worst and lowest else '')
+                + (f'below its median / {outlier_factor_low:g} (lowest: ' + ', '.join(f'{name} at 1/{value:.2g}' for name, value in bottom) + ')' if lowest else ''))
+        return sane
 
     # ── use ───────────────────────────────────────────────────────────────────
     def _check(self, given, params):
@@ -717,7 +857,8 @@ class Emulator(object):
                 'cls': f'{type(self).__module__}.{type(self).__name__}',
                 'space': self.space.__getstate__(),
                 'training': self.training.__getstate__(),
-                'params': list(self.params), 'engine_name': self.engine_name,
+                'params': list(self.params), 'node_params': list(self.node_params),
+                'engine_name': self.engine_name,
                 'coverage': self.coverage, 'options': dict(self.options),
                 'engines': {name: (engine.__getstate__(), tuple(shape))
                             for name, (engine, shape) in self._engines.items()}}
@@ -737,6 +878,9 @@ class Emulator(object):
         self.training = Space.__new__(Space)
         self.training.__setstate__(state['training'])
         self.params, self.engine_name = list(state['params']), state['engine_name']
+        # files written before exact parameters could be sampled at the nodes have no entry: the
+        # nodes then varied the expanded parameters and nothing else
+        self.node_params = list(state.get('node_params', self.params))
         self.coverage, self.options = state['coverage'], dict(state['options'])
         self._engines = {name: (engine_from_state(engine), tuple(shape))
                          for name, (engine, shape) in state['engines'].items()}
