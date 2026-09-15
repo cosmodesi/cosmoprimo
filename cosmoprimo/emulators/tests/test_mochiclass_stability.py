@@ -80,6 +80,22 @@ def test_quasi_static_pole_test():
                   [], mcs.default_a_grid(), False, 0, None, qs=True)
 
 
+def test_exact_gr_passes_the_pole_test():
+    """Exact GR on LambdaCDM (c_B = c_M = c_T = 0, w = -1) makes cs2num and mu^2 exact zeros: there
+    is no scalar and no pole, and the verdict must say so -- it is the truth of every LambdaCDM
+    mock. Phantom GR still fails the gradient test, and a genuine mu^2 crossing still fails."""
+    gr = dict(alpha_K=0.1, qs_mu2=True, w0=-1., wa=0., **FID)
+    s = mcs.scan_propto_omega(0., 0., **gr)
+    assert float(s['min_cs2num']) == 0. and float(s['min_mu2_qs']) == 0.
+    assert bool(mcs.stable_propto_omega(0., 0., **gr))
+    assert bool(mcs.stable_propto_omega(0., 1e-3, **gr)) and bool(mcs.stable_propto_omega(1e-3, 0., **gr))
+    assert not bool(mcs.stable_propto_omega(0., 0., **dict(gr, w0=-1.1)))          # phantom GR: cs2num < 0
+    assert not bool(mcs.stable_propto_omega(0., -0.36, **gr))                       # negative c_M at c_B = 0
+    import jax.numpy as jnp
+    ok = mcs.stable_propto_omega(jnp.array([0., 0., 0.]), jnp.array([0., 0.5, -0.36]), **gr)
+    assert list(np.asarray(ok)) == [True, True, False]
+
+
 def test_hill_valley_placeholders():
     assert isinstance(bool(mcs.stable_hill_valley(0.1, 1., 0.5, alpha_K=0.1, w0=-1., wa=0.)), bool)
     with pytest.raises(NotImplementedError, match='hill_valley'):
