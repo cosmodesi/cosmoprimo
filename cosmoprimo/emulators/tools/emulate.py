@@ -129,6 +129,21 @@ class Emulator(object):
         self.params = expanded
 
     # ── the hooks: override any, ignore the rest ───────────────────────────────
+    def output_coordinates(self, name):
+        """The coordinates output *name* is fitted in, or ``None`` for the emulator's own.
+
+        ``(space, params, to_training)``: the :class:`Space` the engine takes its geometry from,
+        the parameters it expands, and a callable turning a point in the emulator's own training
+        parameters into that output's. The node set is shared whatever this returns -- what
+        changes is the coordinates each fit sees.
+
+        Override it when one output responds simply to a reparametrisation the others do not
+        want: :math:`C_\ell` are nearly a translation along :math:`\ell` in :math:`h` and nearly
+        stationary in :math:`\theta_\mathrm{MC}`, while a power spectrum wants :math:`h` itself,
+        so a cosmology emulating both fits them in different variables over the same nodes.
+        """
+        return None
+
     def training_space(self):
         """The :class:`Space` the interpolant actually works in. The user's own, by default.
 
@@ -212,7 +227,7 @@ class Emulator(object):
         """
         return self._engine(budget=budget, **kwargs).nodes()
 
-    def _engine(self, budget=None, **kwargs):
+    def _engine(self, budget=None, space=None, params=None, **kwargs):
         from .engines import ChebyshevEngine
         from .mlp import MLPEngine
         from .polynomial import PolynomialEngine
@@ -220,8 +235,11 @@ class Emulator(object):
 
         classes = {cls.name: cls
                    for cls in (ChebyshevEngine, TaylorEngine, PolynomialEngine, MLPEngine)}
-        subspace = self.training.marginal(self.params) \
-            if len(self.params) < len(self.training.params) else self.training
+        # `space`/`params` for an output fitted in coordinates of its own
+        # (:meth:`output_coordinates`); the emulator's own otherwise
+        space = self.training if space is None else space
+        params = self.params if params is None else list(params)
+        subspace = space.marginal(params) if len(params) < len(space.params) else space
         options = {**self.options, **kwargs}
         # `budget` may arrive twice -- once at construction (kept in `options`) and once from
         # `train` -- and passing both to the engine is a TypeError. An explicit one wins; the
@@ -255,10 +273,12 @@ class Emulator(object):
         at a time; ``mpicomm`` splits the nodes across ranks.
 
         ``per_output`` overrides the engine options for named outputs, e.g.
-        ``per_output={'pk': dict(budget=2)}``. Only ever downward: every output is fitted from
-        the same node set, so a lower budget uses a nested subset of it, while a higher one would
-        need evaluations that were never made. Use it when one output is much smoother than the
-        rest and does not deserve the same number of terms.
+        ``per_output={'pk': dict(budget=2)}``. A key matches an output name, or the part of it
+        before the first dot -- so ``{'background': dict(budget=2)}`` reaches every output a
+        cosmology composite's background section contributes. Only ever downward: every output is
+        fitted from the same node set, so a lower budget uses a nested subset of it, while a
+        higher one would need evaluations that were never made. Use it when one output is much
+        smoother than the rest and does not deserve the same number of terms.
         """
         per_output = dict(per_output or {})
         if engine is not None:
@@ -309,7 +329,9 @@ class Emulator(object):
             for name, value in values.items():
                 transformed.setdefault(name, []).append(np.asarray(value))
 
-        unknown = [name for name in per_output if name not in transformed]
+        prefixes = {name.split('.', 1)[0] for name in transformed}
+        unknown = [name for name in per_output
+                   if name not in transformed and name not in prefixes]
         if unknown:
             raise ValueError(f'per_output names {unknown} are not outputs; '
                              f'have {sorted(transformed)}')
@@ -338,16 +360,34 @@ class Emulator(object):
                 transformed = {name: [value for value, keep in zip(values, finite) if keep]
                                for name, values in transformed.items()}
 
-        # one engine per output, all sharing the node set
+        # one engine per output, all sharing the node set -- and, unless `output_coordinates`
+        # says otherwise, the coordinates too
         self._engines = {}
+        rows = [{**fixed, **dict(zip(self.params, row))} for row in inputs]
+        coordinates = {}      # cached by parameter tuple: several outputs share one basis
         for name, values in transformed.items():
             values = np.asarray(values)
-            options = {'budget': budget, **kwargs, **per_output.get(name, {})}
+            options = {'budget': budget, **kwargs,
+                       **per_output.get(name, per_output.get(name.split('.', 1)[0], {}))}
+            own = self.output_coordinates(name)
+            if own is None:
+                fit_params, fit_inputs = None, inputs
+            else:
+                space, fit_params, to_training = own
+                fit_params = list(fit_params)
+                key = tuple(fit_params)
+                if key not in coordinates:
+                    mapped = [dict(to_training(row)) for row in rows]
+                    coordinates[key] = np.array([[point[param] for param in fit_params]
+                                                 for point in mapped])
+                fit_inputs = coordinates[key]
+                options = {**options, 'space': space, 'params': fit_params}
             fit = self._engine(**options)
-            fit.fit(inputs, values.reshape(len(values), -1), method=method,
+            fit.fit(fit_inputs, values.reshape(len(values), -1), method=method,
                     basis_budget=basis_budget) \
-                if fit.name == 'chebyshev' else fit.fit(inputs, values.reshape(len(values), -1))
-            self._engines[name] = (fit, values.shape[1:])
+                if fit.name == 'chebyshev' else fit.fit(fit_inputs,
+                                                        values.reshape(len(values), -1))
+            self._engines[name] = (fit, values.shape[1:], fit_params)
         if not self._engines:
             raise RuntimeError('the target returned no outputs, so there is nothing to fit')
         return self
@@ -405,15 +445,24 @@ class Emulator(object):
 
         Delegated to an engine, which owns the geometry the nodes were laid out with -- the
         transforms, the whitening rotation, the per-axis domain (see
-        :meth:`~.engines.BaseEngine.outside`). Every engine of one emulator is built from the same
-        Space, so the first answers for all. ``None`` when there is nothing fitted to compare
-        against.
+        :meth:`~.engines.BaseEngine.outside`). One engine answers for all, since they share the
+        node set, but it has to be asked in its own coordinates: an output fitted through
+        :meth:`output_coordinates` has others, and handing it the emulator's would have it judge a
+        point it was never shown. Preferring an engine that uses the emulator's own coordinates is
+        not cosmetic -- which engine comes first is dict order, and that differs between a freshly
+        trained emulator and the same one read back from a file. ``None`` when there is nothing
+        fitted to compare against.
         """
         if not self._engines:
             return None
         xnp = numpy_jax(*training.values())
-        engine = next(iter(self._engines.values()))[0]
-        values = xnp.stack([xnp.asarray(training[name]) for name in self.params])
+        for name, (engine, _, fit_params) in self._engines.items():
+            if fit_params is None:
+                values = xnp.stack([xnp.asarray(training[param]) for param in self.params])
+                return engine.outside(values)
+        name, (engine, _, fit_params) = next(iter(self._engines.items()))
+        mapped = dict(self.output_coordinates(name)[2](training))
+        values = xnp.stack([xnp.asarray(mapped[param]) for param in fit_params])
         return engine.outside(values)
 
     def outside(self, training):
@@ -459,8 +508,21 @@ class Emulator(object):
         # point of the engines being jax-friendly is that a likelihood can jit through this
         xnp = numpy_jax(*training.values())
         values = xnp.stack([xnp.asarray(training[name]) for name in self.params])
-        predicted = {name: xnp.reshape(engine.predict(values), shape)
-                     for name, (engine, shape) in self._engines.items()}
+        # an output fitted in coordinates of its own (:meth:`output_coordinates`) is evaluated in
+        # them; the map is cached by parameter tuple, since sections sharing a basis share the work
+        coordinates, predicted = {}, {}
+        for name, (engine, shape, fit_params) in self._engines.items():
+            if fit_params is None:
+                point = values
+            else:
+                key = tuple(fit_params)
+                if key not in coordinates:
+                    own = self.output_coordinates(name)
+                    mapped = dict(own[2](training))
+                    coordinates[key] = xnp.stack([xnp.asarray(mapped[param])
+                                                  for param in fit_params])
+                point = coordinates[key]
+            predicted[name] = xnp.reshape(engine.predict(point), shape)
         # `transform` saw training parameters at fit time, so its inverse must see them too
         out = self.inverse_transform(predicted, training)
         if self.coverage != 'ignore':
@@ -470,7 +532,13 @@ class Emulator(object):
             # extrapolated -- the engines' own words: "catastrophic, not gradual".
             mask = self.outside(training)
             if mask is not None:
-                xnp = numpy_jax(*training.values())
+                # the outputs as well as the parameters: inside someone else's jit, an operation
+                # on constant inputs is still staged out, so a prediction made at concrete
+                # parameters comes back as a tracer -- which is exactly what happens when a
+                # pipeline jits over one parameter and holds this emulator's own fixed. Choosing
+                # the numpy from the parameters alone then picks plain numpy and the write of a
+                # nan into a traced array raises.
+                xnp = numpy_jax(*training.values(), *out.values(), mask)
                 out = {name: xnp.where(xnp.reshape(mask, mask.shape + (1,) * (xnp.ndim(value) - xnp.ndim(mask)))
                                        if xnp.ndim(value) > xnp.ndim(mask) else mask,
                                        xnp.nan, value)
@@ -498,14 +566,14 @@ class Emulator(object):
             raise NotTrained('call train() first')
         if name not in self._engines:
             raise ValueError(f'no output {name!r}; have {sorted(self._engines)}')
-        engine, shape = self._engines[name]
+        engine, shape, fit_params = self._engines[name]
         matrix = np.asarray(matrix, dtype='f8')
         if matrix.ndim != 2:
             raise ValueError(f'matrix must be 2-d, got {matrix.ndim}-d')
         if int(np.prod(shape)) != matrix.shape[1]:
             raise ValueError(f'output {name!r} has shape {shape} ({int(np.prod(shape))} values), '
                              f'and the matrix acts on {matrix.shape[1]}')
-        self._engines[name] = (engine.contract(matrix), (matrix.shape[0],))
+        self._engines[name] = (engine.contract(matrix), (matrix.shape[0],), fit_params)
         return self
 
     def validate(self, truth=None, points=None, metric=None, npoints=100, seed=42,
@@ -547,8 +615,9 @@ class Emulator(object):
                 'training': self.training.__getstate__(),
                 'params': list(self.params), 'engine_name': self.engine_name,
                 'coverage': self.coverage, 'options': dict(self.options),
-                'engines': {name: (engine.__getstate__(), tuple(shape))
-                            for name, (engine, shape) in self._engines.items()}}
+                'engines': {name: (engine.__getstate__(), tuple(shape),
+                                   None if fit_params is None else list(fit_params))
+                            for name, (engine, shape, fit_params) in self._engines.items()}}
 
     def __setstate__(self, state):
         from .engines import engine_from_state
@@ -566,8 +635,15 @@ class Emulator(object):
         self.training.__setstate__(state['training'])
         self.params, self.engine_name = list(state['params']), state['engine_name']
         self.coverage, self.options = state['coverage'], dict(state['options'])
-        self._engines = {name: (engine_from_state(engine), tuple(shape))
-                         for name, (engine, shape) in state['engines'].items()}
+        # An entry is `(engine, shape, params)` -- the coordinates that output was fitted in,
+        # `None` for the emulator's own. A file written before those existed holds a pair, and a
+        # pair says exactly one thing, so it is read rather than refused: these files are hours of
+        # Boltzmann code, and no version of the emulator ever wrote a pair meaning anything else.
+        self._engines = {}
+        for name, entry in state['engines'].items():
+            engine, shape, fit_params = entry if len(entry) == 3 else (*entry, None)
+            self._engines[name] = (engine_from_state(engine), tuple(shape),
+                                   None if fit_params is None else list(fit_params))
         self.target = None
 
     def write(self, path):
