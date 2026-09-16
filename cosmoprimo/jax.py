@@ -1,7 +1,9 @@
 import functools
 import logging
 
-logging.getLogger('jax._src.lib.xla_bridge').addFilter(logging.Filter('No GPU/TPU found, falling back to CPU.'))
+logging.getLogger('jax._src.lib.xla_bridge').addFilter(
+    logging.Filter('No GPU/TPU found, falling back to CPU.')
+)
 
 
 # jax array types
@@ -182,7 +184,10 @@ def _mask_bounds(x, xlim, bounds_error=False):
         def raise_error():
             for mask, xx, xxlim in zip(masks, x, xlim):
                 if not mask.all():
-                    raise ValueError('input outside of extrapolation range (min: {} vs. {}; max: {} vs. {})'.format(xx.min(), xxlim[0], xx.max(), xxlim[1]))
+                    raise ValueError(
+                        'input outside of extrapolation range (min: {} vs. {}; '
+                        'max: {} vs. {})'.format(xx.min(), xxlim[0], xx.max(), xxlim[1])
+                    )
         exception(raise_error)
 
     return masks
@@ -191,9 +196,19 @@ def _mask_bounds(x, xlim, bounds_error=False):
 @register_pytree_node_class
 class Interpolator1D(object):
 
-    """Wrapper for 1D interpolation (along axis 0); use :mod:`interpax` if :mod:`jax` input, else :func:`scipy.interpolate.interp1d`."""
+    """Wrapper for 1D interpolation (along axis 0); use :mod:`interpax` if
+    :mod:`jax` input, else :func:`scipy.interpolate.interp1d`."""
 
-    def __init__(self, x, fun, k=3, interp_x='lin', interp_fun='lin', extrap=False, assume_sorted=False):
+    def __init__(
+        self,
+        x,
+        fun,
+        k=3,
+        interp_x='lin',
+        interp_fun='lin',
+        extrap=False,
+        assume_sorted=False,
+    ):
         self._use_jax = use_jax(x, fun)
         self._np = numpy if self._use_jax else np
         self.interp_x = str(interp_x)
@@ -206,8 +221,10 @@ class Interpolator1D(object):
             x, fun = (xx[ix] for xx in (x, fun))
         self.xmin, self.xmax = x[0], x[-1]
         self._x, self._fun = x, fun
-        if self.interp_x == 'log': x = self._np.log10(x)
-        if self.interp_fun == 'log': fun = self._np.log10(fun)
+        if self.interp_x == 'log':
+            x = self._np.log10(x)
+        if self.interp_fun == 'log':
+            fun = self._np.log10(fun)
         self.extrap = bool(extrap)
         self._mask_nan = None
         self._nan_columns = None
@@ -232,7 +249,8 @@ class Interpolator1D(object):
             self._spline = _JAXInterpolator1D(x, fun, method=_interpax_method(k, x.size), extrap=self.extrap, period=None)
         else:
             from scipy import interpolate
-            self._mask_nan = ~np.isnan(fun).all(axis=0)  # hack: scipy returns NaN for all shape[1] if any is NaN
+            # hack: scipy returns NaN for all shape[1] if any is NaN
+            self._mask_nan = ~np.isnan(fun).all(axis=0)
 
             fun = fun[..., self._mask_nan]
 
@@ -243,7 +261,13 @@ class Interpolator1D(object):
                 from scipy.interpolate import CubicSpline  #, UnivariateSpline
                 if k == 3:
                     if not np.isnan(fun).any():  # else scipy raises ValueError
-                        spline = CubicSpline(x, fun, axis=0, bc_type='natural', extrapolate=self.extrap)
+                        spline = CubicSpline(
+                            x,
+                            fun,
+                            axis=0,
+                            bc_type='natural',
+                            extrapolate=self.extrap,
+                        )
 
                         def _spline(x, dx=0):
                             return spline(x, nu=dx)
@@ -260,7 +284,8 @@ class Interpolator1D(object):
         toret_shape = x.shape + self.shape
         x = x.ravel()
         mask_x, = _mask_bounds([x], [(self.xmin, self.xmax)], bounds_error=bounds_error)
-        if self.interp_x == 'log': x = self._np.log10(x)
+        if self.interp_x == 'log':
+             x = self._np.log10(x)
         tmp = self._spline(x, **kwargs)
         if self._nan_columns is not None:
             # put back what the solve was not allowed to see (see __init__)
@@ -289,9 +314,22 @@ class Interpolator1D(object):
 @register_pytree_node_class
 class Interpolator2D(object):
 
-    """Wrapper for 2D interpolation; use :mod:`interpax` if :mod:`jax` input, else :func:`scipy.interpolate.interp1d`."""
+    """Wrapper for 2D interpolation; use :mod:`interpax` if :mod:`jax` input,
+    else :func:`scipy.interpolate.interp1d`."""
 
-    def __init__(self, x, y, fun, kx=3, ky=3, interp_x='lin', interp_y='lin', interp_fun='lin', extrap=False, assume_sorted=False):
+    def __init__(
+        self,
+        x,
+        y,
+        fun,
+        kx=3,
+        ky=3,
+        interp_x='lin',
+        interp_y='lin',
+        interp_fun='lin',
+        extrap=False,
+        assume_sorted=False,
+    ):
         self._use_jax = use_jax(x, y, fun)
         self._np = numpy if self._use_jax else np
         self.interp_x = str(interp_x)
@@ -305,9 +343,12 @@ class Interpolator2D(object):
         self.xmin, self.xmax = x[0], x[-1]
         self.ymin, self.ymax = y[0], y[-1]
         self._x, self._y, self._fun = x, y, fun
-        if self.interp_x == 'log': x = self._np.log10(x)
-        if self.interp_y == 'log': y = self._np.log10(y)
-        if self.interp_fun == 'log': fun = self._np.log10(fun)
+        if self.interp_x == 'log':
+            x = self._np.log10(x)
+        if self.interp_y == 'log':
+            y = self._np.log10(y)
+        if self.interp_fun == 'log':
+            fun = self._np.log10(fun)
         self.extrap = bool(extrap)
         self._nan = None
         if self._use_jax:
@@ -351,11 +392,19 @@ class Interpolator2D(object):
         else:
             toret_shape = x.shape
         x, y = (xx.ravel() for xx in (x, y))
-        mask_x, mask_y = _mask_bounds([x, y], [(self.xmin, self.xmax), (self.ymin, self.ymax)], bounds_error=bounds_error)
-        if grid: mask_x = mask_x[:, None] & mask_y
-        else: mask_x = mask_x & mask_y
-        if self.interp_x == 'log': x = self._np.log10(x)
-        if self.interp_y == 'log': y = self._np.log10(y)
+        mask_x, mask_y = _mask_bounds(
+            [x, y],
+            [(self.xmin, self.xmax), (self.ymin, self.ymax)],
+            bounds_error=bounds_error,
+        )
+        if grid:
+            mask_x = mask_x[:, None] & mask_y
+        else:
+            mask_x = mask_x & mask_y
+        if self.interp_x == 'log':
+            x = self._np.log10(x)
+        if self.interp_y == 'log':
+            y = self._np.log10(y)
         if self._use_jax:
             _shape = (x.size, y.size)
             if grid:
@@ -367,7 +416,9 @@ class Interpolator2D(object):
             if grid:
                 i_x = self._np.argsort(x)
                 i_y = self._np.argsort(y)
-                tmp = self._spline(x[i_x], y[i_y], grid=True)[self._np.ix_(self._np.argsort(i_x), self._np.argsort(i_y))]
+                tmp = self._spline(x[i_x], y[i_y], grid=True)[  # type: ignore[call-arg]
+                    self._np.ix_(self._np.argsort(i_x), self._np.argsort(i_y))
+                ]
             else:
                 tmp = self._spline(x, y, grid=False)
         if self.interp_fun == 'log': tmp = 10**tmp
@@ -379,9 +430,12 @@ class Interpolator2D(object):
 
     def tree_flatten(self):
         # WARNING: does not preserve key orders in _params
-        # `_nan` is a child, not aux data: it may be a traced boolean, and aux data is static
-        children = (self._spline, self.xmin, self.xmax, self.ymin, self.ymax, self._nan)
-        aux_data = {name: getattr(self, name) for name in ['interp_x', 'interp_y', 'interp_fun', '_np', '_use_jax', 'extrap'] if hasattr(self, name)}
+        children = (self._spline, self.xmin, self.xmax, self.ymin, self.ymax)
+        aux_data = {
+            name: getattr(self, name)
+            for name in ['interp_x', 'interp_y', 'interp_fun', '_np', '_use_jax', 'extrap']
+            if hasattr(self, name)
+        }
         return children, aux_data
 
     @classmethod
@@ -406,7 +460,8 @@ def scan_numpy(f, init, xs, length=None):
 def for_cond_loop_numpy(lower, upper, cond_fun, body_fun, init_val):
     val = init_val
     for i in range(lower, upper):
-        if not cond_fun(i, val): break
+        if not cond_fun(i, val):
+            break
         val = body_fun(i, val)
     return val
 
@@ -430,7 +485,8 @@ def switch(index, branches, *operands):
 
 
 def select_numpy(pred, on_true, on_false):
-    if pred: return on_true
+    if pred:
+        return on_true
     return on_false
 
 
@@ -608,7 +664,7 @@ def simpson(y, x=None, dx=1, axis=-1, even='avg'):
     else:
         result = _basic_simpson(y, 0, N - 2, x, dx, axis)
     if returnshape:
-        x = x.reshape(saveshape)
+        x = x.reshape(saveshape)  # type: ignore[union-attr]
     return result
 
 
@@ -617,7 +673,8 @@ def exception_or_nan(value, cond, error):
     if use_jax(cond, tracer_only=True):
         value = numpy.where(cond, numpy.nan, value)
     else:
-        if np.any(cond): error(value)
+        if np.any(cond):
+            error(value)
     return value
 
 
@@ -729,7 +786,8 @@ def romberg(function, a, b, args=(), epsabs=1e-8, epsrel=1e-8, divmax=10, return
         tmp = 4.0**k
         return (tmp * c - b) / (tmp - 1.0)
 
-    vfunc = lambda x: function(x, *args)
+    def vfunc(x):
+        return function(x, *args)
     n = 1
     interval = [a, b]
     intrange = b - a
@@ -814,14 +872,14 @@ def cumulative_quad(func, t, y0=0.):
 def odeint(fun, y0, t, args=(), method='rk4'):
 
     jnp = numpy_jax(t)
-    t = jnp.asarray(t)
+    t = jnp.asarray(t)  # type: ignore[union-attr]
     shape = t.shape
     t = t.ravel()
 
-    func = lambda y, t: fun(y, t, *args)
+    def func(y, t):
+        return fun(y, t, *args)
 
     if method == 'rk1':
-
         def integrator(carry, t):
             y, t_last = carry
             h = t - t_last
@@ -830,7 +888,6 @@ def odeint(fun, y0, t, args=(), method='rk4'):
             return (y, t), y
 
     if method == 'rk2':
-
         def integrator(carry, t):
             y, t_last = carry
             h = t - t_last
@@ -840,7 +897,6 @@ def odeint(fun, y0, t, args=(), method='rk4'):
             return (y, t), y
 
     if method == 'rk4':
-
         def integrator(carry, t):
             y, t_last = carry
             h = t - t_last
@@ -854,7 +910,8 @@ def odeint(fun, y0, t, args=(), method='rk4'):
     tmp = func(y0, t[0])
     s = jax.lax.scan if use_jax(tmp) else scan_numpy
     toret = s(integrator, (y0, t[0]), t)[1]
-    if not shape: toret = toret[0]
+    if not shape:
+        toret = toret[0]
     return toret.reshape(shape + np.shape(tmp))
 
 
@@ -927,7 +984,8 @@ def bracket(f, init, maxiter=15, maxtries=3):
                     x2 = x1 - dx
                 else:
                     break
-            if f1 * f2 < 0: break
+            if f1 * f2 <= 0:
+                break
             x1 = x2
             f1 = f2
         xs = np.sort([x1, x2])
@@ -938,20 +996,23 @@ def bisect(f, limits, flimits=None, xtol=1e-6, maxiter=100, method='ridders'):
     """
     Find the root of a function `f` within a given interval using the bisection or Ridders' method.
 
-    This function attempts to locate a root of the function `f` within the interval `[a, b]` where `f(a)` and `f(b)`
-    have opposite signs. The method used can be either the standard bisection method or Ridders' method for faster
-    convergence.
+    This function attempts to locate a root of the function `f` within the interval `[a, b]` 
+    where `f(a)` and `f(b)` have opposite signs. The method used can be either the standard 
+    bisection method or Ridders' method for faster convergence.
 
     Parameters:
     ----------
     f : callable
-        The function for which the root is to be found. It must accept a single argument and return a scalar value.
+        The function for which the root is to be found. 
+        It must accept a single argument and return a scalar value.
     limits : tuple
         A tuple `(a, b)` specifying the interval within which to search for the root.
     flimits : tuple, optional
-        A tuple `(fa, fb)` specifying the values of `f(a)` and `f(b)`. If not provided, these will be computed.
+        A tuple `(fa, fb)` specifying the values of `f(a)` and `f(b)`. 
+        If not provided, these will be computed.
     xtol : float, optional
-        The absolute tolerance for the root. The algorithm stops when the interval width is less than `xtol`.
+        The absolute tolerance for the root. 
+        The algorithm stops when the interval width is less than `xtol`.
         Default is `1e-6`.
     maxiter : int, optional
         The maximum number of iterations to perform. Default is `100`.
@@ -964,7 +1025,8 @@ def bisect(f, limits, flimits=None, xtol=1e-6, maxiter=100, method='ridders'):
     -------
     root : float
         The estimated root of the function `f` within the interval `[a, b]`.
-        If `f(a)` and `f(b)` do not have opposite signs, raise a `ValueError` if not JAX-traced, else set to `nan`.
+        If `f(a)` and `f(b)` do not have opposite signs, raise a `ValueError` 
+        if not JAX-traced, else set to `nan`.
 
     Examples:
     --------
@@ -982,7 +1044,11 @@ def bisect(f, limits, flimits=None, xtol=1e-6, maxiter=100, method='ridders'):
     fa, fb = (flimits if flimits is not None else (f(a), f(b)))
 
     def error(*args):
-        raise ValueError('f({}), f({}) = {}, {} are not of different signs', a, b, fa, fb)
+        raise ValueError(
+            'f({}), f({}) = {}, {} are not of different signs', a, b, fa, fb
+        )
+
+
 
     if use_jax(fa):
         sign = numpy.where((fa < 0) & (fb >= 0), 1, numpy.where((fa > 0) & (fb <= 0), -1, 0))
@@ -998,8 +1064,11 @@ def bisect(f, limits, flimits=None, xtol=1e-6, maxiter=100, method='ridders'):
                 new = xfmid[0] + (xfmid[0] - xflow[0]) * sign * xfmid[1] / s
                 xfnew = numpy.array([new, f(new)])
                 #xf = numpy.array([xflow, xfhigh])
-                xf = numpy.where(xfmid[1] * xfnew[1] <= 0, numpy.array([xfmid, xfnew]),
-                                 numpy.where(xflow[1] * xfnew[1] < 0, numpy.array([xflow, xfnew]), numpy.array([xfnew, xfhigh])))
+                xf = numpy.where(xfmid[1] * xfnew[1] <= 0,
+                                 numpy.array([xfmid, xfnew]),
+                                 numpy.where(xflow[1] * xfnew[1] < 0,
+                                 numpy.array([xflow, xfnew]),
+                                 numpy.array([xfnew, xfhigh])))
                 return (xf, xfhigh[0] - xflow[0], new)
 
             state = numpy.array([[a, fa], [b, fb]])
@@ -1071,7 +1140,8 @@ def bisect(f, limits, flimits=None, xtol=1e-6, maxiter=100, method='ridders'):
                     too_large = sign * value > 0
                     high = np.where(too_large, x, high)
                     low = np.where(too_large, low, x)
-                    if np.abs(high - low) < xtol: break
+                    if np.abs(high - low) < xtol:
+                        break
                 return x
 
         return exception_or_nan(solve(f), sign == 0., error)
