@@ -129,7 +129,7 @@ def test_budget_drops_cross_terms_and_the_nodes_only_they_needed():
 
 def test_an_odd_accuracy_is_refused():
     box = space()
-    with pytest.raises(ValueError, match='EVEN'):
+    with pytest.raises(ValueError, match='even'):
         TaylorEngine(box.params, box.limits, order=2, accuracy=3)
 
 

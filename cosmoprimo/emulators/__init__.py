@@ -17,12 +17,13 @@ The emulation machinery itself knows nothing about cosmology and lives in
 :mod:`cosmoprimo.emulators.cosmology`.
 """
 
-from .tools import Space, TrainingSet, Validation, validate, CoverageError, NotTrained
+from .tools import Space, TrainingSet, Validation, validate, CoverageError, NotTrained, LinearConstraint
 # NOTE `Emulator` here is the cosmology entry point, which dispatches on `section`. The template
 # class to subclass is `cosmoprimo.emulators.tools.Emulator`.
 from .cosmology import (Emulator, emulate, read, SectionEmulator, CosmologyEmulator,
                         HarmonicEmulator, BackgroundEmulator, FourierEmulator,
-                        ThermodynamicsEmulator, emulated_engine, read_engine)
+                        ThermodynamicsEmulator, emulated_engine, read_engine,
+                        with_harmonic_precision)
 
 # `Cosmology(engine='ace')`: the packaged jaxace / jaxmapse / jaxcapse networks. Imported
 # lazily by `get_engine`, so the heavy jax packages are not pulled in by `import cosmoprimo`.
