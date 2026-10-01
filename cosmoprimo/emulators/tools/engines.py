@@ -87,6 +87,12 @@ def engine_from_state(state):
     return ENGINES[name].from_state(state)
 
 
+def _as_float_array(xnp, values):
+    """*values* as an array of the dispatching numpy: float64 for numpy, as given under jax (whose
+    precision is the caller's ``jax_enable_x64`` choice)."""
+    return np.asarray(values, dtype='f8') if xnp is np else xnp.asarray(values)
+
+
 class BaseEngine(object):
     """The geometry every engine shares: the box, the transforms, and the whitening.
 
@@ -268,10 +274,16 @@ class BaseEngine(object):
         return float(self._scale.max() / self._scale.min()) if self.whitened else 1.
 
     def whiten(self, values):
-        return (self._rotation.T @ (np.asarray(values, dtype='f8') - self.mean)) / self._scale
+        """The rotation step alone: (transformed) physical -> principal axes, in units of their width."""
+        xnp = numpy_jax(values)
+        values = _as_float_array(xnp, values)
+        return (xnp.asarray(self._rotation).T @ (values - xnp.asarray(self.mean))) / xnp.asarray(self._scale)
 
     def unwhiten(self, values):
-        return self.mean + self._rotation @ (np.asarray(values, dtype='f8') * self._scale)
+        """Inverse of :meth:`whiten`."""
+        xnp = numpy_jax(values)
+        values = _as_float_array(xnp, values)
+        return xnp.asarray(self.mean) + xnp.asarray(self._rotation) @ (values * xnp.asarray(self._scale))
 
     def _domain(self, name):
         """The interval this axis's nodes fill, in the coordinates the interpolant works in.
@@ -313,7 +325,7 @@ class BaseEngine(object):
             return None
         return TRANSFORMS[spec] if isinstance(spec, str) else tuple(spec)
 
-    def _internal(self, values):
+    def to_internal(self, values):
         """Physical parameters -> the coordinates the interpolant works in.
 
         Transform first and only then whiten: the two compose rather than exclude each other.
@@ -321,45 +333,28 @@ class BaseEngine(object):
         of the transformed variables -- so a Space that declares transforms must supply mean and
         covariance measured in them. The two together are what a hard bound wants: the transform
         makes it unreachable, the rotation keeps the box on the posterior's axes.
-        """
-        values = np.asarray(values, dtype='f8')
-        pairs = [self._transform_pair(name) for name in self.params]
-        if any(pair is not None for pair in pairs):
-            values = np.array([float(pair[0](value)) if pair else float(value)
-                               for value, pair in zip(values, pairs)])
-        return self.whiten(values) if self.whitened else values
 
-    def _physical(self, values):
-        """Internal coordinates -> physical parameters: the inverse of :meth:`_internal`."""
-        values = self.unwhiten(values) if self.whitened else np.asarray(values, dtype='f8')
-        pairs = [self._transform_pair(name) for name in self.params]
-        if any(pair is not None for pair in pairs):
-            values = np.array([float(pair[1](value)) if pair else float(value)
-                               for value, pair in zip(values, pairs)])
-        return values
-
-    def _traced(self, values):
-        """Physical parameters -> internal coordinates, safe inside a jax trace.
-
-        The eager :meth:`_internal` casts to float, which a tracer refuses; this is the same map
-        written with the dispatching numpy so ``predict`` works under ``jit``. Both must agree,
-        or the fit and the evaluation are in different coordinates.
+        One map for every caller, eager or traced: the numpy is chosen from *values*, so the
+        nodes are placed and the prediction evaluated with the same code -- two implementations
+        of it drift, and then the fit and the evaluation are in different coordinates.
         """
         xnp = numpy_jax(values)
-        values = xnp.asarray(values)
+        values = _as_float_array(xnp, values)
         pairs = [self._transform_pair(name) for name in self.params]
         if any(pair is not None for pair in pairs):
             values = xnp.stack([pair[0](values[index]) if pair else values[index]
                                 for index, pair in enumerate(pairs)])
-        if self.whitened:
-            return (xnp.asarray(self._rotation).T @ (values - xnp.asarray(self.mean))) \
-                / xnp.asarray(self._scale)
-        return values
+        return self.whiten(values) if self.whitened else values
 
-    #: Fraction of an axis' own width tolerated on each side of the fitted domain, so a point
-    #: sitting exactly on a node -- Chebyshev-Lobatto sets include their endpoints -- is not
-    #: rejected by the round trip through the whitening.
-    domain_atol = 1e-9
+    def from_internal(self, internal):
+        """Internal coordinates -> physical parameters: the inverse of :meth:`to_internal`."""
+        xnp = numpy_jax(internal)
+        values = self.unwhiten(internal) if self.whitened else _as_float_array(xnp, internal)
+        pairs = [self._transform_pair(name) for name in self.params]
+        if any(pair is not None for pair in pairs):
+            values = xnp.stack([pair[1](values[index]) if pair else values[index]
+                                for index, pair in enumerate(pairs)])
+        return values
 
     def outside(self, values):
         """Boolean mask: is this point outside the region the fit is defined over?
@@ -369,16 +364,12 @@ class BaseEngine(object):
         is all :meth:`Emulator._check` can test. But when the nodes are whitened they do not fill
         that rectangle: they fill a band lying along the directions the parameters vary together,
         and the rectangle's off-diagonal corners hold no node at all.
-        Measured on an (h, omega_cdm) pair at correlation -0.95, 70.6% of the rectangle falls off
-        the band, its worst corner at 6.1 times the band's half-width, with each parameter well
-        inside its own range. A polynomial interpolant asked there does not degrade gracefully;
-        it answers confidently from coefficients nothing constrained.
 
         Here rather than on :class:`~.space.Space` or :class:`~.emulate.Emulator` because this
         class already owns every piece the answer needs -- the transforms, the whitening rotation
         and :meth:`_domain`, including the asymmetric domain an unrotated axis gets from a
         one-sided bound. A Space stores a covariance but never builds the rotation, so asking it
-        would mean reimplementing :meth:`_traced`, and a second implementation of the map that
+        would mean reimplementing :meth:`to_internal`, and a second implementation of the map that
         placed the nodes is exactly the thing that drifts.
 
         Mechanism, not policy: this says where the fit is defined, and nothing here refuses. It is
@@ -399,14 +390,36 @@ class BaseEngine(object):
         -------
         mask : array, bool
         """
-        internal = self._traced(values)
-        mask = None
+        return self.distance(values) > 0.
+
+    #: Fraction of an axis' own width tolerated on each side of the fitted domain, so a point
+    #: sitting exactly on a node -- Chebyshev-Lobatto sets include their endpoints -- is not
+    #: rejected by the round trip through the whitening.
+    domain_atol = 1e-9
+
+    def distance(self, values):
+        """Distance outside the region the fit is defined over (see :meth:`outside`), 0 inside:
+        the excess over each axis's domain in the interpolant's own coordinates, in units of that
+        axis's width, summed.  Elementwise and traceable, as :meth:`outside`."""
+        xnp = numpy_jax(values)
+        internal = self.to_internal(values)
+        total = xnp.zeros(xnp.shape(internal)[1:])
         for index, name in enumerate(self.params):
             low, high = self._domain(name)
             margin = self.domain_atol * (high - low)
-            this = (internal[index] < low - margin) | (internal[index] > high + margin)
-            mask = this if mask is None else (mask | this)
-        return mask
+            total = total + (xnp.maximum(low - margin - internal[index], 0.)
+                             + xnp.maximum(internal[index] - high - margin, 0.)) / (high - low)
+        return total
+
+    def clip_to_domain(self, values):
+        """*values* (physical parameters) moved inside the region the fit is defined over: mapped to
+        the interpolant's own coordinates (:meth:`to_internal`), each clipped to its axis's domain,
+        and mapped back (:meth:`from_internal`).  A point already inside comes back unchanged.
+        Traceable."""
+        xnp = numpy_jax(values)
+        internal = self.to_internal(values)
+        clipped = xnp.stack([xnp.clip(internal[index], *self._domain(name)) for index, name in enumerate(self.params)])
+        return self.from_internal(clipped)
 
     def _geometry_state(self):
         return {'name': self.name, 'params': list(self.params), 'limits': dict(self.limits),
@@ -454,7 +467,7 @@ class LinearBasisEngine(BaseEngine):
         """``values``: physical parameters, in :attr:`params` order."""
         if self.coefficients is None:
             raise ValueError('not fitted')
-        basis = tensor_basis(self._traced(values), self.powers, self.domains, basis=self.basis)
+        basis = tensor_basis(self.to_internal(values), self.powers, self.domains, basis=self.basis)
         return jnp.tensordot(self.coefficients, basis, axes=(0, 0))
 
     def contract(self, matrix):
@@ -528,13 +541,13 @@ class ChebyshevEngine(LinearBasisEngine):
                 seen.add(key)
                 rows.append([float(value) for value in point])
         rows = np.array(rows)
-        # `_physical`, not `unwhiten` and not the inverse transform on its own: the two compose
-        # (transform, then whiten), so both have to be undone, and only `_physical` knows about a
+        # `from_internal`, not `unwhiten` and not the inverse transform on its own: the two compose
+        # (transform, then whiten), so both have to be undone, and only `from_internal` knows about a
         # transform given as a pair of callables rather than a registry name -- which is what a
         # parameterised one has to be, since a logit carries its interval. Undoing the whitening
         # alone hands the calculator the expansion variable instead of the parameter: measured,
         # 226 of 817 nodes then landed past a bound the transform exists to make unreachable.
-        physical = np.array([self._physical(row) for row in rows])
+        physical = np.array([self.from_internal(row) for row in rows])
         if self.whitened:
             # Remember the whitened coordinates these very nodes came from. `fit` needs the
             # grid key for each evaluated node, and recovering it by whitening the physical value
@@ -562,7 +575,7 @@ class ChebyshevEngine(LinearBasisEngine):
             found = self._node_map.get(self._round(row))
             if found is not None:
                 return found
-        return self._round(self._internal(row))
+        return self._round(self.to_internal(row))
 
     # ── fit / predict ─────────────────────────────────────────────────────────
     def _fit_lstsq(self, inputs, outputs, grids, domains, rcond=None):
