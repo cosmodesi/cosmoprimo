@@ -729,10 +729,10 @@ def _cosmology_from_state(state):
 # any other); the rest are raw engine precision knobs, forwarded through `extra_params`.
 _LENSING_PARAMS = {'camb': dict(non_linear='mead2016'), 'class': dict(non_linear='hmcode')}
 _LENS_POTENTIAL_EXTRA_PARAMS = {
-    'camb': dict(lens_margin=1250, lens_potential_accuracy=4,
+    'camb': dict(lens_output_margin=1250, lens_potential_accuracy=4,
                  AccuracyBoost=1, lSampleBoost=1, lAccuracyBoost=1),
     'class': dict(nonlinear_min_k_max=20, accurate_lensing=1, delta_l_max=800)}
-# CAMB needs ell reach beyond the requested ellmax for `lens_margin` to have room to work with;
+# CAMB needs ell reach beyond the requested ellmax for `lens_output_margin` to have room to work with;
 # CLASS's `delta_l_max` already provides that margin relative to whatever ellmax_cl is.
 _LENS_POTENTIAL_MIN_ELLMAX = {'camb': 4000}
 
