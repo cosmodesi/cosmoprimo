@@ -96,6 +96,98 @@ def test_outside_the_box_raises():
         trained(budget=2).predict(amplitude=99., tilt=0.)
 
 
+def test_predict_in_box_clips_and_reports_the_distance():
+    """Outside the box, the prediction at the clipped point and the distance in box widths; inside,
+    the plain prediction and zero -- under jit too."""
+    import jax
+    emu = trained(budget=2)
+    assert [constraint.name for constraint in emu.constraints()] == ['box']   # nodes fill the box: no node-cloud constraint
+    out, violations = emu.predict_in_box(**POINT)
+    assert all(float(value) == 0. for value in violations.values())
+    assert np.allclose(out['pk'], emu.predict(**POINT)['pk'], rtol=1e-12)
+    # amplitude 0.5 above (1, 3): a quarter of its width; tilt 0.5 below (-1, 1): a quarter too
+    out, violations = emu.predict_in_box(amplitude=3.5, tilt=-1.5)
+    assert np.allclose(float(violations['box']), 0.5)
+    assert np.allclose(out['pk'], emu.predict(amplitude=3., tilt=-1.)['pk'], rtol=1e-12)
+    jitted = jax.jit(lambda amplitude: emu.predict_in_box(amplitude=amplitude, tilt=0.3))
+    out, violations = jitted(3.5)
+    assert np.allclose(float(violations['box']), 0.25)
+    assert np.allclose(out['pk'], emu.predict(amplitude=3., tilt=0.3)['pk'], rtol=1e-10)
+
+
+def test_linear_constraints_parse_from_text():
+    from cosmoprimo.emulators.tools import LinearConstraint
+    constraint = LinearConstraint.from_string('w0 + wa < -0.5', name='w0_plus_wa', aliases={'w0': 'w0_fld', 'wa': 'wa_fld'})
+    assert constraint.coefficients == {'w0_fld': 1., 'wa_fld': 1.} and constraint.upper == -0.5 and constraint.lower is None
+    constraint = LinearConstraint.from_string('2 omega_b - omega_cdm >= 0')
+    assert constraint.coefficients == {'omega_b': 2., 'omega_cdm': -1.} and constraint.lower == 0.
+    constraint = LinearConstraint.from_string('-1 < w0 <= 0', name='w0_range')
+    assert (constraint.lower, constraint.upper) == (-1., 0.)
+    constraint = LinearConstraint.from_string('0.5 > tilt')
+    assert constraint.upper == 0.5
+    with pytest.raises(ValueError):
+        LinearConstraint.from_string('amplitude * tilt < 1')
+
+
+def test_a_linear_constraint_is_enforced_like_the_box():
+    """A declarative constraint joins the built-in ones: raised in eager calls, NaN when traced,
+    reported (not clipped) by predict_in_box."""
+    import jax
+    emu = Emulator(target, space(), constraints=['amplitude + tilt < 3'])
+    emu.train(budget=2)
+    assert [constraint.name for constraint in emu.constraints()][-1] == 'amplitude_tilt_upper'
+    inside, outside = {'amplitude': 2., 'tilt': 0.5}, {'amplitude': 2.8, 'tilt': 0.5}     # 3.3 > 3, inside the box
+    assert np.isfinite(emu.predict(**inside)['pk']).all()
+    with pytest.raises(CoverageError, match='amplitude_tilt_upper'):
+        emu.predict(**outside)
+    assert np.isnan(jax.jit(lambda amplitude: emu.predict(amplitude=amplitude, tilt=0.5)['pk'])(2.8)).all()
+    out, violations = emu.predict_in_box(**outside)
+    assert np.allclose(float(violations['amplitude_tilt_upper']), 0.3) and float(violations['box']) == 0.
+    emu.violation = 'ignore'
+    assert np.allclose(out['pk'], emu.predict(**outside)['pk'], rtol=1e-12)   # inside the box: not moved, only reported
+    assert np.allclose(emu.violations(**outside)['amplitude_tilt_upper'], 0.3)
+    emu.violation = 'clip'
+    assert np.isfinite(emu.predict(**outside)['pk']).all()
+
+
+def test_the_node_cloud_has_a_distance_and_a_clip():
+    """Whitened along a strong correlation, the box's corners are off the node cloud: a distance
+    there, and clipping moves the point back onto it."""
+    covariance = np.array([[0.04, -0.0285], [-0.0285, 0.0225]])    # correlation -0.95
+    whitened = Space(mean=[2., 0.], covariance=covariance, params=['amplitude', 'tilt'])
+    emu = Emulator(target, whitened)
+    emu.train(budget=2)
+    low_a, high_a = emu.training.limits['amplitude']
+    low_t, high_t = emu.training.limits['tilt']
+    corner = {'amplitude': high_a * 0.999 + low_a * 0.001, 'tilt': high_t * 0.999 + low_t * 0.001}   # same-sign corner
+    assert [constraint.name for constraint in emu.constraints()] == ['box', 'nodes']
+    violations = emu.violations(**corner)
+    assert float(violations['box']) == 0. and float(violations['nodes']) > 0.
+    out, reported = emu.predict_in_box(**corner)
+    assert np.isfinite(out['pk']).all() and float(reported['nodes']) > 0.
+    with pytest.raises(CoverageError, match='off the node cloud'):
+        emu.predict(**corner)
+
+
+def test_constraints_and_violation_round_trip(tmp_path):
+    from cosmoprimo.emulators.tools import LinearConstraint
+    emu = Emulator(target, space(), constraints=[LinearConstraint('sum', {'amplitude': 1., 'tilt': 1.}, upper=3.)],
+                   violation='nan')
+    emu.train(budget=2)
+    state = emu.__getstate__()
+    again = Emulator.__new__(Emulator)
+    again.__setstate__(state)
+    assert again.violation == 'nan' and again._constraints == emu._constraints
+    # a file written with `coverage`, before `violation` and `constraints` existed
+    state = dict(state)
+    for key in ('violation', 'constraints'):
+        state.pop(key)
+    state['coverage'] = 'warn'
+    old = Emulator.__new__(Emulator)
+    old.__setstate__(state)
+    assert old.violation == 'warn' and old._constraints == []
+
+
 def test_validate_defaults_to_the_target_itself():
     report = trained().validate(
         npoints=10, metric=lambda p, t: float(np.max(np.abs(p['pk'] / t['pk'] - 1.))))

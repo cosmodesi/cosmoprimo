@@ -1743,7 +1743,7 @@ def _check_fiducial(emulator, engine):
             f'parameters to the Space, or set them back to the fiducial values.')
 
 
-def emulated_engine(emulator):
+def emulated_engine(emulator, violation=None):
     """An engine class serving ``emulator``'s predictions, usable anywhere an engine name is.
 
         cosmo = Cosmology(..., engine=emulated_engine(emu))
@@ -1752,7 +1752,16 @@ def emulated_engine(emulator):
     A class, not an instance, because that is what cosmoprimo's engine plumbing takes: ``clone``
     and ``set_engine`` instantiate it themselves against the cosmology being asked about.
     The emulator is then queried with that cosmology's parameters.
+
+    ``violation`` (default: the emulator's own) says what happens where one of the
+    emulator's :meth:`~cosmoprimo.emulators.tools.Emulator.constraints` is violated, as for
+    :meth:`~cosmoprimo.emulators.tools.Emulator.predict`.  With ``'clip'`` the engine predicts at
+    the clipped point (:meth:`~cosmoprimo.emulators.tools.Emulator.predict_in_box`) and records
+    ``{constraint name: distance}`` as the engine instance's ``violations`` -- for a caller that
+    enforces them itself, as desilike's ``CosmoprimoCosmology`` does with its ``Constraint`` nodes.
     """
+    from .tools.emulate import _check_violation
+    violation = _check_violation(emulator.violation if violation is None else violation)
     from cosmoprimo.cosmology import BaseEngine
 
     composite = emulator.section is None
@@ -1786,7 +1795,16 @@ def emulated_engine(emulator):
                         params[name] = engine._get_sigma8_fid()
                     else:
                         raise
-            engine._predicted = emulator.predict(**params)
+            if violation == 'clip':
+                engine._predicted, engine.violations = emulator.predict_in_box(**params)
+            elif violation == emulator.violation:
+                engine._predicted = emulator.predict(**params)
+            else:
+                previous, emulator.violation = emulator.violation, violation
+                try:
+                    engine._predicted = emulator.predict(**params)
+                finally:
+                    emulator.violation = previous
         return engine._predicted
 
     built = {name: section.section_class(source, prefix=f'{name}.' if composite else '')
@@ -1808,12 +1826,16 @@ def emulated_engine(emulator):
         def __init__(self, cosmo, **extra_params):
             super().__init__(cosmo, **extra_params)
             self._predicted = None
+            # {constraint name: distance} at this cosmology (``violation='clip'`` only; set when
+            # the prediction is first made, all zero until then)
+            self.violations = {constraint.name: 0. for constraint in emulator.constraints()}
             # the cosmology this engine was attached to, which `BaseEngine` reads and discards.
             # Kept because a section may need to hand a cosmology to something that takes one --
             # the BAO filter's rs_drag rescaling, which should be this cosmology's own
             self._cosmology = cosmo
             self._Sections = dict(built)
 
+    EmulatedEngine.emulator, EmulatedEngine.violation = emulator, violation
     return EmulatedEngine
 
 

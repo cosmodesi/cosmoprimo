@@ -174,6 +174,26 @@ def test_outside_the_trained_box_raises(trained):
         trained.to_cosmology().clone(h=0.5).get_harmonic().lensed_cl()
 
 
+def test_clip_reports_the_violations_on_the_engine(trained):
+    """``violation='clip'``: no error outside the box, the clipped prediction, and the
+    violations recorded on the engine instance; the default engine still raises."""
+    from cosmoprimo.emulators import emulated_engine
+    engine = emulated_engine(trained, violation='clip')
+    assert engine.violation == 'clip' and engine.emulator is trained
+    base = trained.to_cosmology().clone(engine=engine)
+    inside = base.clone(**POINT)
+    assert np.allclose(inside.get_harmonic().lensed_cl()['tt'], trained.predict(**POINT)['lensed_cl.tt'], rtol=1e-12)
+    assert all(float(value) == 0. for value in inside._engine.violations.values())
+    outside = base.clone(h=0.72, omega_cdm=0.1201)                    # h above its (0.66, 0.70) range
+    cl = outside.get_harmonic().lensed_cl()['tt']
+    expected, violations = trained.predict_in_box(h=0.72, omega_cdm=0.1201)
+    assert np.allclose(cl, expected['lensed_cl.tt'], rtol=1e-12)
+    assert float(outside._engine.violations['box']) > 0.
+    assert np.allclose(outside._engine.violations['box'], violations['box'])
+    with pytest.raises(CoverageError):
+        trained.to_cosmology().clone(h=0.72, omega_cdm=0.1201).get_harmonic().lensed_cl()
+
+
 def test_asking_for_a_spectrum_that_was_not_emulated_raises(trained):
     # NOTE both parameters: cosmoprimo's default input basis is Omega_cdm, so clone(h=...) alone
     # moves omega_cdm too -- straight out of the trained box

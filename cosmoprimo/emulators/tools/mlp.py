@@ -98,7 +98,7 @@ class MLPEngine(BaseEngine):
         low = np.array([self._domain(name)[0] for name in self.params])
         high = np.array([self._domain(name)[1] for name in self.params])
         internal = low + unit * (high - low)
-        return np.array([self._physical(row) for row in internal])
+        return np.array([self.from_internal(row) for row in internal])
 
     # ── fit ───────────────────────────────────────────────────────────────────
     def _standardise(self, outputs):
@@ -123,7 +123,7 @@ class MLPEngine(BaseEngine):
         outputs = np.asarray(outputs, dtype='f8')
         if len(inputs) != len(outputs):
             raise ValueError(f'{len(inputs)} inputs against {len(outputs)} outputs')
-        internal = np.array([self._internal(row) for row in inputs])
+        internal = np.array([self.to_internal(row) for row in inputs])
         self._output_mean, self._output_scale = self._standardise(outputs)
         targets = (outputs - self._output_mean) / self._output_scale
 
@@ -195,7 +195,7 @@ class MLPEngine(BaseEngine):
         if self.layers is None:
             raise ValueError('not fitted')
         xnp = numpy_jax(values)
-        x = self._traced(values)
+        x = self.to_internal(values)
         for weight, bias in self.layers[:-1]:
             x = _activate(x @ xnp.asarray(weight) + xnp.asarray(bias), self.activation, xnp)
         weight, bias = self.layers[-1]

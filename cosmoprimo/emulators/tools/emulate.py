@@ -47,6 +47,7 @@ from cosmoprimo.jax import numpy_jax, use_jax
 from .training import TrainingSet, NodeEvaluationError
 from .space import Space
 from .validation import validate as _validate
+from .constraints import constraint_violations, clip_to_constraints
 
 
 def _relative_rms(prediction, reference):
@@ -74,6 +75,15 @@ class CoverageError(Exception):
     """
 
 
+_VIOLATION = ('raise', 'warn', 'nan', 'clip', 'ignore')
+
+
+def _check_violation(value):
+    if value not in _VIOLATION:
+        raise ValueError(f'violation must be one of {_VIOLATION}, not {value!r}')
+    return value
+
+
 class NotTrained(Exception):
     """The emulator has not been trained yet."""
 
@@ -97,8 +107,15 @@ class Emulator(object):
         regression over a declared basis, see :mod:`polynomial` -- the one to reach for when part
         of the box is a region the calculator refuses, since it needs no complete node set) or
         ``'mlp'``.
-    coverage : str, default='raise'
-        ``'raise'``, ``'warn'`` or ``'ignore'`` outside the trained box.
+    constraints : list, default=None
+        Declarative constraints of the user's own parameters, on top of the built-in ones (the
+        trained box and the node cloud, see :meth:`constraints`): :class:`~.constraints.LinearConstraint`
+        instances, their text form (``'w0_fld + wa_fld < 0'``) or their saved state.  Saved with the emulator.
+    violation : str, default='raise'
+        What :meth:`predict` does where a constraint is violated: ``'raise'`` (eager; NaN when
+        traced), ``'warn'`` (eager; NaN), ``'nan'``, ``'clip'`` (predict at the point clipped into
+        the constraints that clip -- the box and the node cloud -- and leave enforcement to the
+        caller, see :meth:`violations`) or ``'ignore'``.
     options : dict
         Passed to the engine (``levels``, ``budget``, ...).
     """
@@ -110,12 +127,15 @@ class Emulator(object):
     #: predicts confidently and is wrong everywhere.
     version = 1
 
-    def __init__(self, target, space, engine='chebyshev', coverage='raise', **options):
+    def __init__(self, target, space, engine='chebyshev', constraints=None, violation='raise', **options):
+        from .constraints import as_constraint
         if not callable(target):
             raise TypeError(f'target must be callable, `target(params) -> dict`; got '
                             f'{type(target).__name__}')
         self.target, self.space = target, space
-        self.engine_name, self.coverage, self.options = engine, coverage, dict(options)
+        self.engine_name, self.options = engine, dict(options)
+        self.violation = _check_violation(violation)
+        self._constraints = [as_constraint(constraint) for constraint in (constraints or [])]
         self._engines = {}
         self.training = self.training_space()
         names = list(self.training.params)
@@ -393,117 +413,124 @@ class Emulator(object):
         return self
 
     # ── use ───────────────────────────────────────────────────────────────────
+    # ── constraints ───────────────────────────────────────────────────────────
+    def constraints(self):
+        """Every constraint the emulator answers under: the trained box, the node cloud (when the
+        nodes were whitened along a covariance -- otherwise they fill the box and the two would be
+        the same constraint counted twice), then the user's declarative ones.  See :mod:`.constraints`."""
+        from .constraints import BoxConstraint, NodeConstraint
+        located = self._node_engine({name: 0. for name in self.training.params}) if self._engines else None
+        whitened = located is not None and located[0].whitened
+        return [BoxConstraint()] + ([NodeConstraint()] if whitened else []) + list(self._constraints)
+
+    def violations(self, **params):
+        """``{constraint name: distance}`` at *params* (the user's own), 0 where satisfied. Traceable."""
+        return constraint_violations(self.constraints(), self, dict(params), dict(self.to_training(dict(params))))
+
     def _check(self, given, params):
         """``given``: what the user passed. ``params``: the same, in training coordinates.
 
-        The names are always checked; the box only when the values are concrete. Inside a jax
-        trace a parameter has no value to compare, so the check is skipped rather than raising a
-        TracerBoolConversionError -- the price of jitting a prediction is that coverage stops
-        being enforced, so validate eagerly before wrapping a likelihood in ``jit``.
+        The names are always checked; the constraints only when the values are concrete. Inside a
+        jax trace a parameter has no value to compare, so the check is skipped rather than raising
+        a TracerBoolConversionError -- but :meth:`predict` still enforces it on the output (NaN),
+        following cosmoprimo's usual "raise in eager, NaN inside jax" contract (`exception_or_nan`).
+        Returning a silent extrapolation was the old behaviour and it is the dangerous one: a
+        sampler cannot tell a wrong number from a right one, while a NaN maps to -inf.
         """
-        if self.coverage == 'ignore':
-            return
         missing = [name for name in self.space.params if name not in given]
         if missing:
             raise ValueError(f'missing parameters {missing}')
-        if use_jax(*params.values()):
-            # Under a trace there is no value to compare, so the box cannot be checked here --
-            # but it can still be enforced on the output by `predict`: see `outside`,
-            # which follows cosmoprimo's usual "raise in eager, NaN inside jax" contract
-            # (`exception_or_nan`). Returning a silent extrapolation was the old behaviour and
-            # it is the dangerous one: a sampler cannot tell a wrong number from a right one,
-            # while a NaN maps to -inf and simply rejects the point.
+        if self.violation in ('ignore', 'clip', 'nan') or use_jax(*params.values()):
             return
-        # `limits` is in the expansion variable, the value is in the user's parameter, and where a
-        # transform declares those differ the comparison has to be made in one of them. Reported
-        # values stay the user's: an error naming sqrt(m_ncdm) tells nobody what to change.
-        expansion = self.training.forward(params)
-        outside = {name: params[name] for name in self.params
-                   if not (self.training.limits[name][0] <= expansion[name]
-                           <= self.training.limits[name][1])}
-        reason = 'outside the trained box'
-        nodes = self._outside_nodes(params)
-        if not outside and nodes is not None and bool(np.asarray(nodes).all()):
-            # Inside every parameter's own range, but off the node cloud: the box is a rectangle
-            # and the nodes fill a band across it (see `BaseEngine.outside`). Same verdict,
-            # different reason, and the message has to say which or it reads as a lie.
-            outside = {name: params[name] for name in self.params}
-            reason = 'inside the box but off the node cloud it was fitted on'
-        if outside:
-            converted = ('' if self.training is self.space else
-                         f' (the training basis; you gave {dict(given)})')
-            message = (f'{reason}: {outside}{converted}. Extrapolation here is '
-                       f'catastrophic, not gradual -- widen the Space and retrain (nested nodes '
-                       f'mean the existing evaluations are reused), or pass coverage="ignore".')
-            if self.coverage == 'raise':
-                raise CoverageError(message)
-            import warnings
-            warnings.warn(message)
+        violated = [constraint for constraint in self.constraints()
+                    if float(np.asarray(constraint.violation(self, given, params))) > 0.]
+        if not violated:
+            return
+        reasons = '; '.join(constraint.describe(self, given, params) for constraint in violated)
+        converted = ('' if self.training is self.space else
+                     f' (the training basis; you gave {dict(given)})')
+        message = (f'{reasons}{converted}. Extrapolation here is catastrophic, not gradual -- '
+                   f'widen the Space and retrain (nested nodes mean the existing evaluations are '
+                   f'reused), or pass violation="ignore" (or "clip", and enforce the constraints yourself).')
+        if self.violation == 'raise':
+            raise CoverageError(message)
+        import warnings
+        warnings.warn(message)
 
-    def _outside_nodes(self, training):
-        """Boolean (or traced) mask: is this point off the node cloud the engines were fitted on?
+    def _node_engine(self, training):
+        """``(engine, values, fit_params)``: the engine that answers for the node cloud, and *training*
+        in its coordinates; ``None`` when nothing is fitted.
 
         Delegated to an engine, which owns the geometry the nodes were laid out with -- the
         transforms, the whitening rotation, the per-axis domain (see
-        :meth:`~.engines.BaseEngine.outside`). One engine answers for all, since they share the
+        :meth:`~.engines.BaseEngine.distance`). One engine answers for all, since they share the
         node set, but it has to be asked in its own coordinates: an output fitted through
-        :meth:`output_coordinates` has others, and handing it the emulator's would have it judge a
-        point it was never shown. Preferring an engine that uses the emulator's own coordinates is
-        not cosmetic -- which engine comes first is dict order, and that differs between a freshly
-        trained emulator and the same one read back from a file. ``None`` when there is nothing
-        fitted to compare against.
+        :meth:`output_coordinates` has others. Preferring an engine that uses the emulator's own
+        coordinates is not cosmetic -- which engine comes first is dict order, and that differs
+        between a freshly trained emulator and the same one read back from a file.
         """
         if not self._engines:
             return None
         xnp = numpy_jax(*training.values())
         for name, (engine, _, fit_params) in self._engines.items():
             if fit_params is None:
-                values = xnp.stack([xnp.asarray(training[param]) for param in self.params])
-                return engine.outside(values)
+                return engine, xnp.stack([xnp.asarray(training[param]) for param in self.params]), None
         name, (engine, _, fit_params) = next(iter(self._engines.items()))
         mapped = dict(self.output_coordinates(name)[2](training))
-        values = xnp.stack([xnp.asarray(mapped[param]) for param in fit_params])
-        return engine.outside(values)
-
-    def outside(self, training):
-        """Boolean (or traced) mask: is this point somewhere the emulator cannot answer?
-
-        Public, because "will this be answered?" is a question worth asking without paying for a
-        prediction -- a sampler placing its initial population, a prior wanting to match the
-        emulator's actual support.
-
-        Two separate ways to be outside, and a parameter's own range catches only the first:
-
-        * outside a parameter's own low/high pair -- the axis-aligned box;
-        * inside every one of those, yet off the band the nodes actually fill. For correlated
-          parameters that is most of the box's volume (measured at correlation -0.95: 70.6%; on
-          eight Planck-like parameters only 6% of a uniform draw from the box is on the band),
-          and an interpolant answers there from coefficients nothing constrained.
-
-        *training* is in the training basis, as :meth:`to_training` returns it. Elementwise, so a
-        batched/vmapped call marks only the offending members. ``None`` when nothing can be
-        compared, which is never the case once the values are concrete or traced.
-        """
-        xnp = numpy_jax(*training.values())
-        # into the expansion variable first: `limits` is in it, `training` is not (see
-        # `Space.forward`). `BaseEngine.outside`, called below, does its own equivalent mapping.
-        expansion = self.training.forward(training)
-        mask = None
-        for name in self.params:
-            lo, hi = self.training.limits[name]
-            value = xnp.asarray(expansion[name])
-            this = (value < lo) | (value > hi)
-            mask = this if mask is None else (mask | this)
-        nodes = self._outside_nodes(training)
-        if nodes is not None:
-            mask = nodes if mask is None else (mask | nodes)
-        return mask
+        return engine, xnp.stack([xnp.asarray(mapped[param]) for param in fit_params]), fit_params
 
     def predict(self, **params):
         if not self.trained:
             raise NotTrained('call train() first')
         training = dict(self.to_training(dict(params)))
         self._check(params, training)
+        if self.violation == 'clip':
+            training = clip_to_constraints(self.constraints(), self, training)
+        out = self._evaluate(training)
+        if self.violation not in ('ignore', 'clip'):
+            # Enforce the constraints on the output. Eager calls already raised in `_check`; this
+            # is what makes the guard survive a jit, where the check itself cannot run. NaN
+            # propagates to -inf in a posterior, so a violating point is rejected rather than
+            # silently extrapolated -- the engines' own words: "catastrophic, not gradual".
+            mask = None
+            for violation in constraint_violations(self.constraints(), self, dict(params), training).values():
+                mask = (violation > 0.) if mask is None else (mask | (violation > 0.))
+            if mask is not None:
+                # the outputs as well as the parameters: inside someone else's jit, an operation
+                # on constant inputs is still staged out, so a prediction made at concrete
+                # parameters comes back as a tracer -- which is exactly what happens when a
+                # pipeline jits over one parameter and holds this emulator's own fixed. Choosing
+                # the numpy from the parameters alone then picks plain numpy and the write of a
+                # nan into a traced array raises.
+                xnp = numpy_jax(*training.values(), *out.values(), mask)
+                out = {name: xnp.where(xnp.reshape(mask, mask.shape + (1,) * (xnp.ndim(value) - xnp.ndim(mask)))
+                                       if xnp.ndim(value) > xnp.ndim(mask) else mask,
+                                       xnp.nan, value)
+                       for name, value in out.items()}
+        return out
+
+    def predict_in_box(self, **params):
+        """Prediction at *params* clipped into the constraints that clip (the trained box,
+        then the node cloud), and ``{constraint name: distance}`` at *params* itself.
+
+        Whatever :attr:`violation` says: for a caller that turns the distances into constraints
+        of its own -- desilike's ``Constraint``, a hard wall for a sampler and a soft one for an
+        optimiser.  Nothing is silent here, the distances come back with the prediction; inside
+        every constraint the prediction is :meth:`predict`'s.  Declarative constraints
+        (:class:`~.constraints.LinearConstraint`) are reported, not clipped.
+        """
+        if not self.trained:
+            raise NotTrained('call train() first')
+        missing = [name for name in self.space.params if name not in params]
+        if missing:
+            raise ValueError(f'missing parameters {missing}')
+        training = dict(self.to_training(dict(params)))
+        constraints = self.constraints()
+        violations = constraint_violations(constraints, self, dict(params), training)
+        return self._evaluate(clip_to_constraints(constraints, self, training)), violations
+
+    def _evaluate(self, training):
+        """The engines' prediction at *training* parameters, with no check."""
         # `xnp` so a traced parameter stays traced: np.array() on a tracer raises, and the whole
         # point of the engines being jax-friendly is that a likelihood can jit through this
         xnp = numpy_jax(*training.values())
@@ -524,26 +551,7 @@ class Emulator(object):
                 point = coordinates[key]
             predicted[name] = xnp.reshape(engine.predict(point), shape)
         # `transform` saw training parameters at fit time, so its inverse must see them too
-        out = self.inverse_transform(predicted, training)
-        if self.coverage != 'ignore':
-            # Enforce the box on the output. Eager calls already raised in `_check`; this is what
-            # makes the guard survive a jit, where the check itself cannot run. NaN propagates to
-            # -inf in a posterior, so an out-of-box point is rejected rather than silently
-            # extrapolated -- the engines' own words: "catastrophic, not gradual".
-            mask = self.outside(training)
-            if mask is not None:
-                # the outputs as well as the parameters: inside someone else's jit, an operation
-                # on constant inputs is still staged out, so a prediction made at concrete
-                # parameters comes back as a tracer -- which is exactly what happens when a
-                # pipeline jits over one parameter and holds this emulator's own fixed. Choosing
-                # the numpy from the parameters alone then picks plain numpy and the write of a
-                # nan into a traced array raises.
-                xnp = numpy_jax(*training.values(), *out.values(), mask)
-                out = {name: xnp.where(xnp.reshape(mask, mask.shape + (1,) * (xnp.ndim(value) - xnp.ndim(mask)))
-                                       if xnp.ndim(value) > xnp.ndim(mask) else mask,
-                                       xnp.nan, value)
-                       for name, value in out.items()}
-        return out
+        return self.inverse_transform(predicted, training)
 
     __call__ = predict
 
@@ -614,7 +622,11 @@ class Emulator(object):
                 'space': self.space.__getstate__(),
                 'training': self.training.__getstate__(),
                 'params': list(self.params), 'engine_name': self.engine_name,
-                'coverage': self.coverage, 'options': dict(self.options),
+                'violation': self.violation,
+                # for a reader older than `violation`, which knows this key only
+                'coverage': self.violation if self.violation in ('raise', 'warn', 'ignore') else 'raise',
+                'constraints': [constraint.__getstate__() for constraint in self._constraints],
+                'options': dict(self.options),
                 'engines': {name: (engine.__getstate__(), tuple(shape),
                                    None if fit_params is None else list(fit_params))
                             for name, (engine, shape, fit_params) in self._engines.items()}}
@@ -634,7 +646,11 @@ class Emulator(object):
         self.training = Space.__new__(Space)
         self.training.__setstate__(state['training'])
         self.params, self.engine_name = list(state['params']), state['engine_name']
-        self.coverage, self.options = state['coverage'], dict(state['options'])
+        # `coverage`: the name before `violation`, the only one a file written then carries
+        from .constraints import constraint_from_state
+        self.violation = _check_violation(state.get('violation', state.get('coverage', 'raise')))
+        self._constraints = [constraint_from_state(constraint) for constraint in state.get('constraints', [])]
+        self.options = dict(state['options'])
         # An entry is `(engine, shape, params)` -- the coordinates that output was fitted in,
         # `None` for the emulator's own. A file written before those existed holds a pair, and a
         # pair says exactly one thing, so it is read rather than refused: these files are hours of

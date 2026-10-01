@@ -378,8 +378,8 @@ class PolynomialEngine(LinearBasisEngine):
             # A sample is in the expansion variable: transformed already, and not whitened. So
             # the two coordinates it has to reach are each half of the usual round trip --
             # whiten it for the interpolant's own coordinate, invert the transform for the
-            # calculator's parameter -- and `_internal` / `_physical`, which each do both
-            # halves, are the wrong maps here. Putting a chain sample through `_physical`
+            # calculator's parameter -- and `to_internal` / `from_internal`, which each do both
+            # halves, are the wrong maps here. Putting a chain sample through `from_internal`
             # unwhitens a point that was never whitened: measured on the production CMB box,
             # that alone took the fit from 2e-3 to a median error of 159.
             # Shuffled, because a chain's rows are serially correlated -- taking the first
@@ -394,7 +394,7 @@ class PolynomialEngine(LinearBasisEngine):
         else:
             unit = qmc.Sobol(d=len(self.params), scramble=True, seed=self.seed).random(npool)
             internal = draw_measure(unit, box, self.measure)
-            physical = np.array([self._physical(row) for row in internal])
+            physical = np.array([self.from_internal(row) for row in internal])
         npool = len(internal)
 
         keep = self._valid_mask(physical)
@@ -448,7 +448,7 @@ class PolynomialEngine(LinearBasisEngine):
         box = np.array([self._domain(name) for name in self.params])
         nterms = len(powers)
 
-        internal = np.array([self._internal(row) for row in inputs])
+        internal = np.array([self.to_internal(row) for row in inputs])
         design = np.asarray(tensor_basis(internal.T, powers, box, basis=self.basis)).T
 
         finite = np.isfinite(outputs).all(axis=1) & np.isfinite(design).all(axis=1)
