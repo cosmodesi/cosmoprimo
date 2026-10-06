@@ -1,401 +1,397 @@
-import os
-import re
-import sys
-import time
-import logging
-import traceback
+"""Shared polynomial-basis / stencil mathematics for emulators.
+
+Single home for the node, weight and index-set constructions used by both the cosmoprimo
+emulator engines and desilike's graph-level emulators:
+
+- uniform centered finite-difference stencils (:func:`fd_stencil`);
+- polynomial-interpolation (Fornberg-type) derivative weights at an arbitrary point from
+  arbitrary nodes (:func:`interpolation_weights`) -- the correct replacement for shifted
+  uniform stencils near prior boundaries (a shifted stencil evaluated with centered weights
+  silently returns the derivative at the shifted point, not the requested one);
+- Chebyshev machinery: values (:func:`chebyshev_values`), Lobatto nodes
+  (:func:`chebyshev_lobatto_nodes`) and the per-dimension change of basis
+  (:func:`chebyshev_vandermonde_inverse`);
+- named expansion-variable transforms (:data:`TRANSFORMS`), e.g. ``'sqrt'`` -- the natural
+  variable for the neutrino mass (free-streaming scale ~ sqrt(m));
+- anisotropic Smolyak sparse grids: nested Chebyshev-Lobatto levels
+  (:func:`nested_level_nodes`) and the admissible level set with combination-technique
+  coefficients (:func:`smolyak_combination`);
+- per-parameter option dicts with a ``'*'`` default (:func:`expand_dict`);
+- free multi-index sets (:func:`multi_index_set`) and the tensor-product basis they address
+  (:func:`tensor_basis`), which is what a *regression* over a polynomial basis needs: a
+  collocation grid ties its index set to its node set, a regression does not.
+
+Static (fit-time) constructions use plain numpy; value-dependent functions dispatch through
+:func:`cosmoprimo.jax.numpy_jax`, so they work both eagerly and inside jax traces.
+"""
+
+import itertools
+import math
 
 import numpy as np
 
-
-"""A few utilities."""
-
-
-logger = logging.getLogger('Utils')
+from cosmoprimo.jax import numpy as jnp, numpy_jax
 
 
-def is_sequence(item):
-    """Whether input item is a tuple or list."""
-    return isinstance(item, (list, tuple))
-
-
-def exception_handler(exc_type, exc_value, exc_traceback):
-    """Print exception with a logger."""
-    # Do not print traceback if the exception has been handled and logged
-    _logger_name = 'Exception'
-    log = logging.getLogger(_logger_name)
-    line = '=' * 100
-    # log.critical(line[len(_logger_name) + 5:] + '\n' + ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)) + line)
-    log.critical('\n' + line + '\n' + ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)) + line)
-    if exc_type is KeyboardInterrupt:
-        log.critical('Interrupted by the user.')
-    else:
-        log.critical('An error occured.')
-
-
-def mkdir(dirname):
-    """Try to create ``dirname`` and catch :class:`OSError`."""
-    try:
-        os.makedirs(dirname)  # MPI...
-    except OSError:
-        return
-
-
-def setup_logging(level=logging.INFO, stream=sys.stdout, filename=None, filemode='w', **kwargs):
+def fd_stencil(order, acc=2):
     """
-    Set up logging.
+    Uniform centered finite-difference stencil for the order-th derivative at accuracy acc.
+
+    Returns (offsets, coeffs): integer offsets and weights such that
+    ``f^(order)(x) ~ sum(coeffs[i] * f(x + offsets[i] * h)) / h^order``.
+    Zero-weight points (e.g. the center for odd orders) are omitted.
+    """
+    nside = (order + acc - 1) // 2
+    offsets = np.arange(-nside, nside + 1)
+    # Vandermonde system: sum_j c_j * j^k = order! * delta(k, order)
+    matrix = np.array([[float(offset) ** k for offset in offsets] for k in range(len(offsets))])
+    rhs = np.zeros(len(offsets))
+    rhs[order] = float(math.factorial(order))
+    coeffs = np.linalg.solve(matrix, rhs)
+    mask = np.abs(coeffs) > 1e-12
+    return offsets[mask], coeffs[mask]
+
+
+def interpolation_weights(nodes, x0, order, scale=None):
+    """
+    Polynomial-interpolation weights for the order-th derivative at *x0* from *nodes*.
+
+    Solves the Vandermonde system ``sum_j w_j u_j^r = r! delta(r, order)`` in the scaled
+    positions ``u_j = (nodes_j - x0) / scale``; the derivative is then
+    ``f^(order)(x0) = sum_j w_j f(nodes_j)`` (the returned weights include the
+    ``1 / scale^order`` factor). Exact for any polynomial of degree < len(nodes); reduces
+    to the classical centered weights on a symmetric uniform grid.
+
+    *x0* may carry batch dimensions (shape ``B``); *nodes* is 1D of length ``n``; the
+    returned weights have shape ``(*B, n)``. Dispatches on the input types, so *x0* may be
+    a jax tracer.
+    """
+    jnp = numpy_jax(x0)
+    nodes = np.asarray(nodes, dtype='f8')
+    nnodes = len(nodes)
+    if order >= nnodes:
+        raise ValueError(f'derivative order {order} needs more than {nnodes} nodes')
+    if scale is None:
+        scale = 0.5 * (nodes.max() - nodes.min()) or 1.
+    rhs = np.zeros(nnodes)
+    rhs[order] = float(math.factorial(order))
+    x0 = jnp.asarray(x0)
+    scaled = (nodes - x0[..., None]) / scale  # (*B, n)
+    rows = [jnp.ones_like(scaled)]
+    for _ in range(nnodes - 1):
+        rows.append(rows[-1] * scaled)
+    matrix = jnp.stack(rows, axis=-2)  # (*B, n, n)
+    rhs_b = jnp.broadcast_to(jnp.asarray(rhs), matrix.shape[:-1])
+    return jnp.linalg.solve(matrix, rhs_b[..., None])[..., 0] / scale ** order
+
+
+def chebyshev_values(t, nmax):
+    """Chebyshev polynomials ``T_0..T_{nmax}`` at *t* (scalar or array), shape ``(nmax + 1, *t.shape)``."""
+    jnp = numpy_jax(t)
+    t = jnp.asarray(t)
+    values = [jnp.ones_like(t), t]
+    for _ in range(nmax - 1):
+        values.append(2. * t * values[-1] - values[-2])
+    return jnp.stack(values[:nmax + 1])
+
+
+def legendre_values(t, nmax):
+    """Legendre polynomials ``P_0..P_{nmax}`` at *t*, shape ``(nmax + 1, *t.shape)``.
+
+    The companion of :func:`chebyshev_values`, and the right family when the samples are drawn
+    uniformly over the box rather than from the arcsine measure: a least-squares fit is best
+    conditioned when its basis is orthonormal under the measure the points came from, and
+    Legendre is the family orthogonal under the uniform one.
+    """
+    jnp = numpy_jax(t)
+    t = jnp.asarray(t)
+    values = [jnp.ones_like(t), t]
+    for degree in range(1, nmax):
+        values.append(((2 * degree + 1) * t * values[-1] - degree * values[-2]) / (degree + 1))
+    return jnp.stack(values[:nmax + 1])
+
+
+#: The orthogonal families a tensor basis can be built from, by name.
+BASES = {'chebyshev': chebyshev_values, 'legendre': legendre_values}
+
+
+def tensor_basis(values, powers, domains, basis='chebyshev'):
+    r"""Evaluate the tensor-product basis addressed by *powers*.
+
+    .. math:: \phi_k(x) = \prod_d Q_{\alpha_{kd}}\!\left(s_d(x_d)\right),
+
+    with ``Q`` the family named by *basis* and ``s_d`` the affine map taking ``domains[d]`` onto
+    ``[-1, 1]``. One function serves three callers that have to agree exactly, or the fit and the
+    evaluation are in different bases: an interpolant's ``predict``, the design matrix of a
+    least-squares fit, and the candidate pool a point selection scores.
 
     Parameters
     ----------
-    level : string, int, default=logging.INFO
-        Logging level.
-
-    stream : _io.TextIOWrapper, default=sys.stdout
-        Where to stream.
-
-    filename : string, default=None
-        If not ``None`` stream to file name.
-
-    filemode : string, default='w'
-        Mode to open file, only used if filename is not ``None``.
-
-    kwargs : dict
-        Other arguments for :func:`logging.basicConfig`.
-    """
-    # Cannot provide stream and filename kwargs at the same time to logging.basicConfig, so handle different cases
-    # Thanks to https://stackoverflow.com/questions/30861524/logging-basicconfig-not-creating-log-file-when-i-run-in-pycharm
-    if isinstance(level, str):
-        level = {'info': logging.INFO, 'debug': logging.DEBUG, 'warning': logging.WARNING}[level.lower()]
-    for handler in logging.root.handlers:
-        logging.root.removeHandler(handler)
-
-    t0 = time.time()
-
-    class MyFormatter(logging.Formatter):
-
-        def format(self, record):
-            self._style._fmt = '[%09.2f] ' % (time.time() - t0) + ' %(asctime)s %(name)-28s %(levelname)-8s %(message)s'
-            return super(MyFormatter, self).format(record)
-
-    fmt = MyFormatter(datefmt='%m-%d %H:%M ')
-    if filename is not None:
-        mkdir(os.path.dirname(filename))
-        handler = logging.FileHandler(filename, mode=filemode)
-    else:
-        handler = logging.StreamHandler(stream=stream)
-    handler.setFormatter(fmt)
-    logging.basicConfig(level=level, handlers=[handler], **kwargs)
-    sys.excepthook = exception_handler
-
-
-class BaseMetaClass(type):
-
-    """Metaclass to add logging attributes to :class:`BaseClass` derived classes."""
-
-    def __new__(meta, name, bases, class_dict):
-        cls = super().__new__(meta, name, bases, class_dict)
-        cls.set_logger()
-        return cls
-
-    def set_logger(cls):
-        """
-        Add attributes for logging:
-
-        - logger
-        - methods log_debug, log_info, log_warning, log_error, log_critical
-        """
-        cls.logger = logging.getLogger(cls.__name__)
-
-        def make_logger(level):
-
-            @classmethod
-            def logger(cls, *args, **kwargs):
-                return getattr(cls.logger, level)(*args, **kwargs)
-
-            return logger
-
-        for level in ['debug', 'info', 'warning', 'error', 'critical']:
-            setattr(cls, 'log_{}'.format(level), make_logger(level))
-
-
-class BaseClass(object, metaclass=BaseMetaClass):
-    """
-    Base class that implements :meth:`copy`.
-    To be used throughout this package.
-    """
-    def __copy__(self, *args, **kwargs):
-        new = self.__class__.__new__(self.__class__)
-        new.__dict__.update(self.__dict__)
-        return new
-
-    def copy(self, *args, **kwargs):
-        return self.__copy__(*args, **kwargs)
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-
-    @classmethod
-    def from_state(cls, state):
-        new = cls.__new__(cls)
-        new.__setstate__(state)
-        return new
-
-    def save(self, filename):
-        """Save to ``filename``."""
-        self.log_info('Saving {}.'.format(filename))
-        mkdir(os.path.dirname(filename))
-        np.save(filename, self.__getstate__(), allow_pickle=True)
-
-    @classmethod
-    def load(cls, filename):
-        cls.log_info('Loading {}.'.format(filename))
-        state = np.load(filename, allow_pickle=True)[()]
-        new = cls.from_state(state)
-        return new
-
-
-def find_names(allnames, name):
-    """
-    Search parameter name ``name`` in list of names ``allnames``,
-    matching template forms ``[::]``;
-    return corresponding parameter names.
-    Contrary to :func:`find_names_latex`, it does not handle latex strings,
-    but can take a list of parameter names as ``name``
-    (thus returning the concatenated list of matching names in ``allnames``).
-
-    >>> find_names(['a_1', 'a_2', 'b_1', 'c_2'], ['a_[:]', 'b_[:]'])
-    ['a_1', 'a_2', 'b_1']
-
-    Parameters
-    ----------
-    allnames : list
-        List of parameter names (strings).
-
-    name : list, str
-        List of parameter name(s) to match in ``allnames``.
+    values : array
+        ``(nparams,)`` for one point, or ``(nparams, npoints)`` for many -- parameters first,
+        which is the layout :meth:`~.engines.BaseEngine.to_internal` returns, and what lets one point
+        and a whole design matrix share this code.
+    powers : array
+        ``(nterms, nparams)`` multi-indices, e.g. from :func:`multi_index_set`.
+    domains : array
+        ``(nparams, 2)`` low/high per axis, in the same coordinates as *values*.
+    basis : str, default='chebyshev'
+        A key of :data:`BASES`.
 
     Returns
     -------
-    toret : list
-        List of parameter names (strings).
+    phi : array
+        ``(nterms,)`` or ``(nterms, npoints)``.
+
+    Dispatches through :func:`cosmoprimo.jax.numpy_jax`, so it is traceable.
     """
-    if not is_sequence(allnames):
-        allnames = [allnames]
-
-    if is_sequence(name):
-        toret = []
-        for nn in name:
-            for n in find_names(allnames, nn):
-                if n not in toret:
-                    toret.append(n)
-        return toret
-
-    if isinstance(name, re.Pattern):
-        pattern = name
-    else:
-        #name = fnmatch.translate(name)  # does weird things to -
-        pattern = name.replace('*', '.*?') + '$'  # ? for non-greedy, $ to match end of string
-    toret = []
-    for paramname in allnames:
-        match = re.match(pattern, paramname)
-        if match:
-            toret.append(paramname)
-    return toret
+    if basis not in BASES:
+        raise ValueError(f'unknown basis {basis!r}; available {sorted(BASES)}')
+    evaluate = BASES[basis]
+    xnp = numpy_jax(values)
+    values = xnp.asarray(values)
+    powers = np.asarray(powers)
+    domains = np.asarray(domains, dtype='f8')
+    factors = []
+    for index in range(powers.shape[1]):
+        low, high = domains[index]
+        scaled = (2. * values[index] - low - high) / (high - low)
+        table = evaluate(scaled, int(powers[:, index].max()))
+        factors.append(table[powers[:, index]])
+    return xnp.prod(xnp.stack(factors), axis=0)
 
 
-def expand_dict(di, names):
-    """
-    Expand input dictionary, taking care of wildcards, e.g.:
-
-    >>> expand_dict({'*': 2}, ['a', 'b'])
-    {'a': 2, 'b': 2}
-    >>> expand_dict({'a*': 2, 'b': 1}, ['a1', 'a2', 'b'])
-    {'a1': 2, 'a2': 2, 'b': 1}
-    """
-    toret = dict.fromkeys(names)
-    if is_sequence(di):
-        di = dict(zip(names, di))
-    if not hasattr(di, 'items'):
-        di = {'*': di}
-    for template, value in di.items():
-        for tmpname in find_names(names, template):
-            toret[tmpname] = value
-    return toret
+def expand_dict(value, names, label=''):
+    """``{name: value}`` from an int or a dict, whose ``'*'`` key, if any, is the default."""
+    if not isinstance(value, dict):
+        return {name: value for name in names}
+    default = value.get('*', None)
+    unknown = [name for name in value if name != '*' and name not in names]
+    if unknown:
+        raise ValueError(f'{label} names unknown parameters {unknown}; have {list(names)}')
+    if default is None:
+        missing = [name for name in names if name not in value]
+        if missing:
+            raise ValueError(f'{label} is missing {missing}; give them, or a "*" default')
+    return {name: value.get(name, default) for name in names}
 
 
-def deep_eq(obj1, obj2, equal_nan=True):
-    """(Recursively) test equality between ``obj1`` and ``obj2``."""
-    from cosmoprimo import jax
-    if type(obj2) is type(obj1):
-        if isinstance(obj1, dict):
-            if obj2.keys() == obj1.keys():
-                return all(deep_eq(obj1[name], obj2[name]) for name in obj1)
-        elif isinstance(obj1, (tuple, list)):
-            if len(obj2) == len(obj1):
-                return all(deep_eq(o1, o2) for o1, o2 in zip(obj1, obj2))
-        elif isinstance(obj1, (np.ndarray,) + jax.array_types):
-            return np.array_equal(obj2, obj1, equal_nan=equal_nan)
-        else:
-            return obj2 == obj1
-    return False
+def multi_index_set(orders, budget=None, interaction='total'):
+    """The multi-indices a polynomial basis keeps: per-axis degree caps, cut by an interaction rule.
 
-
-def subspace(X, precision=None, npcs=None, chi2min=None, fweights=None, aweights=None):
-    r"""
-    Project input values ``X`` to a subspace.
-    See https://arxiv.org/pdf/2009.03311.pdf
+    A collocation grid has no such choice -- its index set is whatever makes its node set
+    unisolvent. A regression does, and that choice is where the dimensional scaling is won or
+    lost: at 6 parameters and degree 3, the full tensor product holds 4096 terms, total degree
+    holds 84, and the hyperbolic cross holds 34.
 
     Parameters
     ----------
-    X : array
-        Array of shape (number of samples, ndim).
-
-    precision : array, default=None
-        Optionally, precision matrix, to normalize ``X``.
-
-    npcs : int, default=None
-        Optionally, number (<= ndim) of principal components to keep.
-        If ``None``, number of components to be kept is fixed by ``chi2min``.
-
-    chi2min : int, default=None
-        In case ``npcs`` is provided, threshold for the maximum difference in :math:`\chi^{2}`
-        w.r.t. keeping all components. If ``None``, all components are kept.
-
-    fweights : array, default=None
-        Optionally, integer frequency weights, of shape (number of samples,).
-
-    aweights : array, default=None
-        Optionally, observation weights.
+    orders : sequence of int
+        Maximum degree per axis. Anisotropic, so an axis the output barely depends on can be
+        given 1, and every term above that disappears along with the samples only it needed.
+    budget : int, default=None
+        The interaction cut, ``max(orders)`` by default -- which for ``'total'`` is the full
+        polynomial of that degree. Lowering it drops mixed terms and leaves the pure ones alone.
+    interaction : str, default='total'
+        - ``'total'``: total degree, ``sum(alpha) <= budget``.
+        - ``'hyperbolic'``: the hyperbolic cross, ``prod(alpha + 1) <= budget + 1``. Keeps every
+          pure term the caps allow -- a degree-``budget`` term along one axis costs exactly its
+          budget -- while a term mixing several axes is charged the product, so high-order
+          interactions are what vanishes first. This is the sparse rule, and it encodes the same
+          premise a Smolyak grid is built on: a smooth function's mixed high derivatives are far
+          smaller than its pure ones.
+        - ``'tensor'``: no cut, the full product of the per-axis caps.
 
     Returns
     -------
-    eigenvectors : array of shape (ndim, npcs)
-        Eigenvectors.
+    powers : array
+        ``(nterms, nparams)`` int, lexicographically sorted -- the ordering
+        :meth:`~.engines.ChebyshevEngine.fit` also gives its sparse coefficients, so the two
+        engines' ``powers`` mean the same thing.
     """
-    X = np.asarray(X)
-    X = X.reshape(X.shape[0], -1)
-    if precision is None:
-        L = np.array(1.)
-    else:
-        L = np.linalg.cholesky(precision)
-    X = X.dot(L)
-    cov = np.cov(X, rowvar=False, ddof=0, fweights=fweights, aweights=aweights)
-    size = cov.shape[0]
-    if npcs is not None:
-        if npcs > size:
-            raise ValueError('Number of requested components is {0:d}, but dimension is {1:d} < {0:d}.'.format(npcs, size))
-        import scipy as sp
-        eigenvalues, eigenvectors = sp.linalg.eigh(cov, subset_by_index=[size - 1 - npcs, size - 1])
-    else:
-        eigenvalues, eigenvectors = np.linalg.eigh(cov)
-    if npcs is None:
-        if chi2min is None:
-            npcs = size
-        else:
-            npcs = size - np.sum(np.cumsum(eigenvalues) < chi2min)
-        eigenvectors = eigenvectors[..., -npcs:]
-    return L.dot(eigenvectors)
+    if interaction not in ('total', 'hyperbolic', 'tensor'):
+        raise ValueError(f"interaction must be 'total', 'hyperbolic' or 'tensor'; "
+                         f'got {interaction!r}')
+    orders = [int(order) for order in orders]
+    if any(order < 0 for order in orders):
+        raise ValueError(f'orders must be non-negative; got {orders}')
+    ndim = len(orders)
+    budget = (max(orders) if orders else 0) if budget is None else int(budget)
+    alpha, indices = [0] * ndim, []
+
+    def cost(depth):
+        """The rule's cost of the first *depth* entries. Non-decreasing in every entry, which is
+        what lets the enumeration prune rather than filter a full tensor product it could never
+        afford to build in the first place."""
+        if interaction == 'total':
+            return sum(alpha[:depth])
+        if interaction == 'hyperbolic':
+            product = 1
+            for value in alpha[:depth]:
+                product *= value + 1
+            return product - 1
+        return 0
+
+    def recurse(depth):
+        if depth == ndim:
+            indices.append(tuple(alpha))
+            return
+        for value in range(orders[depth] + 1):
+            alpha[depth] = value
+            if cost(depth + 1) > budget:
+                break               # monotone in `value`: nothing larger can fit either
+            recurse(depth + 1)
+        alpha[depth] = 0
+
+    recurse(0)
+    return np.array(sorted(indices), dtype='i4').reshape(-1, ndim)
 
 
-import ast
+def chebyshev_lobatto_nodes(nnodes, limits=(-1., 1.)):
+    """*nnodes* Chebyshev-Lobatto nodes spanning *limits* (endpoints included), sorted ascending."""
+    lo, hi = (float(lim) for lim in limits)
+    if nnodes == 1:
+        return np.array([0.5 * (lo + hi)])
+    angles = np.pi * np.arange(nnodes) / (nnodes - 1)
+    return np.sort(0.5 * (lo + hi) + 0.5 * (hi - lo) * np.cos(angles))
 
 
-def evaluate(value, type=None, locals=None, verbose=True):
+def chebyshev_vandermonde_inverse(nodes, limits=(-1., 1.)):
+    """Inverse Chebyshev Vandermonde at *nodes* (in *limits*), mapping values at the nodes to
+    Chebyshev coefficients of degree ``len(nodes) - 1``: ``coeffs = inverse @ values``."""
+    lo, hi = (float(lim) for lim in limits)
+    t_nodes = (2. * np.asarray(nodes, dtype='f8') - lo - hi) / (hi - lo)
+    return np.linalg.inv(np.polynomial.chebyshev.chebvander(t_nodes, len(t_nodes) - 1))
+
+
+def _sqrt_forward(x):
+    jnp = numpy_jax(x)
+    return jnp.sqrt(jnp.maximum(x, 0.))
+
+
+# Named expansion-variable transforms: name -> (forward, inverse), forward monotone
+# increasing. With a transform, step sizes / anchors / collocation ranges are in
+# transformed units, and derivatives are w.r.t. the transformed variable.
+def _log_forward(x):
+    xnp = numpy_jax(x)
+    return xnp.log(x)
+
+
+def _log_inverse(u):
+    xnp = numpy_jax(u)
+    return xnp.exp(u)
+
+
+#: Named expansion-variable transforms. ``'log'`` is the natural variable for a strictly positive
+#: quantity -- a density fraction, a mass -- and it does for zero what ``'logit_w0pwa'`` does for
+#: the dark-energy bound: makes it unreachable rather than an edge a node set has to be cut back
+#: from.
+TRANSFORMS = {'sqrt': (_sqrt_forward, lambda u: u * u), 'log': (_log_forward, _log_inverse)}
+
+
+def nested_level_nodes(level, limits=(-1., 1.)):
+    """Nodes of the nested Chebyshev-Lobatto rule at *level*: 1 node at level 0,
+    ``2^level + 1`` nodes otherwise; each level's nodes contain the previous level's."""
+    return chebyshev_lobatto_nodes(1 if level == 0 else 2 ** level + 1, limits=limits)
+
+
+def smolyak_combination(max_levels, budget):
     """
-    Evaluate several lines of input, returning the result of the last line.
-
-    Reference
-    ---------
-    https://stackoverflow.com/questions/12698028/why-is-pythons-eval-rejecting-this-multiline-string-and-how-can-i-fix-it
+    Anisotropic Smolyak level set and combination-technique coefficients.
 
     Parameters
     ----------
-    value : str, any type
-        If value is string, call ``eval``, with input ``locals`` (dictionary of local objects).
-        "np", "sp", "jnp", "jsp" are recognized as numpy, scipy, jax.numpy, jax.scipy (if jax is installed).
-
-    type : type, default=None
-        If not ``None``, cast output ``value`` with ``type``.
-
-    locals : dict, default=None
-        Dictionary of local objects to use when calling ``eval``.
+    max_levels : sequence of int
+        Maximum 1-D level per dimension.
+    budget : int
+        Total level budget: the admissible set is ``{l : l_i <= max_levels[i], sum l_i <= budget}``.
 
     Returns
     -------
-    value : evaluated value.
-
+    dict
+        ``{level_vector: coefficient}`` restricted to non-zero combination coefficients
+        ``c_l = sum_{z in {0,1}^d} (-1)^{|z|} [l + z admissible]``.
     """
-    import numpy as np
-    import scipy as sp
-    if isinstance(value, str):
-        from cosmoprimo.jax import numpy as jnp
-        from cosmoprimo.jax import scipy as jsp
-        locals = dict(locals or {})
-        globals = locals | {'np': np, 'sp': sp, 'jnp': jnp, 'jsp': jsp}  # FIXME: hack for nested loops
-        tree = ast.parse(value)
-        eval_expr = ast.Expression(tree.body[-1].value)
-        exec_expr = ast.Module(tree.body[:-1], type_ignores=[])
-        try:
-            exec(compile(exec_expr, 'file', 'exec'), globals, locals)
-            value = eval(compile(eval_expr, 'file', 'eval'), globals, locals)
-        except Exception as exc:
-            if verbose:
-                raise Exception('unable to evaluate {} with locals = {} and globals = {}'.format(value, locals, globals)) from exc
-            raise exc
-    if type is not None:
-        value = type(value)
-    return value
+    max_levels = [int(level) for level in max_levels]
+    ndims = len(max_levels)
+    level_vectors = [lv for lv in itertools.product(*[range(level + 1) for level in max_levels])
+                     if sum(lv) <= budget]
+    level_set = set(level_vectors)
+    combination = {}
+    for lv in level_vectors:
+        coeff = 0
+        for z in itertools.product((0, 1), repeat=ndims):
+            if tuple(l + dz for l, dz in zip(lv, z)) in level_set:
+                coeff += (-1) ** sum(z)
+        if coeff != 0:
+            combination[lv] = coeff
+    return combination
 
 
-def download(url, target, authorization=None, size=None):
+def cardinal_cubic_weights(nodes, x):
+    """Dense local-cubic-Lagrange weights of *x* on uniform *nodes*, shape ``(nnodes,)``.
+
+    Same 4-node bracketing scheme as folps' fog_collocation_weights (fourth-order accurate,
+    weights sum to one), jax-traceable in *x*.
     """
-    Download file from input ``url``.
+    nodes = jnp.asarray(nodes)
+    nnodes = nodes.shape[0]
+    step = nodes[1] - nodes[0]
+    position = (jnp.clip(x, nodes[0], nodes[-1]) - nodes[0]) / step
+    index = jnp.clip(jnp.floor(position) - 1, 0, nnodes - 4)
+    offset = position - (index + 1.)
+    lagrange = [-offset * (offset - 1.) * (offset - 2.) / 6.,
+                (offset + 1.) * (offset - 1.) * (offset - 2.) / 2.,
+                -(offset + 1.) * offset * (offset - 2.) / 2.,
+                (offset + 1.) * offset * (offset - 1.) / 6.]
+    node_index = jnp.arange(nnodes)
+    weights = 0.
+    for shift, weight in enumerate(lagrange):
+        weights = weights + weight * (node_index == index + shift)
+    return weights
 
-    Parameters
-    ----------
-    url : str, Path
-        url to download file from.
 
-    target : str, Path
-        Path where to save the file, on disk.
+def lagrange_weights(nodes, x):
+    """Dense global-Lagrange weights of *x* on *nodes* (exact for polynomials of degree
+    ``nnodes - 1``), jax-traceable in *x*."""
+    nodes = jnp.asarray(nodes)
+    nnodes = nodes.shape[0]
+    weights = []
+    for node_index in range(nnodes):
+        others = jnp.delete(nodes, node_index, assume_unique_indices=True)
+        weights.append(jnp.prod((x - others) / (nodes[node_index] - others)))
+    return jnp.stack(weights)
 
-    size : int, default=None
-        Expected file size, in bytes, used to show progression bar.
-        If not provided, taken from header (if the file is larger than a couple of GBs,
-        it may be wrong due to integer overflow).
-        If a sensible file size is obtained, a progression bar is printed.
+
+def logit_transform(low, high):
+    """``(forward, inverse)`` for a variable confined to the open interval ``(low, high)``.
+
+    ``forward = log((x - low) / (high - x))`` maps that interval onto the whole real line, so an
+    expansion variable built with it can never leave it -- which is what lets a Chebyshev box
+    sit against a hard bound (e.g. ``w0 + wa < 0``) without a single node crossing it. A Smolyak
+    grid is unisolvent, so one node past the bound is not a smaller problem, it is a singular one.
+
+    The inverse is written as a sigmoid rather than ``(low + high e^u) / (1 + e^u)``: the latter
+    overflows to ``inf / inf = nan`` for large ``u``, where this saturates cleanly at a bound
+    (past ``|u| ~ 37`` in float64, far outside any box).
     """
-    # Adapted from https://stackoverflow.com/questions/15644964/python-progress-bar-and-downloads
-    print('Downloading {} to {}.'.format(url, target))
-    mkdir(os.path.dirname(target))
-    import requests
-    # See https://stackoverflow.com/questions/61991164/python-requests-missing-content-length-response
-    headers = {}
-    if authorization:
-        headers.update({'Authorization': authorization})
-    if size is None:
-        size = requests.head(url, headers={**headers, 'Accept-Encoding': None}).headers.get('content-length')
-    try:
-        r = requests.get(url, headers=headers, allow_redirects=True, stream=True)
-        r.raise_for_status()
-    except requests.exceptions.HTTPError:
-        return False
+    low, high = float(low), float(high)
 
-    with open(target, 'wb') as file:
-        if size is None or int(size) < 0:  # no content length header
-            file.write(r.content)
-        else:
-            import shutil
-            width = shutil.get_terminal_size((80, 20))[0] - 9  # pass fallback
-            dl, size, current = 0, int(size), 0
-            for data in r.iter_content(chunk_size=2048):
-                dl += len(data)
-                file.write(data)
-                if size:
-                    frac = min(dl / size, 1.)
-                    done = int(width * frac)
-                    if done > current:  # it seems, when content-length is not set iter_content does not care about chunk_size
-                        print('\r[{}{}] [{:3.0%}]'.format('#' * done, ' ' * (width - done), frac), end='', flush=True)
-                        current = done
-            print('')
-    return True
+    def forward(value):
+        # the dispatching numpy, not the plain one: this runs inside a jit at every prediction, where plain
+        # numpy raises on a tracer.
+        return numpy_jax(value).log((value - low) / (high - value))
+
+    def inverse(value):
+        xnp = numpy_jax(value)
+        return low + (high - low) / (1. + xnp.exp(-value))
+
+    return forward, inverse
+
+
+#: The dark-energy bound as an expansion variable: ``w0 + wa`` confined to (-5, 0). 0 is CAMB's
+#: PPF limit ("w + wa > 0 gives w>0 at high redshift"), stricter than cosmoprimo's own 1/3 check;
+#: -5 is a floor below any plausible posterior (a CMB-only w0waCDM chain reaches -4.45) and is not
+#: cosmetic -- placed too far below, the logit is strongly right-skewed and a symmetric box cannot
+#: cover both tails. Registered under a name so a trained emulator's geometry stays serialisable.
+TRANSFORMS['logit_w0pwa'] = logit_transform(-5., 0.)

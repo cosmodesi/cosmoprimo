@@ -35,14 +35,14 @@ class Background(CambBackground):
         r"""Growth factor :math:`D(z)` normalized to D(0)=1"""
         return self._pk_results().get_growth_factor_from_pk(z=z)
 
-class isitideEngine(CambEngine):
+
+class IsitideEngine(CambEngine):
 
     """Engine for the isitide version of the Boltzmann code CAMB."""
     name = 'isitide'
     _default_cosmological_parameters = dict(w=-1.0, wa=0.0)
-    _default_calculation_parameters = dict(dark_energy_model='IDEModel1')  
+    _default_calculation_parameters = dict(dark_energy_model='IDEModel1')
 
     def _set_camb(self):
         import isitide
         self.camb = isitide
-

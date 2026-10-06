@@ -1,23 +1,9 @@
-**/dust
-doc/_build/
-**/__pycache__
-**/pytest_cache
-**/*.egg
-**/*.egg-info
-**/.astropy
-**/.cache
-**/.config
-**/.wget*
-**/_tests
-**/dist
-**/eggs
-**/build
-**/.ipynb_checkpoints
-**/_train
-**/_sbatch
-**/*.png
-**/*.npy
-**/nb
-
-# Unit test / coverage reports
-**/.coverage
+# Training outputs, not source: trained emulators, the figures made while checking them, and
+# the slurm logs of the jobs that produced them. They are large (~90 MB), they are regenerated
+# by rerunning the training, and a `git add -A` from the repository root will otherwise sweep
+# them all in.
+*.npy
+*.h5
+*.png
+_sbatch/
+nb/

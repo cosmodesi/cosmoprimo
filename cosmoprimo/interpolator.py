@@ -348,6 +348,11 @@ class _BasePowerSpectrumInterpolator(BaseClass):
             self.extrap_kmin, self.extrap_kmax = extrap_kmin, extrap_kmax
             k, pk = _pad_log(k, pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
             k, pk = 10**k, 10**pk
+            # Pin the padded endpoints to the exact requested bounds: 10**log10(k) does not
+            # round-trip on all backends (1 ulp high on cuda), which would leave k[0] slightly
+            # above extrap_kmin and NaN-mask evaluations at exactly extrap_kmin
+            # (e.g. BAO filters sampling geomspace(extrap_kmin, extrap_kmax)).
+            k = self._np.concatenate([self._np.minimum(k[:1], extrap_kmin), k[1:-1], self._np.maximum(k[-1:], extrap_kmax)])
         return k, pk
 
     def params(self):
@@ -440,12 +445,15 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
         extrap_kmax : float, default={_default_extrap_kmax}
             Maximum extrapolation range in ``k``.
 
-        interp_order_k : int, default=3
-            Interpolation order, i.e. degree of smoothing spline along ``k``.
+        interp_order_k : int, str, default=3
+            Interpolation order, i.e. degree of smoothing spline along ``k``. With the jax backend
+            a name may be given instead -- ``'linear'``, ``'cubic'`` (C1) or ``'cubic2'`` (C2,
+            what order 3 means) -- see :func:`~cosmoprimo.jax._interpax_method` for what the two
+            cubics cost and where each is the more accurate.
         """
         self._rsigma8sq = 1.
         k, pk = self._prepare(k, pk, interp_k=interp_k, extrap_pk=extrap_pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
-        self.interp_order_k = int(interp_order_k)
+        self.interp_order_k = interp_order_k
         _interp = Interpolator1D(k, pk, k=self.interp_order_k, interp_x=self.interp_k, interp_fun=self.extrap_pk, assume_sorted=True)
         self._interp = _interp
         self.is_from_callable = False
@@ -514,8 +522,9 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
                 toret_shape = k.shape
                 k = k.ravel()
                 mask_k, = _mask_bounds([k], [(self.extrap_kmin, self.extrap_kmax)], bounds_error=bounds_error)
-                toret = self._np.where(mask_k, self._interp(k, **kwargs), self._np.nan)
-                return toret.astype(dtype).reshape(toret_shape)
+                toret = self._interp(k, **kwargs)
+                toret = self._np.where(mask_k[(Ellipsis,) + (None,) * (toret.ndim - 1)], toret, self._np.nan)
+                return toret.astype(dtype).reshape(toret_shape + toret.shape[1:])
 
         return interp(k, **kwargs) * self._rsigma8sq
 
@@ -645,10 +654,14 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
         extrap_kmax : float, default={_default_extrap_kmax}
             Maximum extrapolation range in ``k``.
 
-        interp_order_k : int, default=3
-            Interpolation order, i.e. degree of smoothing spline along ``k``.
+        interp_order_k : int, str, default=3
+            Interpolation order, i.e. degree of smoothing spline along ``k``. With the jax backend
+            a name may be given instead -- ``'linear'``, ``'cubic'`` (C1) or ``'cubic2'`` (C2,
+            what order 3 means) -- see :func:`~cosmoprimo.jax._interpax_method`. interpax takes one
+            method for both axes, so the lesser of ``interp_order_k`` and ``interp_order_z`` is
+            what is used.
 
-        interp_order_z : int, default=None
+        interp_order_z : int, str, default=None
             Interpolation order, i.e. degree of smoothing spline along ``z``.
             If ``None``, the maximum order given ``z`` size (see :meth:`GenericSpline.min_spline_order`) is considered.
 
@@ -656,11 +669,12 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
             Function that takes ``z`` as argument and returns the growth factor squared at that redshift.
             This will rescale the output of the base spline interpolation.
             Therefore, make sure that provided ``pk`` does not contain the redundant ``z`` variations.
+
         """
         self._rsigma8sq = 1.
         self.growth_factor_sq = growth_factor_sq
         k, pk = self._prepare(k, pk, z=z, interp_k=interp_k, extrap_pk=extrap_pk, extrap_kmin=extrap_kmin, extrap_kmax=extrap_kmax)
-        self.interp_order_k, self.interp_order_z = int(interp_order_k), int(interp_order_z)
+        self.interp_order_k, self.interp_order_z = interp_order_k, interp_order_z
         is2d = self._pk.shape[1] > 1
         if is2d:
             _interp = Interpolator2D(k, self.z, pk, kx=self.interp_order_k, ky=self.interp_order_z, interp_x=self.interp_k, interp_fun=self.extrap_pk, assume_sorted=True)
@@ -1094,7 +1108,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
         """
         self._rsigma8sq = 1.
         s, xi = self._prepare(s, xi, interp_s=interp_s)
-        self.interp_order_s = int(interp_order_s)
+        self.interp_order_s = interp_order_s
         _interp = Interpolator1D(s, xi, k=self.interp_order_s, interp_x=self.interp_s)
         self._interp = _interp
         self.is_from_callable = False
@@ -1258,7 +1272,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
         self.growth_factor_sq = growth_factor_sq
         s, xi = self._prepare(s, xi, z=z, interp_s=interp_s)
         is2d = self._xi.shape[1] > 1
-        self.interp_order_s, self.interp_order_z = int(interp_order_s), int(interp_order_z)
+        self.interp_order_s, self.interp_order_z = interp_order_s, interp_order_z
         if is2d:
             _interp = Interpolator2D(s, self.z, xi, kx=self.interp_order_s, ky=self.interp_order_z, interp_x=self.interp_s, assume_sorted=True)
         else:

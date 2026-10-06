@@ -78,3 +78,22 @@ Interpolators
   :members:
   :inherited-members:
   :show-inheritance:
+
+Modified-gravity stability
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+mochi_class
+^^^^^^^^^^^
+
+.. automodule:: cosmoprimo.emulators.mochiclass
+  :members:
+  :inherited-members:
+  :show-inheritance:
+
+HEFTCAMB
+^^^^^^^^
+
+.. automodule:: cosmoprimo.emulators.heftcamb
+  :members:
+  :inherited-members:
+  :show-inheritance:
