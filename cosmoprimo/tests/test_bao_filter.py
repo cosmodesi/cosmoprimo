@@ -289,6 +289,45 @@ def plot_mark():
     plt.show()
 
 
+def test_a_held_filter_answers_like_a_fresh_one():
+    """Build a filter once, call it with another spectrum, and it answers what a filter built on
+    that spectrum would -- which is what lets a caller pay for the peak finding once.
+
+    `hinton2017` is the exception, and the reason a holder should build on the fiducial rather
+    than on whichever point arrives first: its `_prepare` takes the maximum of the input spectrum,
+    so what it holds is that spectrum's maximum.
+    """
+    from cosmoprimo.bao_filter import BasePowerSpectrumBAOFilter
+
+    cosmo = Cosmology(engine='eisenstein_hu')
+    # far apart on purpose: what a held filter keeps is the shape of the spectrum it prepared on,
+    # and a pair of neighbouring cosmologies can share it to the last digit
+    other = cosmo.clone(h=0.60, omega_cdm=0.15)
+    k = np.geomspace(1e-3, 0.5, 100)
+
+    def pk(c):
+        return Fourier(c).pk_interpolator().to_1d(z=0.)
+
+    tested = []
+    for name, Filter in BasePowerSpectrumBAOFilter._registry.items():
+        if name == 'base':
+            continue
+        try:
+            held = Filter(pk(cosmo), cosmo=cosmo, cosmo_fid=cosmo)
+            fresh = Filter(pk(other), cosmo=other, cosmo_fid=cosmo)
+        except Exception:
+            continue                       # a filter that cannot run here says nothing either way
+        held = held(pk(other), cosmo=other)
+        difference = np.max(np.abs(held.smooth_pk_interpolator()(k)
+                                   / fresh.smooth_pk_interpolator()(k) - 1.))
+        tested.append(name)
+        if name == 'hinton2017':
+            assert difference > 1e-4, name
+        else:
+            assert difference == 0., (name, difference)
+    assert 'wallish2018' in tested and 'peakaverage' in tested
+
+
 if __name__ == '__main__':
 
     #test_numerical_stability()

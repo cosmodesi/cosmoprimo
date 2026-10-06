@@ -54,6 +54,7 @@ from cosmoprimo.jax import numpy_jax, use_jax
 from .training import TrainingSet, NodeEvaluationError
 from .space import Space
 from .validation import validate as _validate
+from .constraints import constraint_violations, clip_to_constraints
 
 
 def _relative_rms(prediction, reference):
@@ -81,6 +82,15 @@ class CoverageError(Exception):
     """
 
 
+_VIOLATION = ('raise', 'warn', 'nan', 'clip', 'ignore')
+
+
+def _check_violation(value):
+    if value not in _VIOLATION:
+        raise ValueError(f'violation must be one of {_VIOLATION}, not {value!r}')
+    return value
+
+
 class NotTrained(Exception):
     """The emulator has not been trained yet."""
 
@@ -104,8 +114,15 @@ class Emulator(object):
         regression over a declared basis, see :mod:`polynomial` -- the one to reach for when part
         of the box is a region the calculator refuses, since it needs no complete node set) or
         ``'mlp'``.
-    coverage : str, default='raise'
-        ``'raise'``, ``'warn'`` or ``'ignore'`` outside the trained box.
+    constraints : list, default=None
+        Declarative constraints of the user's own parameters, on top of the built-in ones (the
+        trained box and the node cloud, see :meth:`constraints`): :class:`~.constraints.LinearConstraint`
+        instances, their text form (``'w0_fld + wa_fld < 0'``) or their saved state.  Saved with the emulator.
+    violation : str, default='raise'
+        What :meth:`predict` does where a constraint is violated: ``'raise'`` (eager; NaN when
+        traced), ``'warn'`` (eager; NaN), ``'nan'``, ``'clip'`` (predict at the point clipped into
+        the constraints that clip -- the box and the node cloud -- and leave enforcement to the
+        caller, see :meth:`violations`) or ``'ignore'``.
     options : dict
         Passed to the engine (``levels``, ``budget``, ...).
     """
@@ -117,12 +134,15 @@ class Emulator(object):
     #: predicts confidently and is wrong everywhere.
     version = 1
 
-    def __init__(self, target, space, engine='chebyshev', coverage='raise', **options):
+    def __init__(self, target, space, engine='chebyshev', constraints=None, violation='raise', **options):
+        from .constraints import as_constraint
         if not callable(target):
             raise TypeError(f'target must be callable, `target(params) -> dict`; got '
                             f'{type(target).__name__}')
         self.target, self.space = target, space
-        self.engine_name, self.coverage, self.options = engine, coverage, dict(options)
+        self.engine_name, self.options = engine, dict(options)
+        self.violation = _check_violation(violation)
+        self._constraints = [as_constraint(constraint) for constraint in (constraints or [])]
         self._engines = {}
         self.training = self.training_space()
         names = list(self.training.params)
@@ -145,6 +165,21 @@ class Emulator(object):
         self.node_params = self._node_params(names, expanded, sampled)
 
     # ── the hooks: override any, ignore the rest ───────────────────────────────
+    def output_coordinates(self, name):
+        """The coordinates output *name* is fitted in, or ``None`` for the emulator's own.
+
+        ``(space, params, to_training)``: the :class:`Space` the engine takes its geometry from,
+        the parameters it expands, and a callable turning a point in the emulator's own training
+        parameters into that output's. The node set is shared whatever this returns -- what
+        changes is the coordinates each fit sees.
+
+        Override it when one output responds simply to a reparametrisation the others do not
+        want: :math:`C_\ell` are nearly a translation along :math:`\ell` in :math:`h` and nearly
+        stationary in :math:`\theta_\mathrm{MC}`, while a power spectrum wants :math:`h` itself,
+        so a cosmology emulating both fits them in different variables over the same nodes.
+        """
+        return None
+
     def training_space(self):
         """The :class:`Space` the interpolant actually works in. The user's own, by default.
 
@@ -269,7 +304,7 @@ class Emulator(object):
         """
         return self._engine(budget=budget, params=self.node_params, **kwargs).nodes()
 
-    def _engine(self, budget=None, geometry=None, params=None, **kwargs):
+    def _engine(self, budget=None, space=None, params=None, geometry=None, **kwargs):
         from .engines import ChebyshevEngine
         from .mlp import MLPEngine
         from .polynomial import PolynomialEngine
@@ -277,12 +312,13 @@ class Emulator(object):
 
         classes = {cls.name: cls
                    for cls in (ChebyshevEngine, TaylorEngine, PolynomialEngine, MLPEngine)}
-        # `params`: which parameters the engine is over. The expanded ones, i.e. the engines that
-        # are fitted; the node parameters for the engine that DRAWS the nodes, which differ when an
-        # exact parameter is sampled at the nodes (see `select_node_params`).
-        params = list(self.params if params is None else params)
-        subspace = self.training.marginal(params) \
-            if len(params) < len(self.training.params) else self.training
+        # `space`/`params` for an output fitted in coordinates of its own
+        # (:meth:`output_coordinates`); the emulator's own otherwise. `params` is also the node
+        # parameters for the engine that DRAWS the nodes, which differ from the expanded ones when
+        # an exact parameter is sampled at the nodes (see `select_node_params`).
+        space = self.training if space is None else space
+        params = self.params if params is None else list(params)
+        subspace = space.marginal(params) if len(params) < len(space.params) else space
         # `geometry` overrides the space's own box: the engine that draws the extra nodes of an
         # augmented training (see :meth:`_augmented_nodes`) is the same class with the same
         # options over a narrower box, and nothing else about it differs.
@@ -425,10 +461,12 @@ class Emulator(object):
         evaluates and a second, with the same ``checkpoint``, finds the set complete and fits.
 
         ``per_output`` overrides the engine options for named outputs, e.g.
-        ``per_output={'pk': dict(budget=2)}``. Only ever downward: every output is fitted from
-        the same node set, so a lower budget uses a nested subset of it, while a higher one would
-        need evaluations that were never made. Use it when one output is much smoother than the
-        rest and does not deserve the same number of terms.
+        ``per_output={'pk': dict(budget=2)}``. A key matches an output name, or the part of it
+        before the first dot -- so ``{'background': dict(budget=2)}`` reaches every output a
+        cosmology composite's background section contributes. Only ever downward: every output is
+        fitted from the same node set, so a lower budget uses a nested subset of it, while a
+        higher one would need evaluations that were never made. Use it when one output is much
+        smoother than the rest and does not deserve the same number of terms.
         """
         per_output = dict(per_output or {})
         if engine is not None:
@@ -508,7 +546,9 @@ class Emulator(object):
             for name, value in values.items():
                 transformed.setdefault(name, []).append(np.asarray(value))
 
-        unknown = [name for name in per_output if name not in transformed]
+        prefixes = {name.split('.', 1)[0] for name in transformed}
+        unknown = [name for name in per_output
+                   if name not in transformed and name not in prefixes]
         if unknown:
             raise ValueError(f'per_output names {unknown} are not outputs; '
                              f'have {sorted(transformed)}')
@@ -560,7 +600,8 @@ class Emulator(object):
                     transformed = {name: [value for value, keep in zip(values, sane) if keep]
                                    for name, values in transformed.items()}
 
-        # one engine per output, all sharing the node set. Under MPI the outputs are dealt
+        # one engine per output, all sharing the node set -- and, unless `output_coordinates`
+        # says otherwise, the coordinates too. Under MPI the outputs are dealt
         # round-robin across the ranks and the fitted engines gathered back, so every rank ends
         # with the same complete set: with the plain loop every rank fitted every output --
         # 16 ranks doing 16 identical copies of the work. Measured on an 11-parameter, 78-output
@@ -569,6 +610,12 @@ class Emulator(object):
         # Chebyshev fit is a linear solve and never noticed; the network training is what this
         # is for. States travel through pickle (allgather): an engine's state is a few arrays.
         names = list(transformed)
+        # The nodes as training-parameter points, for an output fitted in coordinates of its own
+        # (`output_coordinates`): every node coordinate -- a sampled exact parameter included --
+        # with the other exact parameters at their fixed values. Taken before the projection
+        # below, and only when some output asks for it.
+        node_rows = [dict(zip(self.node_params, row)) for row in inputs] \
+            if any(self.output_coordinates(name) is not None for name in names) else None
         # The fit sees the expanded parameters only: a sampled exact parameter was a node
         # coordinate up to here, and `transform` has taken its dependence out of every output, so
         # its column is dropped and the nodes stand projected onto the remaining ones.
@@ -597,28 +644,44 @@ class Emulator(object):
         except (OSError, AttributeError):
             pass
         mine = {}
+        coordinates = {}      # cached by parameter tuple: several outputs share one basis
         for name in names[rank::size]:
             values = transformed[name]
-            options = {'budget': budget, **kwargs, **per_output.get(name, {})}
+            options = {'budget': budget, **kwargs,
+                       **per_output.get(name, per_output.get(name.split('.', 1)[0], {}))}
+            own = self.output_coordinates(name)
+            if own is None:
+                fit_params, fit_inputs = None, inputs
+            else:
+                space, fit_params, to_training = own
+                fit_params = list(fit_params)
+                key = tuple(fit_params)
+                if key not in coordinates:
+                    mapped = [dict(to_training({**fixed, **row})) for row in node_rows]
+                    coordinates[key] = np.array([[point[param] for param in fit_params]
+                                                 for point in mapped])
+                fit_inputs = coordinates[key]
+                options = {**options, 'space': space, 'params': fit_params}
             fit = self._engine(**options)
-            fit.fit(inputs, values.reshape(len(values), -1), method=method,
+            fit.fit(fit_inputs, values.reshape(len(values), -1), method=method,
                     basis_budget=basis_budget) \
-                if fit.name == 'chebyshev' else fit.fit(inputs, values.reshape(len(values), -1))
+                if fit.name == 'chebyshev' else fit.fit(fit_inputs,
+                                                        values.reshape(len(values), -1))
             if hasattr(fit, 'validation_loss'):
                 # one line per output, so a job log can be read per quantity (which networks
                 # early-stopped, which are the worst) rather than per anonymous rank
                 self.logger.info(f'output {name!r}: {getattr(fit, "epochs_run", "?")}/{fit.epochs} epochs, '
                                  f'validation loss {fit.validation_loss:.3e}')
-            mine[name] = (fit.__getstate__(), tuple(values.shape[1:]))
+            mine[name] = (fit.__getstate__(), tuple(values.shape[1:]), fit_params)
+        from .engines import engine_from_state
         if size > 1:
-            from .engines import engine_from_state
             gathered = {}
             for part in mpicomm.allgather(mine):
                 gathered.update(part)
-            self._engines = {name: (engine_from_state(gathered[name][0]), gathered[name][1]) for name in names}
         else:
-            from .engines import engine_from_state
-            self._engines = {name: (engine_from_state(state), shape) for name, (state, shape) in mine.items()}
+            gathered = mine
+        self._engines = {name: (engine_from_state(gathered[name][0]), gathered[name][1], gathered[name][2])
+                         for name in names}
         if not self._engines:
             raise RuntimeError('the target returned no outputs, so there is nothing to fit')
         return self
@@ -665,129 +728,145 @@ class Emulator(object):
         return sane
 
     # ── use ───────────────────────────────────────────────────────────────────
+    # ── constraints ───────────────────────────────────────────────────────────
+    def constraints(self):
+        """Every constraint the emulator answers under: the trained box, the node cloud (when the
+        nodes were whitened along a covariance -- otherwise they fill the box and the two would be
+        the same constraint counted twice), then the user's declarative ones.  See :mod:`.constraints`."""
+        from .constraints import BoxConstraint, NodeConstraint
+        located = self._node_engine({name: 0. for name in self.training.params}) if self._engines else None
+        whitened = located is not None and located[0].whitened
+        return [BoxConstraint()] + ([NodeConstraint()] if whitened else []) + list(self._constraints)
+
+    def violations(self, **params):
+        """``{constraint name: distance}`` at *params* (the user's own), 0 where satisfied. Traceable."""
+        return constraint_violations(self.constraints(), self, dict(params), dict(self.to_training(dict(params))))
+
     def _check(self, given, params):
         """``given``: what the user passed. ``params``: the same, in training coordinates.
 
-        The names are always checked; the box only when the values are concrete. Inside a jax
-        trace a parameter has no value to compare, so the check is skipped rather than raising a
-        TracerBoolConversionError -- the price of jitting a prediction is that coverage stops
-        being enforced, so validate eagerly before wrapping a likelihood in ``jit``.
+        The names are always checked; the constraints only when the values are concrete. Inside a
+        jax trace a parameter has no value to compare, so the check is skipped rather than raising
+        a TracerBoolConversionError -- but :meth:`predict` still enforces it on the output (NaN),
+        following cosmoprimo's usual "raise in eager, NaN inside jax" contract (`exception_or_nan`).
+        Returning a silent extrapolation was the old behaviour and it is the dangerous one: a
+        sampler cannot tell a wrong number from a right one, while a NaN maps to -inf.
         """
-        if self.coverage == 'ignore':
-            return
         missing = [name for name in self.space.params if name not in given]
         if missing:
             raise ValueError(f'missing parameters {missing}')
-        if use_jax(*params.values()):
-            # Under a trace there is no value to compare, so the box cannot be checked here --
-            # but it can still be enforced on the output by `predict`: see `outside`,
-            # which follows cosmoprimo's usual "raise in eager, NaN inside jax" contract
-            # (`exception_or_nan`). Returning a silent extrapolation was the old behaviour and
-            # it is the dangerous one: a sampler cannot tell a wrong number from a right one,
-            # while a NaN maps to -inf and simply rejects the point.
+        if self.violation in ('ignore', 'clip', 'nan') or use_jax(*params.values()):
             return
-        # `limits` is in the expansion variable, the value is in the user's parameter, and where a
-        # transform declares those differ the comparison has to be made in one of them. Reported
-        # values stay the user's: an error naming sqrt(m_ncdm) tells nobody what to change.
-        expansion = self.training.forward(params)
-        outside = {name: params[name] for name in self.params
-                   if not (self.training.limits[name][0] <= expansion[name]
-                           <= self.training.limits[name][1])}
-        reason = 'outside the trained box'
-        nodes = self._outside_nodes(params)
-        if not outside and nodes is not None and bool(np.asarray(nodes).all()):
-            # Inside every parameter's own range, but off the node cloud: the box is a rectangle
-            # and the nodes fill a band across it (see `BaseEngine.outside`). Same verdict,
-            # different reason, and the message has to say which or it reads as a lie.
-            outside = {name: params[name] for name in self.params}
-            reason = 'inside the box but off the node cloud it was fitted on'
-        if outside:
-            converted = ('' if self.training is self.space else
-                         f' (the training basis; you gave {dict(given)})')
-            message = (f'{reason}: {outside}{converted}. Extrapolation here is '
-                       f'catastrophic, not gradual -- widen the Space and retrain (nested nodes '
-                       f'mean the existing evaluations are reused), or pass coverage="ignore".')
-            if self.coverage == 'raise':
-                raise CoverageError(message)
-            import warnings
-            warnings.warn(message)
+        violated = [constraint for constraint in self.constraints()
+                    if float(np.asarray(constraint.violation(self, given, params))) > 0.]
+        if not violated:
+            return
+        reasons = '; '.join(constraint.describe(self, given, params) for constraint in violated)
+        converted = ('' if self.training is self.space else
+                     f' (the training basis; you gave {dict(given)})')
+        message = (f'{reasons}{converted}. Extrapolation here is catastrophic, not gradual -- '
+                   f'widen the Space and retrain (nested nodes mean the existing evaluations are '
+                   f'reused), or pass violation="ignore" (or "clip", and enforce the constraints yourself).')
+        if self.violation == 'raise':
+            raise CoverageError(message)
+        import warnings
+        warnings.warn(message)
 
-    def _outside_nodes(self, training):
-        """Boolean (or traced) mask: is this point off the node cloud the engines were fitted on?
+    def _node_engine(self, training):
+        """``(engine, values, fit_params)``: the engine that answers for the node cloud, and *training*
+        in its coordinates; ``None`` when nothing is fitted.
 
         Delegated to an engine, which owns the geometry the nodes were laid out with -- the
         transforms, the whitening rotation, the per-axis domain (see
-        :meth:`~.engines.BaseEngine.outside`). Every engine of one emulator is built from the same
-        Space, so the first answers for all. ``None`` when there is nothing fitted to compare
-        against.
+        :meth:`~.engines.BaseEngine.distance`). One engine answers for all, since they share the
+        node set, but it has to be asked in its own coordinates: an output fitted through
+        :meth:`output_coordinates` has others. Preferring an engine that uses the emulator's own
+        coordinates is not cosmetic -- which engine comes first is dict order, and that differs
+        between a freshly trained emulator and the same one read back from a file.
         """
         if not self._engines:
             return None
         xnp = numpy_jax(*training.values())
-        engine = next(iter(self._engines.values()))[0]
-        values = xnp.stack([xnp.asarray(training[name]) for name in self.params])
-        return engine.outside(values)
-
-    def outside(self, training):
-        """Boolean (or traced) mask: is this point somewhere the emulator cannot answer?
-
-        Public, because "will this be answered?" is a question worth asking without paying for a
-        prediction -- a sampler placing its initial population, a prior wanting to match the
-        emulator's actual support.
-
-        Two separate ways to be outside, and a parameter's own range catches only the first:
-
-        * outside a parameter's own low/high pair -- the axis-aligned box;
-        * inside every one of those, yet off the band the nodes actually fill. For correlated
-          parameters that is most of the box's volume (measured at correlation -0.95: 70.6%; on
-          eight Planck-like parameters only 6% of a uniform draw from the box is on the band),
-          and an interpolant answers there from coefficients nothing constrained.
-
-        *training* is in the training basis, as :meth:`to_training` returns it. Elementwise, so a
-        batched/vmapped call marks only the offending members. ``None`` when nothing can be
-        compared, which is never the case once the values are concrete or traced.
-        """
-        xnp = numpy_jax(*training.values())
-        # into the expansion variable first: `limits` is in it, `training` is not (see
-        # `Space.forward`). `BaseEngine.outside`, called below, does its own equivalent mapping.
-        expansion = self.training.forward(training)
-        mask = None
-        for name in self.params:
-            lo, hi = self.training.limits[name]
-            value = xnp.asarray(expansion[name])
-            this = (value < lo) | (value > hi)
-            mask = this if mask is None else (mask | this)
-        nodes = self._outside_nodes(training)
-        if nodes is not None:
-            mask = nodes if mask is None else (mask | nodes)
-        return mask
+        for name, (engine, _, fit_params) in self._engines.items():
+            if fit_params is None:
+                return engine, xnp.stack([xnp.asarray(training[param]) for param in self.params]), None
+        name, (engine, _, fit_params) = next(iter(self._engines.items()))
+        mapped = dict(self.output_coordinates(name)[2](training))
+        return engine, xnp.stack([xnp.asarray(mapped[param]) for param in fit_params]), fit_params
 
     def predict(self, **params):
         if not self.trained:
             raise NotTrained('call train() first')
         training = dict(self.to_training(dict(params)))
         self._check(params, training)
-        # `xnp` so a traced parameter stays traced: np.array() on a tracer raises, and the whole
-        # point of the engines being jax-friendly is that a likelihood can jit through this
-        xnp = numpy_jax(*training.values())
-        values = xnp.stack([xnp.asarray(training[name]) for name in self.params])
-        predicted = {name: xnp.reshape(engine.predict(values), shape)
-                     for name, (engine, shape) in self._engines.items()}
-        # `transform` saw training parameters at fit time, so its inverse must see them too
-        out = self.inverse_transform(predicted, training)
-        if self.coverage != 'ignore':
-            # Enforce the box on the output. Eager calls already raised in `_check`; this is what
-            # makes the guard survive a jit, where the check itself cannot run. NaN propagates to
-            # -inf in a posterior, so an out-of-box point is rejected rather than silently
-            # extrapolated -- the engines' own words: "catastrophic, not gradual".
-            mask = self.outside(training)
+        if self.violation == 'clip':
+            training = clip_to_constraints(self.constraints(), self, training)
+        out = self._evaluate(training)
+        if self.violation not in ('ignore', 'clip'):
+            # Enforce the constraints on the output. Eager calls already raised in `_check`; this
+            # is what makes the guard survive a jit, where the check itself cannot run. NaN
+            # propagates to -inf in a posterior, so a violating point is rejected rather than
+            # silently extrapolated -- the engines' own words: "catastrophic, not gradual".
+            mask = None
+            for violation in constraint_violations(self.constraints(), self, dict(params), training).values():
+                mask = (violation > 0.) if mask is None else (mask | (violation > 0.))
             if mask is not None:
-                xnp = numpy_jax(*training.values())
+                # the outputs as well as the parameters: inside someone else's jit, an operation
+                # on constant inputs is still staged out, so a prediction made at concrete
+                # parameters comes back as a tracer -- which is exactly what happens when a
+                # pipeline jits over one parameter and holds this emulator's own fixed. Choosing
+                # the numpy from the parameters alone then picks plain numpy and the write of a
+                # nan into a traced array raises.
+                xnp = numpy_jax(*training.values(), *out.values(), mask)
                 out = {name: xnp.where(xnp.reshape(mask, mask.shape + (1,) * (xnp.ndim(value) - xnp.ndim(mask)))
                                        if xnp.ndim(value) > xnp.ndim(mask) else mask,
                                        xnp.nan, value)
                        for name, value in out.items()}
         return out
+
+    def predict_in_box(self, **params):
+        """Prediction at *params* clipped into the constraints that clip (the trained box,
+        then the node cloud), and ``{constraint name: distance}`` at *params* itself.
+
+        Whatever :attr:`violation` says: for a caller that turns the distances into constraints
+        of its own -- desilike's ``Constraint``, a hard wall for a sampler and a soft one for an
+        optimiser.  Nothing is silent here, the distances come back with the prediction; inside
+        every constraint the prediction is :meth:`predict`'s.  Declarative constraints
+        (:class:`~.constraints.LinearConstraint`) are reported, not clipped.
+        """
+        if not self.trained:
+            raise NotTrained('call train() first')
+        missing = [name for name in self.space.params if name not in params]
+        if missing:
+            raise ValueError(f'missing parameters {missing}')
+        training = dict(self.to_training(dict(params)))
+        constraints = self.constraints()
+        violations = constraint_violations(constraints, self, dict(params), training)
+        return self._evaluate(clip_to_constraints(constraints, self, training)), violations
+
+    def _evaluate(self, training):
+        """The engines' prediction at *training* parameters, with no check."""
+        # `xnp` so a traced parameter stays traced: np.array() on a tracer raises, and the whole
+        # point of the engines being jax-friendly is that a likelihood can jit through this
+        xnp = numpy_jax(*training.values())
+        values = xnp.stack([xnp.asarray(training[name]) for name in self.params])
+        # an output fitted in coordinates of its own (:meth:`output_coordinates`) is evaluated in
+        # them; the map is cached by parameter tuple, since sections sharing a basis share the work
+        coordinates, predicted = {}, {}
+        for name, (engine, shape, fit_params) in self._engines.items():
+            if fit_params is None:
+                point = values
+            else:
+                key = tuple(fit_params)
+                if key not in coordinates:
+                    own = self.output_coordinates(name)
+                    mapped = dict(own[2](training))
+                    coordinates[key] = xnp.stack([xnp.asarray(mapped[param])
+                                                  for param in fit_params])
+                point = coordinates[key]
+            predicted[name] = xnp.reshape(engine.predict(point), shape)
+        # `transform` saw training parameters at fit time, so its inverse must see them too
+        return self.inverse_transform(predicted, training)
 
     __call__ = predict
 
@@ -810,14 +889,14 @@ class Emulator(object):
             raise NotTrained('call train() first')
         if name not in self._engines:
             raise ValueError(f'no output {name!r}; have {sorted(self._engines)}')
-        engine, shape = self._engines[name]
+        engine, shape, fit_params = self._engines[name]
         matrix = np.asarray(matrix, dtype='f8')
         if matrix.ndim != 2:
             raise ValueError(f'matrix must be 2-d, got {matrix.ndim}-d')
         if int(np.prod(shape)) != matrix.shape[1]:
             raise ValueError(f'output {name!r} has shape {shape} ({int(np.prod(shape))} values), '
                              f'and the matrix acts on {matrix.shape[1]}')
-        self._engines[name] = (engine.contract(matrix), (matrix.shape[0],))
+        self._engines[name] = (engine.contract(matrix), (matrix.shape[0],), fit_params)
         return self
 
     def validate(self, truth=None, points=None, metric=None, npoints=100, seed=42,
@@ -859,9 +938,14 @@ class Emulator(object):
                 'training': self.training.__getstate__(),
                 'params': list(self.params), 'node_params': list(self.node_params),
                 'engine_name': self.engine_name,
-                'coverage': self.coverage, 'options': dict(self.options),
-                'engines': {name: (engine.__getstate__(), tuple(shape))
-                            for name, (engine, shape) in self._engines.items()}}
+                'violation': self.violation,
+                # for a reader older than `violation`, which knows this key only
+                'coverage': self.violation if self.violation in ('raise', 'warn', 'ignore') else 'raise',
+                'constraints': [constraint.__getstate__() for constraint in self._constraints],
+                'options': dict(self.options),
+                'engines': {name: (engine.__getstate__(), tuple(shape),
+                                   None if fit_params is None else list(fit_params))
+                            for name, (engine, shape, fit_params) in self._engines.items()}}
 
     def __setstate__(self, state):
         from .engines import engine_from_state
@@ -881,9 +965,20 @@ class Emulator(object):
         # files written before exact parameters could be sampled at the nodes have no entry: the
         # nodes then varied the expanded parameters and nothing else
         self.node_params = list(state.get('node_params', self.params))
-        self.coverage, self.options = state['coverage'], dict(state['options'])
-        self._engines = {name: (engine_from_state(engine), tuple(shape))
-                         for name, (engine, shape) in state['engines'].items()}
+        # `coverage`: the name before `violation`, the only one a file written then carries
+        from .constraints import constraint_from_state
+        self.violation = _check_violation(state.get('violation', state.get('coverage', 'raise')))
+        self._constraints = [constraint_from_state(constraint) for constraint in state.get('constraints', [])]
+        self.options = dict(state['options'])
+        # An entry is `(engine, shape, params)` -- the coordinates that output was fitted in,
+        # `None` for the emulator's own. A file written before those existed holds a pair, and a
+        # pair says exactly one thing, so it is read rather than refused: these files are hours of
+        # Boltzmann code, and no version of the emulator ever wrote a pair meaning anything else.
+        self._engines = {}
+        for name, entry in state['engines'].items():
+            engine, shape, fit_params = entry if len(entry) == 3 else (*entry, None)
+            self._engines[name] = (engine_from_state(engine), tuple(shape),
+                                   None if fit_params is None else list(fit_params))
         self.target = None
 
     def write(self, path):

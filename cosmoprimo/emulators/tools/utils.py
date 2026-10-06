@@ -129,7 +129,7 @@ def tensor_basis(values, powers, domains, basis='chebyshev'):
     ----------
     values : array
         ``(nparams,)`` for one point, or ``(nparams, npoints)`` for many -- parameters first,
-        which is the layout :meth:`~.engines.BaseEngine._traced` returns, and what lets one point
+        which is the layout :meth:`~.engines.BaseEngine.to_internal` returns, and what lets one point
         and a whole design matrix share this code.
     powers : array
         ``(nterms, nparams)`` multi-indices, e.g. from :func:`multi_index_set`.
