@@ -89,6 +89,56 @@ class MochiClassEngine(classy.ClassEngine):
             names = _parameters_smg_names.get(model, None)
             if names is not None:
                 given = {name: params.pop(name) for name in names if name in params}
+                # hill_valley: the running amplitude m_smg = c_M / tau_smg as an input in place of
+                # c_M (M_*^2 = exp(m sech^2 u), so the data-allowed region is a rectangle in m and a
+                # thin wedge in c_M -- which is what an emulator expands over; 2026-10-05). Given
+                # alongside tau_smg it sets c_M; a c_M given as well is overridden.
+                # ... or its fraction of the allowed range, mfrac_smg = m / m_max(tau, a_t) with
+                # m_max from the caps `dlnm2_max` (late) and `dlnm2_early_max` at `a_early`
+                # (cosmoprimo.emulators.mochiclass.hill_valley_running_max); the caps travel as
+                # inputs of the same names and are popped here too.
+                caps = {name: params.pop(name) for name in ('dlnm2_max', 'dlnm2_early_max', 'a_early', 'c_M_max') if name in params}
+                if 'mfrac_smg' in params:
+                    mfrac = params.pop('mfrac_smg')
+                    if model != 'hill_valley':
+                        raise CosmologyInputError(f'mfrac_smg is a hill_valley input, not {model!r}')
+                    if 'dlnm2_max' not in caps:
+                        raise CosmologyInputError('mfrac_smg given without dlnm2_max')
+                    tau = given.get('tau_smg', None); a_t = given.get('a_t', None)
+                    if tau is None or a_t is None:
+                        raise CosmologyInputError('gravity_model=hill_valley: mfrac_smg given without tau_smg / a_t')
+                    from .emulators.mochiclass import hill_valley_running_max
+                    m_max = float(hill_valley_running_max(float(tau), float(a_t), float(caps['dlnm2_max']),
+                                                          early_max=caps.get('dlnm2_early_max', None), a_early=caps.get('a_early', 1e-3),
+                                                          c_M_max=caps.get('c_M_max', None)))
+                    params['m_smg'] = float(mfrac) * m_max
+                # propto_omega: the no-slip relation alpha_B = -r alpha_M as an input `r_smg` (the name
+                # hill_valley gives the same ratio), i.e. c_B = -r_smg c_M at every call, so that a
+                # pipeline sampling c_M alone drives both parametrisations the same way (2026-10-05).
+                # A c_B given alongside is overridden.
+                if 'r_smg' in params and model != 'hill_valley':
+                    r_smg = params.pop('r_smg')
+                    if model != 'propto_omega':
+                        raise CosmologyInputError(f'r_smg (c_B = -r_smg c_M) is a propto_omega / hill_valley input, not {model!r}')
+                    c_M = given.get('c_M', None)
+                    if c_M is None:
+                        values = params.get('parameters_smg', None)
+                        if values is None:
+                            raise CosmologyInputError('gravity_model=propto_omega: r_smg given without c_M')
+                        c_M = ([float(v) for v in values.split(',')] if isinstance(values, str) else list(values))[names.index('c_M')]
+                    given['c_B'] = -float(r_smg) * float(c_M)
+                if 'm_smg' in params:
+                    m_smg = params.pop('m_smg')
+                    if model == 'hill_valley':
+                        tau = given.get('tau_smg', None)
+                        if tau is None:
+                            values = params.get('parameters_smg', None)
+                            if values is None:
+                                raise CosmologyInputError('gravity_model=hill_valley: m_smg given without tau_smg')
+                            tau = ([float(v) for v in values.split(',')] if isinstance(values, str) else list(values))[names.index('tau_smg')]
+                        given['c_M'] = float(m_smg) * float(tau)
+                    else:
+                        raise CosmologyInputError(f'm_smg (= c_M / tau_smg) is a hill_valley input, not {model!r}')
                 if given:
                     values = params.get('parameters_smg', None)
                     if values is None:
