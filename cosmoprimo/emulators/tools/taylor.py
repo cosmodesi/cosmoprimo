@@ -163,7 +163,7 @@ class TaylorEngine(BaseEngine):
                 if key in seen:
                     continue
                 seen.add(key)
-                rows.append(self._physical(np.array(point)))
+                rows.append(self.from_internal(np.array(point)))
         return np.array(rows)
 
     # ── fit / predict ─────────────────────────────────────────────────────────
@@ -179,7 +179,7 @@ class TaylorEngine(BaseEngine):
         outputs = np.asarray(outputs, dtype='f8')
         if len(inputs) != len(outputs):
             raise ValueError(f'{len(inputs)} inputs against {len(outputs)} outputs')
-        table = {tuple(round(float(value), 12) for value in self._internal(row)): output
+        table = {tuple(round(float(value), 12) for value in self.to_internal(row)): output
                  for row, output in zip(inputs, outputs)}
 
         derivatives = []
@@ -204,7 +204,7 @@ class TaylorEngine(BaseEngine):
         if self.derivatives is None:
             raise ValueError('not fitted')
         xnp = numpy_jax(values)
-        values = self._traced(values)
+        values = self.to_internal(values)
         powers = xnp.asarray(self.powers)
         diffs = values - xnp.asarray(self.center)
         # `where` rather than a bare power: an axis at the centre gives 0**0, whose derivative is

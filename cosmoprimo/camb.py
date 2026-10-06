@@ -121,6 +121,15 @@ class CambEngine(BaseEngine):
 
             all_params = self._extra_params | base_params
 
+            # camb 2 renamed set_for_lmax's 'lens_margin' to 'lens_output_margin'. Take the camb 2
+            # name as canonical on both, and translate it back for a camb 1 engine (which the
+            # mgcamb / isitgr / heftcamb forks still are).
+            if 'lens_margin' in all_params:
+                warnings.warn("'lens_margin' is deprecated, use 'lens_output_margin' instead", FutureWarning)
+                all_params['lens_output_margin'] = all_params.pop('lens_margin')
+            if 'lens_output_margin' in all_params and 'lens_output_margin' not in getfullargspec(self._camb_params.set_for_lmax).args:
+                all_params['lens_margin'] = all_params.pop('lens_output_margin')
+
             non_linear = all_params.pop('non_linear')
 
             if non_linear:
@@ -137,7 +146,11 @@ class CambEngine(BaseEngine):
                 # ['HMCode_A_baryon', 'HMCode_eta_baryon', 'HMCode_logT_AGN']
                 non_linear = {'halofit_version': halofit_version} | {kk: all_params.pop(kk) for kk in getfullargspec(self._camb_params.NonLinearModel.set_params).args[1:] if kk in all_params}
                 #all_params['nonlinear'] = True   # this activates a warning on halofit precision if (kmax < 5 or kmax < 20 and np.max(zs) > 4)
-                if base_params['Want_CMB_lensing']: all_params.setdefault('lens_potential_accuracy', 1)
+
+            # camb 1.x defaults lens_potential_accuracy to 0, camb 2.x to max(4, (lmax - 1500) / 500).
+            # Pin it, else the same input gives a different calculation depending on the camb version:
+            # the 2.x default also turns on non-linear lensing, which silently changes NonLinear below.
+            all_params.setdefault('lens_potential_accuracy', 1 if (non_linear and base_params['Want_CMB_lensing']) else 0)
 
             self.camb.set_params(self._camb_params, **all_params)
 

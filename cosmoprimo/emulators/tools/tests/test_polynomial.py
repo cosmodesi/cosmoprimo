@@ -263,7 +263,7 @@ def test_fekete_selection_conditions_better_than_the_pool_order():
                                   order=3, budget=3, interaction='total',
                                   oversampling=1.05, selection=selection)
         nodes = engine.nodes()
-        internal = np.array([engine._internal(row) for row in nodes])
+        internal = np.array([engine.to_internal(row) for row in nodes])
         powers = multi_index_set([engine.order[name] for name in engine.params],
                                  budget=engine.budget, interaction=engine.interaction)
         box = np.array([engine._domain(name) for name in engine.params])
@@ -304,7 +304,7 @@ def test_samples_drawn_nodes_land_on_the_chain_not_across_the_box():
 
 def test_samples_are_read_in_the_expansion_variable():
     """A sample is transformed but NOT whitened, so reaching the calculator is the inverse
-    transform alone. Running one through `_physical` -- which also unwhitens -- silently lands
+    transform alone. Running one through `from_internal` -- which also unwhitens -- silently lands
     somewhere else entirely, and the fit is then garbage rather than merely worse."""
     mean, covariance = np.array([0.5]), np.array([[0.04]])
     chain = np.random.default_rng(1).normal(0.5, 0.2, size=(500, 1))
