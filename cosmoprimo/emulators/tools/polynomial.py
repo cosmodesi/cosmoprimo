@@ -281,7 +281,7 @@ class PolynomialEngine(LinearBasisEngine):
     def __init__(self, params, limits, order=3, budget=None, interaction='total',
                  basis='chebyshev', oversampling=2., nsamples=None, ridge=0., measure=None,
                  selection='auto', candidates=None, valid=None, samples=None, seed=42,
-                 levels=None, **kwargs):
+                 balance=None, balance_power=1., balance_neighbours=None, levels=None, **kwargs):
         super().__init__(params, limits, **kwargs)
         self.order = {name: int(value) for name, value
                       in expand_dict(order, self.params, 'order').items()}
@@ -305,6 +305,22 @@ class PolynomialEngine(LinearBasisEngine):
         self.nsamples = None if nsamples is None else int(nsamples)
         self.ridge = float(ridge)
         self.candidates = None if candidates is None else int(candidates)
+        # `balance='acceptance'` (2026-10-05): thin the valid pool so that the node density is the
+        # measure divided by the LOCAL acceptance rate of `valid` -- as many nodes per unit of
+        # parameter space where the valid region is a thin sliver as where it is the whole box.
+        # Under the plain pool the density is measure x 1[valid], which starves exactly the slivers
+        # (measured on a 6-D EFT-of-DE box: 0.1-0.26 of even coverage where the stable w0 is a
+        # 0.1-wide band, and that is where the fit was 10-50x worse). The acceptance is estimated
+        # per candidate from its `balance_neighbours` nearest pool points in the unit cube;
+        # `balance_power` p scales the weight as acceptance^-p (0 = plain pool, 1 = full balance).
+        if balance is not None and str(balance) != 'acceptance':
+            raise ValueError(f"balance must be None or 'acceptance'; got {balance!r}")
+        self.balance = None if balance is None else str(balance)
+        self.balance_power = float(balance_power)
+        # None: npool / 2048 neighbours, clipped to [128, 1024] -- a neighbourhood wide enough to
+        # average ACROSS a thin sliver (its acceptance is then the sliver's thickness relative to
+        # the neighbourhood, which is what the weight should undo), not one that fits inside it.
+        self.balance_neighbours = None if balance_neighbours is None else int(balance_neighbours)
         self.valid = valid
         self.samples = None if samples is None else np.asarray(samples, dtype='f8')
         if self.measure == 'samples' and self.samples is None:
@@ -395,6 +411,30 @@ class PolynomialEngine(LinearBasisEngine):
             self.logger.info(f'`valid` keeps {nvalid}/{npool} candidates ({nvalid / npool:.1%}); '
                              f'selecting {nsamples} of them')
         internal, physical = internal[keep], physical[keep]
+        if self.balance == 'acceptance' and nvalid < npool and self.balance_power > 0:
+            if self.measure == 'samples':
+                raise ValueError("balance='acceptance' needs a pool drawn from a measure, not from samples")
+            from scipy.spatial import cKDTree
+            k = self.balance_neighbours if self.balance_neighbours is not None else int(np.clip(npool // 2048, 128, 1024))
+            k = int(min(k, npool))
+            _, nn = cKDTree(unit).query(unit[keep], k=k, workers=-1)
+            acceptance = keep[nn].mean(axis=1)
+            acceptance = np.maximum(acceptance, 1. / k)
+            weight = acceptance ** (-self.balance_power)
+            # Systematic resampling along the Sobol order: cumulative weight crossed in steps of
+            # sum(weight) / nsamples from a seeded offset, so the thinning is deterministic, keeps
+            # the sequence's spread, and lands on nsamples points (fewer only if the weights are
+            # concentrated on fewer candidates than that, which the warning below reports).
+            step = weight.sum() / nsamples
+            offset = np.random.default_rng(self.seed + 1).uniform(0., step)
+            crossings = np.floor((np.cumsum(weight) - offset) / step).astype(int)
+            take = np.flatnonzero(np.diff(np.concatenate([[-1], crossings])) > 0)[:nsamples]
+            self.logger.info(f"balance='acceptance' (power {self.balance_power:g}, {k} neighbours): local acceptance "
+                             f"{acceptance.min():.3f}-{acceptance.max():.3f} (median {np.median(acceptance):.3f}), "
+                             f"{len(take)} of {nvalid} valid candidates kept, weights up to {weight.max() / weight.min():.1f}x")
+            if len(take) < nsamples:
+                self.logger.warning(f'balancing kept {len(take)} < {nsamples} candidates; raise `candidates`')
+            internal, physical = internal[take], physical[take]
 
         selection = self.selection
         if selection == 'auto':

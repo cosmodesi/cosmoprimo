@@ -68,9 +68,8 @@ arrays and it is numpy throughout, as before.  This is what lets the verdict sit
 jitted log-prior (desilike's samplers wrap the posterior in ``jax.jit(jax.vmap(...))``)
 without a host callback, and be differentiated.  The dispatch follows cosmoprimo's usual
 convention, :func:`cosmoprimo.jax.numpy_jax` on the inputs.  The ``hill_valley`` path is
-still numpy-only: its per-model grid refinement (:func:`_refined_grid`) builds a
-data-dependent grid, which does not trace.  See the ``TODO(hill_valley)`` notes in
-:func:`_scan`, :func:`_verdict` and :func:`stable_hill_valley` for what porting it takes.
+array-agnostic too: its per-model grid refinement (:func:`_refined_grid`) is a window of
+fixed size, so the grid's shape is static and the scan traces.
 
 The criterion
 -------------
@@ -110,7 +109,7 @@ really sets the error rate -- is produced by ``validate_stability.py`` and
 ``validate_boundary.py``.  Those two scripts are **not** part of ``cosmoprimo``: they need
 a working ``pyclass.mochiclass`` to generate ground truth, and they live with the rest of
 the notes in the DESI-DR2-MG ``Stability/`` directory.  Nothing here imports them, and the
-module itself is numpy-only.
+module itself needs no Boltzmann code (numpy, and jax when the inputs are jax arrays).
 
 Conventions
 -----------
@@ -142,7 +141,7 @@ import numpy as np
 
 from cosmoprimo.jax import numpy_jax, use_jax
 
-__all__ = ['stable', 'stable_hill_valley', 'stable_propto_omega', 'class_a_grid', 'QS_A_MIN',
+__all__ = ['stable', 'stable_hill_valley', 'stable_propto_omega', 'hill_valley_running_max', 'class_a_grid', 'QS_A_MIN',
            'scan_hill_valley', 'scan_propto_omega',
            'min_cs2num_hill_valley', 'min_cs2num_propto_omega',
            'cs2num', 'kinetic_D', 'background', 'default_a_grid',
@@ -450,7 +449,7 @@ def background(a, h=0.6736, omega_b=0.02237, omega_cdm=0.12, w0=-1., wa=0.,
 # --------------------------------------------------------------------------------------
 # alpha functions
 # --------------------------------------------------------------------------------------
-def alphas_hill_valley(a, c_M, tau, a_t, r=2., M2_ini=1.):
+def alphas_hill_valley(a, c_M, tau, a_t, r=2., M2_ini=1., return_dM2=False):
     r"""
     The hill/valley (No Slip Gravity) alphas of `arXiv:1904.12903
     <https://arxiv.org/abs/1904.12903>`_, in closed form:
@@ -465,21 +464,33 @@ def alphas_hill_valley(a, c_M, tau, a_t, r=2., M2_ini=1.):
     ``gravity_models_hill_valley_smg`` does, which keeps them exact out to
     :math:`a = 10^{-14}` where ``cosh u`` would have overflowed.
 
-    Returns ``(alpha_B, alpha_M, alpha_T, dalpha_B/dlna, M2)``.
+    Returns ``(alpha_B, alpha_M, alpha_T, dalpha_B/dlna, M2)``, plus ``M2 - 1`` as a sixth
+    element with ``return_dM2=True`` -- built with ``expm1`` so that it is the small number it
+    is at early times (``sech^2 u`` is :math:`10^{-100}` at :math:`z = 10^{10}` for a late, fast
+    transition, where ``M2 - 1.`` would be exactly zero), which is what the superhorizon IC test
+    reads (:func:`ic_growth_exponent`; mochi_class integrates ``delta_M_pl`` from the exact
+    initial value of eq. 10 and keeps it as its own variable).  numpy or jax.numpy, chosen from
+    the inputs.
     """
-    u = 0.5 * tau * np.log(a / a_t)
-    x2 = np.exp(-2. * np.abs(u))
+    xnp = numpy_jax(a, c_M, tau, a_t, r, M2_ini)
+    a, c_M, tau, a_t, r, M2_ini = (xnp.asarray(x, dtype='f8') for x in (a, c_M, tau, a_t, r, M2_ini))
+    u = 0.5 * tau * xnp.log(a / a_t)
+    x2 = xnp.exp(-2. * xnp.abs(u))
     opx2 = 1. + x2
     sech2 = 4. * x2 / opx2**2
-    tanh_u = np.sign(u) * (1. - x2) / opx2
+    tanh_u = xnp.sign(u) * (1. - x2) / opx2
 
     alpha_M = c_M * tanh_u * sech2
     # d/dlna (tanh u sech^2 u) = (tau/2) sech^2 u (sech^2 u - 2 tanh^2 u)
     dalpha_M = c_M * (0.5 * tau) * sech2 * (sech2 - 2. * tanh_u**2)
 
     alpha_B = -r * alpha_M
-    M2 = M2_ini * np.exp(-(c_M / tau) * sech2)
-    return alpha_B, alpha_M, np.zeros_like(alpha_B), -r * dalpha_M, M2
+    expo = -(c_M / tau) * sech2
+    M2 = M2_ini * xnp.exp(expo)
+    if not return_dM2:
+        return alpha_B, alpha_M, xnp.zeros_like(alpha_B), -r * dalpha_M, M2
+    dM2 = (M2_ini - 1.) + M2_ini * xnp.expm1(expo)
+    return alpha_B, alpha_M, xnp.zeros_like(alpha_B), -r * dalpha_M, M2, dM2
 
 
 def alphas_propto_omega(a, lna, bg, c_b, c_m, c_t=0., M2_ini=1., return_dM2=False):
@@ -564,6 +575,31 @@ def cs2num(alpha_B, alpha_M, alpha_T, dalpha_B_dlna, M2, X_m, X_de):
 def kinetic_D(alpha_K, alpha_B):
     """``D = alpha_K + 3/2 alpha_B^2``; the scalar no-ghost test is ``D >= 0``."""
     return alpha_K + 1.5 * alpha_B**2
+
+
+def hill_valley_running_max(tau, a_t, dlnm2_max, early_max=None, a_early=1e-3, c_M_max=None):
+    r"""
+    The largest running amplitude :math:`|m| = |c_M| / \tau` a hill/valley model may have at
+    ``(tau, a_t)``: ``dlnm2_max`` (the cap on :math:`|\ln M_\ast^2 / M_{\ast,\rm ini}^2|`, whose
+    maximum over the history is :math:`|m|`), and with ``early_max`` also
+    :math:`|m|\,{\rm sech}^2 u(a_{\rm early}) \leq` ``early_max``: the Planck mass at
+    ``a_early`` (recombination by default) within that of GR -- a small ``tau`` is an infinitely
+    broad transition, i.e. gravity modified since the big bang, and the transfer function itself
+    changes (measured 2026-10-05: linear P(k) shapes off by factors 5-30 over a prior box
+    tau >= 0.01, with mu(k) scale-independent to 26%). numpy or jax.numpy.
+    """
+    xnp = numpy_jax(tau, a_t)
+    tau, a_t = xnp.asarray(tau, dtype='f8'), xnp.asarray(a_t, dtype='f8')
+    m_max = xnp.full_like(tau * a_t, float(dlnm2_max))
+    if early_max is not None:
+        u = 0.5 * tau * xnp.log(float(a_early) / a_t)
+        x2 = xnp.exp(-2. * xnp.abs(u))
+        sech2 = 4. * x2 / (1. + x2)**2
+        m_max = xnp.minimum(m_max, float(early_max) / xnp.maximum(sech2, 1e-300))
+    if c_M_max is not None:
+        # the prior box of c_M itself, |c_M| <= c_M_max, as a bound on |m| = |c_M| / tau
+        m_max = xnp.minimum(m_max, float(c_M_max) / tau)
+    return m_max
 
 
 def _qs_mu2(a, bg, alpha_B, alpha_M, alpha_T, dalpha_B_dlna, M2):
@@ -655,8 +691,8 @@ def ic_growth_exponent(kin, bra, run, ten, dM2, dkin, dbra, R, Pt, Rs, Ps, dPt, 
     The two are compared against mochi_class in ``validate_ic_test.py``
     (DESI-DR2-MG ``Stability/``); see :func:`stable_propto_omega`.
 
-    Model-agnostic: the hill/valley alphas at ``z_ref`` go through the same expression
-    (``TODO(hill_valley)``, see :func:`stable_hill_valley`).
+    Model-agnostic: :func:`_ic_propto_omega` and :func:`_ic_hill_valley` read their model's
+    alphas off the ``z_ref`` row of a scan and feed the same expression.
     """
     xnp = numpy_jax(kin, bra, run, ten, dM2, dkin, dbra, R, Pt, Rs, Ps, dPt, dPs, w)
     M2 = 1. + dM2
@@ -781,6 +817,31 @@ def _ic_propto_omega(bg, al, c_k, c_b, c_m, c_t, M2_ini, iref, omega_ref=None):
                               1. - Om * s, Pt, Om * s, w * Om * s, dPt, dPs * s, w)
 
 
+def _ic_hill_valley(bg, al, alpha_K, iref):
+    r"""
+    The superhorizon growth exponent (:func:`ic_growth_exponent`) of hill/valley models,
+    read off row ``iref`` (the ``z_ref`` row) of a scan.
+
+    Everything is closed form at that row: the alphas and :math:`d\alpha_B/d\ln a` from
+    :func:`alphas_hill_valley`, :math:`M_\ast^2 - 1` as its ``expm1`` sixth element,
+    :math:`\alpha_K` the constant ``parameters_smg[0]`` (so :math:`d\alpha_K/d\ln a = 0`),
+    and the background split into its smg and non-smg parts as in :func:`_ic_propto_omega`.
+    No :math:`\Omega_{\rm smg}` rescaling is offered: the hill/valley alphas are not
+    proportional to it.
+    """
+    aB, aM, aT, daB, M2, dM2 = al
+    xnp = numpy_jax(aB, alpha_K)
+    Om = bg['Omega_de'][..., iref]
+    w = bg['w'][..., iref]
+    Pt = bg['P_tot'][..., iref] - w * Om
+    dPt = bg['dp_wo'][..., iref]
+    dPs = bg['dp_de'][..., iref]
+    kin = xnp.broadcast_to(xnp.asarray(alpha_K, dtype='f8'), Om.shape)
+    return ic_growth_exponent(kin, aB[..., iref], aM[..., iref], aT[..., iref], dM2[..., iref],
+                              xnp.zeros_like(kin), daB[..., iref],
+                              1. - Om, Pt, Om, w * Om, dPt, dPs, w)
+
+
 def _refined_grid(a_grid, a_t, tau, u_max=8., n_refine=96):
     """
     Add a per-model window of points around the hill/valley transition.
@@ -790,10 +851,19 @@ def _refined_grid(a_grid, a_t, tau, u_max=8., n_refine=96):
     than the global grid spacing and would otherwise be stepped straight over.  The
     window is clipped to ``[A_INI, 1]``, the range mochi_class actually scans; duplicate
     points at the clip are harmless because only the minimum over the axis is used.
+
+    The window has ``n_refine`` points per model whatever the model, so the returned
+    ``(n, na + n_refine)`` grid has a static shape and traces under jax; the global grid
+    comes first, so a row index into ``a_grid`` (the IC test's ``iref``) is a row index
+    into this grid too.  numpy or jax.numpy, chosen from ``a_t`` and ``tau``.
     """
+    xnp = numpy_jax(a_t, tau)
+    a_t, tau = xnp.asarray(a_t, dtype='f8'), xnp.asarray(tau, dtype='f8')
     u = np.linspace(-u_max, u_max, int(n_refine))
-    a_ref = np.clip(a_t[:, None] * np.exp(2. * u[None, :] / tau[:, None]), A_INI, 1.)
-    return np.concatenate([np.broadcast_to(a_grid, (a_t.size, a_grid.size)), a_ref], axis=-1)
+    # in log space, so that a tiny tau does not overflow the exponential before the clip
+    a_ref = xnp.exp(xnp.clip(xnp.log(a_t)[:, None] + 2. * u[None, :] / tau[:, None], np.log(A_INI), 0.))
+    a_grid = np.asarray(a_grid, dtype='f8')
+    return xnp.concatenate([xnp.broadcast_to(a_grid, (a_t.shape[0], a_grid.size)), a_ref], axis=-1)
 
 
 def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None, qs=False):
@@ -810,28 +880,12 @@ def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None, qs=F
     (``n`` and ``nchunk`` are shapes), so this is what makes the propto_omega path
     jittable at no cost to numpy.
 
-    TODO(hill_valley): the hill/valley branch is numpy-only.  Porting it needs
-    :func:`_refined_grid` rewritten with a fixed-size per-model window (it already is:
-    ``n_refine`` points per model, clipped to ``[A_INI, 1]``) built with ``xnp`` instead
-    of ``np``, and the concatenation with the global grid done per chunk on the array
-    module of the inputs; nothing else in that branch is numpy-specific.  The IC test
-    for hill/valley additionally needs the hill/valley alphas and their
-    :math:`d/d\ln a` at ``z_ref`` (:func:`alphas_hill_valley` already returns
-    :math:`d\alpha_B/d\ln a`; :math:`\alpha_K` is the constant ``parameters_smg[0]``
-    so :math:`d\alpha_K/d\ln a = 0`) fed to :func:`ic_growth_exponent`, and a
-    validation against mochi_class like ``validate_ic_test.py`` before it is trusted.
+    The hill/valley branch runs on a per-model grid (the global one plus the
+    :func:`_refined_grid` window, when ``refine``), of static shape, so it traces like the
+    ``propto_omega`` one; the quasi-static pole test and the IC test read the same
+    background (with ``derivs=True``) and the closed-form alphas on it.
     """
     xnp = numpy_jax(*par.values())
-    if model == 'hill_valley' and use_jax(*par.values()):
-        raise NotImplementedError('TODO(hill_valley): the hill/valley stability scan is numpy-only; '
-                                  'see _scan for what porting it to jax takes')
-    if model == 'hill_valley' and ic is not None:
-        raise NotImplementedError('TODO(hill_valley): the superhorizon IC test is implemented for '
-                                  'propto_omega only; see _scan for what hill/valley needs')
-    if model == 'hill_valley' and qs:
-        raise NotImplementedError('TODO(hill_valley): the quasi-static pole test (mu^2 > 0) is implemented for '
-                                  'propto_omega only; it needs alphas_hill_valley with the pressure derivatives '
-                                  'of background(derivs=True), then the same mu^2 expression as _qs_mu2')
     n = len(next(iter(par.values())))
     lna = np.log(a_grid)
     width = a_grid.size + (n_refine if refine else 0)
@@ -847,9 +901,11 @@ def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None, qs=F
         if model == 'hill_valley':
             a = (_refined_grid(a_grid, par['a_t'][sl], par['tau'][sl], n_refine=n_refine)
                  if refine else a_grid)
-            bg = background(a, **bgkw)
-            al = alphas_hill_valley(a, p['c_M'], p['tau'], p['a_t'], p['r'], p['M2_ini'])
+            bg = background(a, derivs=(ic is not None) or qs, **bgkw)
+            al = alphas_hill_valley(a, p['c_M'], p['tau'], p['a_t'], p['r'], p['M2_ini'],
+                                    return_dM2=ic is not None)
         else:
+            a = a_grid
             bg = background(a_grid, derivs=(ic is not None) or qs, **bgkw)
             al = alphas_propto_omega(a_grid, lna, bg, p['c_b'], p['c_m'], p['c_t'],
                                      p['M2_ini'], return_dM2=ic is not None)
@@ -861,11 +917,14 @@ def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None, qs=F
         out['min_ten'].append(xnp.broadcast_to(aT, shape).min(axis=-1))
         out['min_M2'].append(xnp.broadcast_to(M2, shape).min(axis=-1))
         if qs:
-            out['min_mu2_qs'].append(_qs_mu2(a_grid, bg, aB, aM, aT, daB, M2).min(axis=-1))
+            out['min_mu2_qs'].append(_qs_mu2(a, bg, aB, aM, aT, daB, M2).min(axis=-1))
         if ic is not None:
             q = {k: v[sl] for k, v in par.items()}
-            out['x_growth'].append(_ic_propto_omega(bg, al, q['alpha_K'], q['c_b'], q['c_m'], q['c_t'],
-                                                    q['M2_ini'], ic['iref'], ic.get('omega_ref')))
+            if model == 'hill_valley':
+                out['x_growth'].append(_ic_hill_valley(bg, al, q['alpha_K'], ic['iref']))
+            else:
+                out['x_growth'].append(_ic_propto_omega(bg, al, q['alpha_K'], q['c_b'], q['c_m'], q['c_t'],
+                                                        q['M2_ini'], ic['iref'], ic.get('omega_ref')))
     return {k: xnp.concatenate(v) for k, v in out.items()}
 
 
@@ -888,8 +947,8 @@ def _prepare(model, args, cosmo, na, a_grid, a_ref=None):
     return par, shape, n, grid, int(np.searchsorted(grid, a_ref))
 
 
-def scan_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., na=DEFAULT_NA, a_grid=None,
-                     refine=True, n_refine=96, chunk=None, **cosmo):
+def scan_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, na=DEFAULT_NA, a_grid=None,
+                     refine=True, n_refine=96, chunk=None, ic_test=False, qs_mu2=False, **cosmo):
     r"""
     Every quantity mochi_class minimises over ``a``, for the hill/valley parametrisation.
 
@@ -897,10 +956,25 @@ def scan_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., na=DEFAULT_NA, a_grid=None,
     ``min_M2`` -- from a single sweep of the grid.  :func:`stable_hill_valley` is a thin
     wrapper; use this directly when you want the margins rather than the verdict (for
     instance to train a classifier on a smooth target rather than a boolean).
+
+    With ``ic_test=True`` the dict also carries ``x_growth``, the superhorizon attractor
+    growth exponent at ``z_ref`` (:data:`IC_Z_REF`, inserted into the grid), which needs
+    ``alpha_K`` (``parameters_smg[0]``, constant for hill/valley).  With ``qs_mu2=True`` it
+    also carries ``min_mu2_qs``, the minimum of :math:`\mu^{2}` over the quasi-static range
+    (:func:`_qs_mu2`), on the refined grid.  numpy or jax.numpy, chosen from the inputs.
     """
     args = dict(c_M=c_M, tau=tau, a_t=a_t, r=r, M2_ini=M2_ini)
-    par, shape, n, grid = _prepare('hill_valley', args, cosmo, na, a_grid)
-    out = _scan('hill_valley', par, list(cosmo), grid, refine, n_refine, chunk)
+    if not ic_test:
+        par, shape, n, grid = _prepare('hill_valley', args, cosmo, na, a_grid)
+        out = _scan('hill_valley', par, list(cosmo), grid, refine, n_refine, chunk, qs=qs_mu2)
+    else:
+        if alpha_K is None:
+            raise ValueError('the superhorizon IC test needs alpha_K (parameters_smg[0])')
+        args['alpha_K'] = alpha_K
+        par, shape, n, grid, iref = _prepare('hill_valley', args, cosmo, na, a_grid,
+                                             a_ref=1. / (1. + IC_Z_REF))
+        out = _scan('hill_valley', par, list(cosmo), grid, refine, n_refine, chunk,
+                    ic={'iref': iref}, qs=qs_mu2)
     return {k: (v.reshape(shape) if shape else v[0]) for k, v in out.items()}
 
 
@@ -996,9 +1070,7 @@ def _verdict(s, M2_ini, alpha_K, ic_tolerance=None):
     :func:`ic_growth_exponent`), is applied when the scan carries ``x_growth``, i.e. when
     it was run with ``ic_test=True``.
 
-    numpy or jax.numpy, chosen from the scan.  TODO(hill_valley): nothing here is
-    model-specific; once :func:`_scan` produces ``x_growth`` for hill/valley the same
-    verdict applies.
+    numpy or jax.numpy, chosen from the scan.  Nothing here is model-specific.
     """
     xnp = numpy_jax(*s.values())
     ok = s['min_cs2num'] >= 0.
@@ -1030,8 +1102,9 @@ def _verdict(s, M2_ini, alpha_K, ic_tolerance=None):
     return ok
 
 
-def stable_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, ic_test=False, **kwargs):
-    """
+def stable_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, ic_test=False,
+                       ic_tolerance=None, qs_mu2=False, **kwargs):
+    r"""
     ``True`` where mochi_class would run the model, ``False`` where it would abort.
 
     Applies all five of mochi_class' rejection conditions; see :func:`_verdict` for the
@@ -1044,16 +1117,25 @@ def stable_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, ic_test=Fal
     are exact.  With ``alpha_K < 0``, ``D`` can change sign and this function is no
     longer a faithful reproduction of mochi_class, so such models are reported unstable.
 
-    numpy only, and ``ic_test`` is not available yet.  TODO(hill_valley): see
-    :func:`_scan` for both; the entry point here only has to pass ``ic_test`` /
-    ``ic_omega_ref`` through to :func:`scan_hill_valley` as :func:`stable_propto_omega`
-    does, with ``alpha_K`` (constant for hill/valley) as the kineticity.
+    ``ic_test`` adds mochi_class' superhorizon initial-condition test
+    (:func:`ic_growth_exponent`; needs ``alpha_K``, the constant kineticity).  Off by
+    default, i.e. what a mochi_class run with ``pert_ic_tolerance_smg = -1`` accepts, which is
+    how the DESI-DR2-MG pipeline runs it; ``True`` reproduces a default run
+    (``ic_tolerance`` defaults to :data:`IC_TOLERANCE`).  ``qs_mu2`` adds the quasi-static
+    pole test :math:`\min \mu^{2} > 0` of :func:`_qs_mu2` -- not one of mochi_class' tests but a
+    requirement of the one-loop source built from :math:`h_{3}`, :math:`h_{5}`.  At
+    :math:`r = 2` (No Slip Gravity) :math:`\alpha_{1} = 0` so :math:`h_{3} = h_{5}` and the
+    pole cancels from :math:`\mu(k)`, but the splines of :math:`h_{3}`, :math:`h_{5}` across it
+    do not; away from :math:`r = 2` it is a genuine singularity at a finite :math:`k`.
+
+    numpy or jax.numpy, chosen from the inputs: under ``jax.jit`` / ``vmap`` / ``grad``
+    every step traces (see the module docstring).
     """
-    if ic_test:
-        raise NotImplementedError('TODO(hill_valley): the superhorizon IC test is implemented for '
-                                  'propto_omega only; see _scan')
-    return _verdict(scan_hill_valley(c_M, tau, a_t, r=r, M2_ini=M2_ini, **kwargs),
-                    M2_ini, alpha_K)
+    if ic_test and alpha_K is None:
+        raise ValueError('ic_test=True needs alpha_K (parameters_smg[0])')
+    return _verdict(scan_hill_valley(c_M, tau, a_t, r=r, M2_ini=M2_ini, alpha_K=alpha_K,
+                                     ic_test=ic_test, qs_mu2=qs_mu2, **kwargs),
+                    M2_ini, alpha_K, ic_tolerance=ic_tolerance)
 
 
 def stable_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, ic_test=False,
@@ -1090,7 +1172,7 @@ def stable_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, ic_test=False
                     M2_ini, alpha_K, ic_tolerance=ic_tolerance)
 
 
-def stable(gravity_model, parameters_smg, ic_test=False, **cosmo):
+def stable(gravity_model, parameters_smg, ic_test=False, qs_mu2=False, **cosmo):
     """
     Dispatch on mochi_class' own ``gravity_model`` / ``parameters_smg`` pair.
 
@@ -1105,8 +1187,8 @@ def stable(gravity_model, parameters_smg, ic_test=False, **cosmo):
 
     ``'no_slip_gravity'`` is accepted as an alias of ``'hill_valley'``, as in
     ``gravity_models_smg.c``.  Extra keyword arguments go to :func:`background`, plus
-    ``na`` / ``a_grid`` / ``refine`` / ``chunk``; ``ic_test`` (propto_omega only for now)
-    as in :func:`stable_propto_omega`.
+    ``na`` / ``a_grid`` / ``refine`` / ``chunk``; ``ic_test`` and ``qs_mu2`` as in
+    :func:`stable_propto_omega` / :func:`stable_hill_valley`.
     """
     xnp = numpy_jax(parameters_smg)
     p = xnp.asarray(parameters_smg, dtype='f8')
@@ -1115,12 +1197,12 @@ def stable(gravity_model, parameters_smg, ic_test=False, **cosmo):
             raise ValueError('hill_valley expects parameters_smg = [alpha_K, c_M, tau, '
                              'a_t, r, M2_ini] on the last axis, got {}'.format(p.shape))
         aK, c_M, tau, a_t, r, M2_ini = (p[..., i] for i in range(6))
-        return stable_hill_valley(c_M, tau, a_t, r=r, M2_ini=M2_ini, alpha_K=aK, ic_test=ic_test, **cosmo)
+        return stable_hill_valley(c_M, tau, a_t, r=r, M2_ini=M2_ini, alpha_K=aK, ic_test=ic_test, qs_mu2=qs_mu2, **cosmo)
     if gravity_model == 'propto_omega':
         if p.shape[-1] != 5:
             raise ValueError('propto_omega expects parameters_smg = [alpha_K, c_b, c_m, '
                              'c_t, M2_ini] on the last axis, got {}'.format(p.shape))
         aK, c_b, c_m, c_t, M2_ini = (p[..., i] for i in range(5))
-        return stable_propto_omega(c_b, c_m, c_t=c_t, M2_ini=M2_ini, alpha_K=aK, ic_test=ic_test, **cosmo)
+        return stable_propto_omega(c_b, c_m, c_t=c_t, M2_ini=M2_ini, alpha_K=aK, ic_test=ic_test, qs_mu2=qs_mu2, **cosmo)
     raise ValueError("gravity_model must be 'hill_valley' ('no_slip_gravity') or "
                      "'propto_omega', got {!r}".format(gravity_model))
