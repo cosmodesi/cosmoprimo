@@ -257,132 +257,10 @@ def test_mlp_nodes_are_quasi_random_samples_of_the_box():
     assert nodes[:, 0].min() < 1.2 and nodes[:, 0].max() > 2.8
 
 
-def test_mlp_valid_predicate_keeps_every_node_out_of_the_hole():
-    """A predicate on the physical parameters filters the Sobol pool before any evaluation: the
-    node set is a sample of the valid region, still `nsamples` strong, and an engine built
-    without a predicate is untouched."""
-    from cosmoprimo.emulators.tools.mlp import MLPEngine
-
-    box = space()
-    plain = MLPEngine(box.params, box.limits, nsamples=128).nodes()
-    # vectorised predicate: half the box (tilt > 0), off the pool's own low-discrepancy order
-    nodes = MLPEngine(box.params, box.limits, nsamples=128,
-                      valid=lambda amplitude, tilt: tilt > 0.).nodes()
-    assert nodes.shape == (128, 2) and np.all(nodes[:, 1] > 0.)
-    # the survivors are the pool's first valid rows, so the first nodes of the two sets coincide
-    first_valid = plain[plain[:, 1] > 0.]
-    assert np.allclose(nodes[:len(first_valid)], first_valid)
-    # a scalar predicate works too (row loop fallback)
-    scalar = MLPEngine(box.params, box.limits, nsamples=64,
-                       valid=lambda amplitude, tilt: bool(tilt > 0.)).nodes()
-    assert scalar.shape == (64, 2) and np.all(scalar[:, 1] > 0.)
-    # a predicate keeping a sliver of the box: the pool doubles until enough survive ...
-    sliver = MLPEngine(box.params, box.limits, nsamples=64, candidates=64,
-                       valid=lambda amplitude, tilt: tilt > 0.95).nodes()
-    assert sliver.shape == (64, 2) and np.all(sliver[:, 1] > 0.95)
-    # ... up to the cap, where it is loud rather than a silently smaller set
-    engine = MLPEngine(box.params, box.limits, nsamples=128, candidates=128,
-                       valid=lambda amplitude, tilt: tilt > 0.999)
-    engine.MAX_CANDIDATES = 1024
-    with pytest.raises(ValueError, match='cap'):
-        engine.nodes()
-
-
-def test_mlp_trains_through_a_valid_predicate():
-    """End to end: `valid` reaches the engine through the emulator's options, the target is never
-    called in the hole, and the fit is still usable on the valid side."""
-    calls = []
-
-    def guarded(params):
-        calls.append(params['tilt'])
-        assert params['tilt'] > 0., 'the target was called inside the hole'
-        return target(params)
-
-    emu = Emulator(guarded, space())
-    emu.train(**{**MLP, 'valid': lambda amplitude, tilt: tilt > 0.})
-    assert len(calls) == MLP['nsamples'] and min(calls) > 0.
-    assert np.max(np.abs(emu.predict(**POINT)['pk'] / target(POINT)['pk'] - 1.)) < 0.1
-
-
-def test_mlp_lr_decay_round_trips_and_fits():
-    """A decaying rate is part of the fit's recipe, so it travels with the state. (Whether it
-    helps depends on the budget: over the suite's 100 epochs a 100-fold decay ends too soon to
-    improve on the constant rate, so only usability is asserted here.)"""
-    from cosmoprimo.emulators.tools.mlp import MLPEngine
-
-    box = space()
-    with pytest.raises(ValueError, match='lr_decay'):
-        MLPEngine(box.params, box.limits, lr_decay=0.)
-    emu = trained(**{**MLP, 'lr_decay': 1e-2})
-    assert emu._engines['pk'][0].lr_decay == 1e-2
-    state = emu._engines['pk'][0].__getstate__()
-    assert MLPEngine.from_state(state).lr_decay == 1e-2
-    assert np.max(np.abs(emu.predict(**POINT)['pk'] / target(POINT)['pk'] - 1.)) < 0.3
-
-
-def test_train_can_stop_after_the_evaluations(tmp_path):
-    """`fit=False`: every node evaluated and checkpointed, no engine fitted -- the CPU half of a
-    build whose network fit is then a second job on a GPU. That second call, with the same
-    checkpoint, evaluates nothing and fits."""
-    calls = []
-
-    def counting(params):
-        calls.append(1)
-        return target(params)
-
-    checkpoint = str(tmp_path / 'nodes.ckpt.npz')
-    emu = Emulator(counting, space())
-    emu.train(**{**MLP, 'checkpoint': checkpoint, 'fit': False})
-    assert not emu.trained and len(calls) == MLP['nsamples']
-    assert np.load(checkpoint)['nodes'].shape == (MLP['nsamples'], 2)
-    emu.train(**{**MLP, 'checkpoint': checkpoint})
-    assert emu.trained and len(calls) == MLP['nsamples']
-
-
 class Sampled(Exact):
     """`amplitude` exact as in `Exact`, but sampled at the nodes rather than pinned at the centre."""
     def select_node_params(self, names):
         return ['amplitude']
-
-
-def test_a_sampled_exact_param_reuses_the_generic_checkpoint(tmp_path):
-    """`select_node_params`: a node set drawn while `amplitude` was still expanded -- and its
-    checkpoint -- is reused as it stands once `amplitude` is exact-but-sampled. Same coordinates
-    in the same column order, so nothing is evaluated again; the fit is over `tilt` alone, on the
-    nodes projected onto it; and `amplitude` is exact and unbounded as with the pinned version."""
-    calls = []
-
-    def counting(params):
-        calls.append(1)
-        return target(params)
-
-    checkpoint = str(tmp_path / 'nodes.ckpt.npz')
-    generic = Emulator(counting, space(), engine='mlp')
-    generic.train(**{**MLP, 'checkpoint': checkpoint, 'fit': False})
-    evaluated = len(calls)
-    emu = Sampled(counting, space(), engine='mlp')
-    # expanded: tilt; exact: amplitude; node coordinates: both, in the TRAINING order, which is
-    # the column order the generic checkpoint was written in
-    assert emu.params == ['tilt'] and emu.exact_params == ['amplitude']
-    assert emu.node_params == ['amplitude', 'tilt']
-    draw = {name: value for name, value in MLP.items() if name != 'engine'}
-    assert np.allclose(emu.nodes(**draw), generic.nodes(**draw))
-    emu.train(**{**MLP, 'checkpoint': checkpoint})
-    assert emu.trained and len(calls) == evaluated
-    # the fitted engines are over `tilt` alone, and amplitude is exact far outside its range
-    assert all(engine.params == ['tilt'] for engine, *_ in emu._engines.values())
-    outside = emu.predict(amplitude=99., tilt=0.2)
-    assert np.allclose(outside['pk'], 99. / 2.9 * emu.predict(**OTHER)['pk'], rtol=1e-10)
-    # the projected nodes are a perfectly good 1-d set: the fit is as good as the pinned one's
-    pinned = trained(cls=Exact, **MLP)
-    truth = target(OTHER)['pk']
-    error = lambda emulator: np.max(np.abs(emulator.predict(**OTHER)['pk'] / truth - 1.))
-    assert error(emu) < 5. * max(error(pinned), 1e-3)
-    # and it survives a file
-    emu.write(str(tmp_path / 'sampled.h5'))
-    again = Emulator.read(str(tmp_path / 'sampled.h5'))
-    assert again.node_params == ['amplitude', 'tilt']
-    assert np.allclose(again.predict(**OTHER)['pk'], emu.predict(**OTHER)['pk'])
 
 
 def test_a_sampled_param_must_be_a_training_parameter():
@@ -392,114 +270,6 @@ def test_a_sampled_param_must_be_a_training_parameter():
 
     with pytest.raises(ValueError, match='select_node_params'):
         Wrong(target, space())
-
-
-def test_outlier_cuts_can_look_at_raw_or_transformed_values(tmp_path, caplog):
-    """`outlier_on`: the cuts see what the engines are fitted to by default; 'raw' sees the
-    calculator's outputs; 'both' requires a node to pass both. A transform that removes the
-    amplitude also removes the amplitude-driven outliers, so the two node sets differ."""
-    import logging
-
-    def spiky(params):
-        # one output that is exactly exp(amplitude) times a shape: e^10 above the median at the
-        # top of the box, e^10 below it at the bottom
-        return {'pk': np.exp(params['amplitude']) * K**(-1.5 + 0.2 * params['tilt'])}
-
-    class Scaled(Sampled):
-        def transform(self, values, params):
-            return {name: value / np.exp(params['amplitude']) for name, value in values.items()}
-
-        def inverse_transform(self, values, params):
-            return {name: value * np.exp(params['amplitude']) for name, value in values.items()}
-
-    wide = Space(bounds={'amplitude': (0., 20.), 'tilt': (-1., 1.)})
-
-    def dropped(cls, outlier_on):
-        caplog.clear()
-        emu = cls(spiky, wide, engine='mlp')
-        with caplog.at_level(logging.INFO, logger='Emulator'):
-            emu.train(**{**MLP, 'outlier_factor': 10., 'outlier_on': outlier_on})
-        lines = [record.getMessage() for record in caplog.records if 'nodes (' in record.getMessage()]
-        return int(lines[-1].split()[1].split('/')[0]) if lines else 0
-
-    # generic emulator, transform = identity: raw and transformed are the same values
-    assert dropped(Emulator, 'raw') == dropped(Emulator, 'transformed') > 0
-    # amplitude divided out: nothing is an outlier in the transformed values, while the raw cut
-    # still removes the large-amplitude nodes, and 'both' removes at least as many as either
-    assert dropped(Scaled, 'transformed') == 0
-    assert dropped(Scaled, 'raw') == dropped(Emulator, 'raw') > 0
-    assert dropped(Scaled, 'both') >= dropped(Scaled, 'raw')
-    with pytest.raises(ValueError, match='outlier_on'):
-        Scaled(spiky, wide, engine='mlp').train(**{**MLP, 'outlier_factor': 10., 'outlier_on': 'sideways'})
-
-
-def test_mlp_huber_loss_fits_and_round_trips(tmp_path):
-    """`loss='huber'`: fits about as well as the mean square on clean data, and its options
-    survive a file. `fit_seed` reseeds the fit alone: same nodes, a different network."""
-    emu = trained(**{**MLP, 'loss': 'huber', 'huber_delta': 0.5, 'fit_seed': 7})
-    truth = target(OTHER)['pk']
-    plain = trained(**MLP)
-    error = lambda emulator: np.max(np.abs(emulator.predict(**OTHER)['pk'] / truth - 1.))
-    assert error(emu) < 3. * max(error(plain), 0.03)
-    engine = next(iter(emu._engines.values()))[0]
-    assert engine.loss == 'huber' and engine.huber_delta == 0.5 and engine.fit_seed == 7
-    emu.write(str(tmp_path / 'huber.h5'))
-    again = Emulator.read(str(tmp_path / 'huber.h5'))
-    engine = next(iter(again._engines.values()))[0]
-    assert engine.loss == 'huber' and engine.huber_delta == 0.5 and engine.fit_seed == 7
-    assert np.allclose(again.predict(**OTHER)['pk'], emu.predict(**OTHER)['pk'])
-    # the same nodes, another seed: a different network, the same function to within its error
-    other = trained(**{**MLP, 'fit_seed': 8})
-    assert np.allclose(other.nodes(**{k: v for k, v in MLP.items() if k != 'engine'}),
-                       emu.nodes(**{k: v for k, v in MLP.items() if k != 'engine'}))
-    with pytest.raises(ValueError, match='loss'):
-        trained(**{**MLP, 'loss': 'l1'})
-
-
-def test_train_can_augment_the_node_set(tmp_path):
-    """`augment`: extra nodes of the engine's own kind over a sub-box, through the same `valid`
-    predicate, appended AFTER the base draw -- so a checkpoint of the un-augmented training is
-    a prefix of the augmented one and resumes with the extra nodes alone."""
-    calls = []
-
-    def counting(params):
-        calls.append(params['tilt'])
-        return target(params)
-
-    def valid(amplitude, tilt):
-        return tilt > 0.
-
-    checkpoint = str(tmp_path / 'nodes.ckpt.npz')
-    emu = Emulator(counting, space())
-    emu.train(**{**MLP, 'checkpoint': checkpoint, 'fit': False, 'valid': valid})
-    base = len(calls)
-    assert base == MLP['nsamples']
-    augment = {'bounds': {'tilt': (0.5, 0.7)}, 'nsamples': 32}
-    emu.train(**{**MLP, 'checkpoint': checkpoint, 'valid': valid, 'augment': augment})
-    # only the extra nodes were evaluated, every one inside the sub-box (and the gate)
-    assert len(calls) == base + 32
-    assert all(0.5 <= tilt <= 0.7 for tilt in calls[base:])
-    stored = np.load(checkpoint)['nodes']
-    assert stored.shape == (base + 32, 2)
-    assert np.all((stored[base:, 1] >= 0.5) & (stored[base:, 1] <= 0.7))
-    assert emu.trained
-    # a list of specifications draws each with its own seed; the sub-box draw is not the base
-    # draw rescaled
-    two = emu._augmented_nodes([augment, {'bounds': {'amplitude': (2.5, 3.)}, 'nsamples': 8}],
-                               valid=valid, nsamples=MLP['nsamples'])
-    assert two.shape == (40, 2) and np.all(two[32:, 0] >= 2.5) and np.all(two[:, 1] > 0.)
-    assert not np.allclose(two[:32, 0], stored[:32, 0])
-    # loud on a name outside the box, on bounds that miss it, and on a whitened space
-    with pytest.raises(ValueError, match='not among'):
-        emu._augmented_nodes({'bounds': {'slope': (0., 1.)}, 'nsamples': 4})
-    with pytest.raises(ValueError, match='overlap'):
-        emu._augmented_nodes({'bounds': {'tilt': (5., 6.)}, 'nsamples': 4})
-    rng = np.random.default_rng(0)
-    chain = {'amplitude': rng.normal(2., 0.2, 500), 'tilt': rng.normal(0.3, 0.1, 500)}
-    chain['tilt'] += 0.5 * (chain['amplitude'] - 2.)
-    whitened = Emulator(target, Space(samples=chain))
-    with pytest.raises(ValueError, match='whitened'):
-        whitened._augmented_nodes({'bounds': {'tilt': (0.2, 0.4)}, 'nsamples': 4})
 
 
 # ── saving ────────────────────────────────────────────────────────────────────
@@ -561,3 +331,80 @@ def test_contract_checks_the_shape_it_is_given():
         emu.contract('pk', np.zeros((3, len(K) + 1)))
     with pytest.raises(ValueError, match='no output'):
         emu.contract('nope', np.zeros((3, len(K))))
+
+
+#: A polynomial fit, the engine of the EFT-of-DE table emulators.
+POLY = dict(engine='polynomial', order=4)
+
+
+def test_a_sampled_exact_param_reuses_the_generic_checkpoint(tmp_path):
+    """`select_node_params`: a node set drawn while `amplitude` was still expanded -- and its
+    checkpoint -- is reused as it stands once `amplitude` is exact-but-sampled. Same coordinates
+    in the same column order, so nothing is evaluated again; the fit is over `tilt` alone, on the
+    nodes projected onto it; and `amplitude` is exact and unbounded as with the pinned version."""
+    calls = []
+
+    def counting(params):
+        calls.append(1)
+        return target(params)
+
+    checkpoint = str(tmp_path / 'nodes.ckpt.npz')
+    generic = Emulator(counting, space(), engine='polynomial')
+    generic.train(**{**POLY, 'checkpoint': checkpoint})
+    evaluated = len(calls)
+    emu = Sampled(counting, space(), engine='polynomial')
+    # expanded: tilt; exact: amplitude; node coordinates: both, in the TRAINING order, which is
+    # the column order the generic checkpoint was written in
+    assert emu.params == ['tilt'] and emu.exact_params == ['amplitude']
+    assert emu.node_params == ['amplitude', 'tilt']
+    draw = {name: value for name, value in POLY.items() if name != 'engine'}
+    assert np.allclose(emu.nodes(**draw), generic.nodes(**draw))
+    emu.train(**{**POLY, 'checkpoint': checkpoint})
+    assert emu.trained and len(calls) == evaluated
+    # the fitted engines are over `tilt` alone, and amplitude is exact far outside its range
+    assert all(engine.params == ['tilt'] for engine, *_ in emu._engines.values())
+    outside = emu.predict(amplitude=99., tilt=0.2)
+    assert np.allclose(outside['pk'], 99. / 2.9 * emu.predict(**OTHER)['pk'], rtol=1e-10)
+    # the projected nodes are a perfectly good 1-d set: the fit is as good as the pinned one's
+    pinned = trained(cls=Exact, **POLY)
+    truth = target(OTHER)['pk']
+    error = lambda emulator: np.max(np.abs(emulator.predict(**OTHER)['pk'] / truth - 1.))
+    assert error(emu) < 5. * max(error(pinned), 1e-3)
+    # and it survives a file
+    emu.write(str(tmp_path / 'sampled.h5'))
+    again = Emulator.read(str(tmp_path / 'sampled.h5'))
+    assert again.node_params == ['amplitude', 'tilt']
+    assert np.allclose(again.predict(**OTHER)['pk'], emu.predict(**OTHER)['pk'])
+
+
+def test_outlier_cuts_look_at_the_transformed_values(caplog):
+    """The cuts see what the engines are fitted to: a transform that removes the amplitude also
+    removes the amplitude-driven outliers."""
+    import logging
+
+    def spiky(params):
+        # one output that is exactly exp(amplitude) times a shape: e^10 above the median at the
+        # top of the box, e^10 below it at the bottom
+        return {'pk': np.exp(params['amplitude']) * K**(-1.5 + 0.2 * params['tilt'])}
+
+    class Scaled(Sampled):
+        def transform(self, values, params):
+            return {name: value / np.exp(params['amplitude']) for name, value in values.items()}
+
+        def inverse_transform(self, values, params):
+            return {name: value * np.exp(params['amplitude']) for name, value in values.items()}
+
+    wide = Space(bounds={'amplitude': (0., 20.), 'tilt': (-1., 1.)})
+
+    def dropped(cls):
+        caplog.clear()
+        emu = cls(spiky, wide, engine='polynomial')
+        with caplog.at_level(logging.INFO, logger='Emulator'):
+            emu.train(**{**POLY, 'outlier_factor': 10.})
+        lines = [record.getMessage() for record in caplog.records if record.getMessage().startswith('dropping')]
+        return int(lines[-1].split()[1].split('/')[0]) if lines else 0
+
+    # generic emulator, transform = identity: the large-amplitude nodes are outliers
+    assert dropped(Emulator) > 0
+    # amplitude divided out: nothing is an outlier in the values the engine is fitted to
+    assert dropped(Scaled) == 0

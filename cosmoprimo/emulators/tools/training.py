@@ -452,12 +452,6 @@ class TrainingSet(object):
                 self.values[name] = list(value)
         return {name: np.array(value) for name, value in self.values.items()}
 
-    def release(self):
-        """Drop the collected values. For a caller that has taken :meth:`outputs` and keeps its
-        own copy: the set is a couple of GB per rank on a large training, and holding it twice
-        through the fits is what runs a node out of memory."""
-        self.values = {}
-
     def _complete_or_raise(self):
         if not self.complete:
             raise ValueError(f'training is incomplete ({self.done}/{len(self.nodes)}); a sparse '

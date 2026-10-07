@@ -304,7 +304,7 @@ class Emulator(object):
         """
         return self._engine(budget=budget, params=self.node_params, **kwargs).nodes()
 
-    def _engine(self, budget=None, space=None, params=None, geometry=None, **kwargs):
+    def _engine(self, budget=None, space=None, params=None, **kwargs):
         from .engines import ChebyshevEngine
         from .mlp import MLPEngine
         from .polynomial import PolynomialEngine
@@ -319,11 +319,6 @@ class Emulator(object):
         space = self.training if space is None else space
         params = self.params if params is None else list(params)
         subspace = space.marginal(params) if len(params) < len(space.params) else space
-        # `geometry` overrides the space's own box: the engine that draws the extra nodes of an
-        # augmented training (see :meth:`_augmented_nodes`) is the same class with the same
-        # options over a narrower box, and nothing else about it differs.
-        if geometry is None:
-            geometry = subspace.geometry()
         options = {**self.options, **kwargs}
         # `budget` may arrive twice -- once at construction (kept in `options`) and once from
         # `train` -- and passing both to the engine is a TypeError. An explicit one wins; the
@@ -344,80 +339,13 @@ class Emulator(object):
         # engine that wants the samples themselves, so it asks for them by name.
         if cls.wants_samples and 'samples' not in options and subspace.samples is not None:
             options = {**options, 'samples': subspace.samples}
-        return cls(**geometry, budget=budget, **options)
-
-    def _augmented_nodes(self, augment, budget=None, **kwargs):
-        """The extra nodes of an augmented training: ``(n, nparams)`` in physical parameters.
-
-        ``augment`` is one specification or a list of them, each ``{'bounds': {name: (low,
-        high)}, 'nsamples': n, ...}``: the engine's own node draw (Sobol' through ``valid``, for
-        the scattered engines) over the training box cut down to ``bounds`` on the named axes,
-        the others left at their full range. Any other key overrides an engine option for that
-        draw alone -- ``seed`` most usefully; it defaults to the engine's seed plus the
-        specification's index so a sub-box is not the base draw rescaled.
-
-        Bounds are given in the user's parameters, like a :class:`Space`'s; they are mapped
-        through the axis transforms into the engine's expansion variable here, as the space
-        does for its own bounds. Only for a box-shaped space: a whitened engine draws on the
-        posterior's principal axes and a cut on one physical axis is not a face of that box.
-        """
-        specs = [augment] if isinstance(augment, dict) else list(augment or [])
-        if not specs:
-            return np.empty((0, len(self.node_params)))
-        from .space import _ranges
-        # over the node parameters, like the base draw: the extra nodes join the same array
-        subspace = self.training.marginal(self.node_params) \
-            if len(self.node_params) < len(self.training.params) else self.training
-        geometry = subspace.geometry()
-        if 'covariance' in geometry:
-            raise ValueError('augment needs a box-shaped Space (bounds only); this one is '
-                             'whitened, so a cut on a physical axis would not be a face of its box')
-        extra = []
-        for index, spec in enumerate(specs):
-            spec = dict(spec)
-            bounds = dict(spec.pop('bounds', None) or {})
-            unknown = [name for name in bounds if name not in geometry['params']]
-            if unknown:
-                raise ValueError(f'augment bounds name {unknown}, not among the emulated '
-                                 f'parameters {geometry["params"]}')
-            narrowed = _ranges(bounds, geometry['transform'])
-            limits = dict(geometry['limits'])
-            for name, (low, high) in narrowed.items():
-                low, high = max(limits[name][0], low), min(limits[name][1], high)
-                if not low < high:
-                    raise ValueError(f'augment bounds for {name!r} ({bounds[name]}) do not overlap '
-                                     f'the training box {limits[name]}')
-                limits[name] = (low, high)
-            options = {**self.options, **kwargs, **spec}
-            options['seed'] = int(spec.get('seed', int(options.get('seed', 42)) + 1 + index))
-            engine = self._engine(budget=budget, geometry={**geometry, 'limits': limits,
-                                                           'bounds': {**geometry['bounds'], **narrowed}},
-                                  params=self.node_params,
-                                  **{name: value for name, value in options.items() if name != 'budget'})
-            nodes = np.atleast_2d(np.asarray(engine.nodes(), dtype='f8'))
-            self.logger.info(f'augmenting with {len(nodes)} nodes over '
-                             + ', '.join(f'{name} [{low:.5g}, {high:.5g}]' for name, (low, high) in bounds.items()))
-            extra.append(nodes)
-        return np.concatenate(extra, axis=0)
+        return cls(**subspace.geometry(), budget=budget, **options)
 
     def train(self, engine=None, budget=None, checkpoint=None, chunk=None, batch_size=None,
               mpicomm=None, per_output=None, max_non_finite=0.05, method='auto',
-              basis_budget=None, drop_non_finite=None, fit=True, rows_per_rank=None,
-              outlier_factor=None, outlier_factor_low=None, outlier_on='transformed', augment=None,
-              **kwargs):
+              basis_budget=None, drop_non_finite=None, rows_per_rank=None,
+              outlier_factor=None, outlier_factor_low=None, **kwargs):
         """Evaluate the calculator on the node set and fit.
-
-        ``augment`` adds nodes where accuracy is wanted most: one or several
-        ``{'bounds': {name: (low, high)}, 'nsamples': n}`` specifications, each a draw of the
-        engine's own kind (Sobol' through ``valid``) over the training box narrowed on the named
-        axes, appended to the base node set (see :meth:`_augmented_nodes`). A box-uniform draw
-        spends its nodes in proportion to volume, and the region a chain settles in is a small
-        fraction of it -- the near-GR corner of the EFT-of-dark-energy box held 28 of 65536 nodes
-        within 0.05 of GR, and the error there was 10x the box median (2026-09-10). Extra nodes
-        go through the same outlier cuts as the rest, which matters: 8% of the gated near-GR
-        draw was still absurd. The checkpoint keys nodes by coordinates, so a checkpoint of the
-        un-augmented training, copied under the augmented name, is resumed with only the extra
-        nodes to evaluate.
 
         Resumable and chunked: pass ``checkpoint`` and ``chunk='30min'`` for anything expensive,
         then rerun until it reports complete. A kill then costs one node, not the training.
@@ -430,35 +358,18 @@ class Emulator(object):
         ``outlier_factor`` (regression engines only) drops, before the fit, every node at which
         some output component exceeds that factor times the component's median |value| over
         the nodes. A stability gate says where a calculator *runs*, not where its answer is
-        sane: over the EFT-of-dark-energy box, 8% of the gate-passing nodes returned one-loop
-        tables 1e4 to 1e87 times their typical size (large c_M with w0 > -0.5), and a network
-        fitted with them lost the sane 92% -- its asinh scale followed the maximum. Dropped
-        nodes are logged; the fit then extrapolates there, finite but meaningless, which is
-        what a chain that never visits those models can live with.
+        sane: over the EFT-of-dark-energy box, gate-passing nodes returned one-loop tables up to
+        1e87 times their typical size (large c_M with w0 > -0.5), and a least-squares fit follows
+        such a node wherever it is. Dropped nodes are logged; the fit then extrapolates there,
+        finite but meaningless, which is what a chain that never visits those models can live with.
 
         ``outlier_factor_low`` is the mirror cut: a node is dropped when some sign-definite
         component (one that keeps the same sign over every node -- a component that crosses
         zero is legitimately tiny near the crossing) falls below the median divided by that
         factor. The same absurd region has a collapsed face: models whose growth is switched off
-        return tables and growth scalars 1e-3 to 1e-5 times typical, and in the transformed
-        space the network fits they dominate the mean-squared loss by orders of magnitude, so
-        the fit of the sane 96% is spent on them (measured: the growth scalar's median error
-        stayed at 0.6% whatever the schedule until they were removed).
+        return tables and growth scalars 1e-3 to 1e-5 times typical.
 
-        ``outlier_on`` says which values the two cuts look at: ``'transformed'`` (the default, what
-        the engines are fitted to), ``'raw'`` (the calculator's outputs as the checkpoint holds
-        them), or ``'both'`` (a node must pass both). They differ whenever :meth:`transform` changes
-        the dynamic range: dividing the one-loop tables of the EFT-of-dark-energy emulator by the
-        primordial amplitude squared brought 1446 nodes under the ``1e4 x median`` cut that the raw
-        tables had failed, and those were the odd-growth models the cut existed for (sigma8 at fixed
-        amplitude at half the median, f(k) shapes deviating twice as much); fitted with them, the
-        growth-rate row and the sigma^2 scalars came out 2.5-3.5x worse in the likelihood (2026-09-11).
-        ``'both'`` keeps the raw cut's node set and adds whatever the transformed outputs reject.
-
-        ``fit=False`` stops once every node is evaluated and checkpointed, leaving the emulator
-        untrained: the two stages want different machines (the node evaluations are Boltzmann
-        and perturbation-theory calls, many CPU ranks; a network fit is one GPU), so a first job
-        evaluates and a second, with the same ``checkpoint``, finds the set complete and fits.
+        Both cuts look at the transformed outputs, i.e. at what the engines are fitted to.
 
         ``per_output`` overrides the engine options for named outputs, e.g.
         ``per_output={'pk': dict(budget=2)}``. A key matches an output name, or the part of it
@@ -482,13 +393,7 @@ class Emulator(object):
         # otherwise repeat -- and a set every rank must agree on exactly is safer sent than
         # recomputed.
         def draw():
-            nodes = np.atleast_2d(np.asarray(built.nodes(), dtype='f8'))
-            if augment:
-                # appended, not merged: the base draw keeps its order, so a checkpoint of the
-                # un-augmented training is a prefix of this one and resumes with the extra
-                # nodes alone
-                nodes = np.concatenate([nodes, self._augmented_nodes(augment, budget=budget, **kwargs)])
-            return nodes
+            return np.atleast_2d(np.asarray(built.nodes(), dtype='f8'))
 
         if mpicomm is not None and mpicomm.size > 1:
             nodes = mpicomm.bcast(draw() if mpicomm.rank == 0 else None, root=0)
@@ -530,10 +435,6 @@ class Emulator(object):
         if not training.run():
             raise RuntimeError(f'training incomplete ({training.done}/{len(nodes)}); rerun to '
                                f'continue -- the checkpoint holds what is done')
-        if not fit:
-            self.logger.info(f'every node evaluated ({training.done}/{len(nodes)}); fit=False, '
-                             f'so the emulator stays untrained -- rerun with the same checkpoint to fit')
-            return self
 
         # transform after collection, node by node: the checkpoint holds physical outputs, so
         # changing what is divided out costs a refit, not another run of the Boltzmann code
@@ -577,76 +478,32 @@ class Emulator(object):
                 transformed = {name: [value for value, keep in zip(values, finite) if keep]
                                for name, values in transformed.items()}
             if outlier_factor is not None or outlier_factor_low is not None:
-                if outlier_on not in ('transformed', 'raw', 'both'):
-                    raise ValueError(f"outlier_on must be 'transformed', 'raw' or 'both'; got {outlier_on!r}")
-                sane = np.ones(len(inputs), dtype='?')
-                if outlier_on in ('raw', 'both'):
-                    # the calculator's own outputs, on the rows that survived the finite mask (the
-                    # transformed values decide finiteness: a log or a ratio can fail where the
-                    # raw value is fine, never the other way round)
-                    # `rows` rather than a sliced copy of the whole set: every rank holds the raw
-                    # set already (~2 GB for the EFT-of-DE training), and a second copy per rank
-                    # OOM-killed 32 ranks on a 241 GB node (2026-09-11)
-                    sane &= self._outlier_mask(outputs, outlier_factor, outlier_factor_low,
-                                               'the raw outputs', rows=finite if lost else None)
-                if outlier_on in ('transformed', 'both'):
-                    sane &= self._outlier_mask(transformed, outlier_factor, outlier_factor_low,
-                                               'the transformed outputs')
+                sane = self._outlier_mask(transformed, outlier_factor, outlier_factor_low,
+                                          'the transformed outputs')
                 lost = int((~sane).sum())
                 if lost:
-                    self.logger.info(f'dropping {lost}/{len(sane)} nodes ({lost / len(sane):.1%}) in all '
-                                     f'(outlier_on={outlier_on!r}); fitting on the rest')
+                    self.logger.info(f'dropping {lost}/{len(sane)} nodes ({lost / len(sane):.1%}) in all; '
+                                     f'fitting on the rest')
                     inputs = np.asarray(inputs)[sane]
                     transformed = {name: [value for value, keep in zip(values, sane) if keep]
                                    for name, values in transformed.items()}
 
         # one engine per output, all sharing the node set -- and, unless `output_coordinates`
-        # says otherwise, the coordinates too. Under MPI the outputs are dealt
-        # round-robin across the ranks and the fitted engines gathered back, so every rank ends
-        # with the same complete set: with the plain loop every rank fitted every output --
-        # 16 ranks doing 16 identical copies of the work. Measured on an 11-parameter, 78-output
-        # MLP emulator with 5632 samples: the node evaluations took 45 min on 16 ranks and the
-        # redundant per-rank fit then ran for more than 5 h, well past the evaluations. The
-        # Chebyshev fit is a linear solve and never noticed; the network training is what this
-        # is for. States travel through pickle (allgather): an engine's state is a few arrays.
-        names = list(transformed)
-        # The nodes as training-parameter points, for an output fitted in coordinates of its own
-        # (`output_coordinates`): every node coordinate -- a sampled exact parameter included --
-        # with the other exact parameters at their fixed values. Taken before the projection
-        # below, and only when some output asks for it.
-        node_rows = [dict(zip(self.node_params, row)) for row in inputs] \
-            if any(self.output_coordinates(name) is not None for name in names) else None
+        # says otherwise, the coordinates too
+        self._engines = {}
+        # the nodes as training-parameter points, for an output fitted in coordinates of its own:
+        # every node coordinate -- a sampled exact parameter included -- with the other exact
+        # parameters at their fixed values. Taken before the projection below.
+        rows = [{**fixed, **dict(zip(self.node_params, row))} for row in inputs]
         # The fit sees the expanded parameters only: a sampled exact parameter was a node
         # coordinate up to here, and `transform` has taken its dependence out of every output, so
         # its column is dropped and the nodes stand projected onto the remaining ones.
         if sampled:
             columns = [self.node_params.index(name) for name in self.params]
             inputs = np.asarray(inputs)[:, columns]
-        rank, size = (mpicomm.rank, mpicomm.size) if mpicomm is not None else (0, 1)
-        # Rank-local reduction before the fits. Up to here every rank holds the whole raw set
-        # (`outputs`, and the TrainingSet's own copy of it) plus every transformed output, and
-        # nothing below reads any of it but this rank's own outputs: ~6 GB per rank on the
-        # 65536-node EFT-of-DE training, which bounded a 241 GB node to 26 ranks and OOM-killed
-        # 32 of them in the final allgather AFTER all 64 networks had been fitted (2026-09-12).
-        # Keeping only what this rank fits, as stacked arrays, leaves a few hundred MB.
-        transformed = {name: np.asarray(transformed[name]) for name in names[rank::size]}
-        del outputs
-        training.release()
-        # ... provided the memory actually goes back to the system. The per-node values are
-        # millions of small arrays, allocated through malloc's heap rather than mmap, and glibc
-        # keeps freed heap for the process: measured, RSS stayed at 199 GB across 32 ranks after
-        # the release (2026-09-12). Freed heap is reused by this process, so the fits and the
-        # gather can run in it, but a co-scheduled process (or the cgroup accounting) does not
-        # see it -- trim explicitly where libc offers it, and silently do nothing elsewhere.
-        try:
-            import ctypes
-            ctypes.CDLL('libc.so.6').malloc_trim(0)
-        except (OSError, AttributeError):
-            pass
-        mine = {}
         coordinates = {}      # cached by parameter tuple: several outputs share one basis
-        for name in names[rank::size]:
-            values = transformed[name]
+        for name, values in transformed.items():
+            values = np.asarray(values)
             options = {'budget': budget, **kwargs,
                        **per_output.get(name, per_output.get(name.split('.', 1)[0], {}))}
             own = self.output_coordinates(name)
@@ -657,7 +514,7 @@ class Emulator(object):
                 fit_params = list(fit_params)
                 key = tuple(fit_params)
                 if key not in coordinates:
-                    mapped = [dict(to_training({**fixed, **row})) for row in node_rows]
+                    mapped = [dict(to_training(row)) for row in rows]
                     coordinates[key] = np.array([[point[param] for param in fit_params]
                                                  for point in mapped])
                 fit_inputs = coordinates[key]
@@ -667,29 +524,13 @@ class Emulator(object):
                     basis_budget=basis_budget) \
                 if fit.name == 'chebyshev' else fit.fit(fit_inputs,
                                                         values.reshape(len(values), -1))
-            if hasattr(fit, 'validation_loss'):
-                # one line per output, so a job log can be read per quantity (which networks
-                # early-stopped, which are the worst) rather than per anonymous rank
-                self.logger.info(f'output {name!r}: {getattr(fit, "epochs_run", "?")}/{fit.epochs} epochs, '
-                                 f'validation loss {fit.validation_loss:.3e}')
-            mine[name] = (fit.__getstate__(), tuple(values.shape[1:]), fit_params)
-        from .engines import engine_from_state
-        if size > 1:
-            gathered = {}
-            for part in mpicomm.allgather(mine):
-                gathered.update(part)
-        else:
-            gathered = mine
-        self._engines = {name: (engine_from_state(gathered[name][0]), gathered[name][1], gathered[name][2])
-                         for name in names}
+            self._engines[name] = (fit, values.shape[1:], fit_params)
         if not self._engines:
             raise RuntimeError('the target returned no outputs, so there is nothing to fit')
         return self
 
-    def _outlier_mask(self, values, outlier_factor, outlier_factor_low, what, rows=None):
+    def _outlier_mask(self, values, outlier_factor, outlier_factor_low, what):
         """The nodes the two outlier cuts keep, over ``{name: (nnodes, ...) or list}``; logged.
-        ``rows`` (a boolean mask) restricts every output to those nodes first, one output at a
-        time, so the whole set is never copied.
 
         The high cut: some component of some output above ``outlier_factor`` times that
         component's median |value| over the nodes. The low cut: some SIGN-DEFINITE component (one
@@ -699,8 +540,6 @@ class Emulator(object):
         sane, worst, lowest = None, {}, {}
         for name, value in values.items():
             signed = np.asarray(value)
-            if rows is not None:
-                signed = signed[rows]
             signed = signed.reshape(len(signed), -1)
             if sane is None:
                 sane = np.ones(len(signed), dtype='?')

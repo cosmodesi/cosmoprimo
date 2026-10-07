@@ -49,29 +49,6 @@ from .utils import (chebyshev_lobatto_nodes, chebyshev_vandermonde_inverse,
 ENGINES = {}
 
 
-def valid_mask(valid, params, physical):
-    """Which rows of *physical* (``(n, nparams)``) the ``valid`` predicate keeps.
-
-    Shared by the engines that scatter their nodes (polynomial, mlp): a predicate over the
-    physical parameters, called by name -- ``valid(w0_fld=..., wa_fld=...)``. Vectorised
-    first -- ``lambda w0_fld, wa_fld: w0_fld + wa_fld < 0`` is already an array expression,
-    and the pool is large enough that a Python loop over it is the slow part of building an
-    emulator that hasn't run the Boltzmann code yet. Falls back to a row loop when the
-    predicate is not written that way, rather than making the caller declare which it is.
-    ``None`` keeps everything.
-    """
-    if valid is None:
-        return np.ones(len(physical), dtype='?')
-    columns = {name: physical[:, index] for index, name in enumerate(params)}
-    try:
-        mask = np.asarray(valid(**columns), dtype='?')
-        if mask.shape != (len(physical),):
-            raise ValueError
-    except Exception:
-        mask = np.array([bool(valid(**dict(zip(params, row)))) for row in physical], dtype='?')
-    return mask
-
-
 def engine_from_state(state):
     """Rebuild whichever engine wrote this state.
 
