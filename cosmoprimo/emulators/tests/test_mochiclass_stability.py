@@ -119,8 +119,8 @@ def _random_hill_valley(n, seed=0):
 
 
 def test_hill_valley_verdicts():
-    """The background verdicts measured on mochi_class (Stability/ validation, 2026-09-07; the
-    HillValley parameter-space notebook, 2026-10-01): the paper's No Slip Gravity point runs, a
+    """The background verdicts measured on mochi_class (Stability/ validation, 2026-09-07; a scan
+    of the hill_valley parameter space, 2026-10-01): the paper's No Slip Gravity point runs, a
     hill (c_M > 0) never runs on LambdaCDM, GR (c_M = 0) runs only on non-phantom backgrounds,
     and the tau ceiling on LambdaCDM at r = 2 is ~2 for a late transition."""
     assert bool(mcs.stable_hill_valley(-0.05, 1., 0.5, r=2., w0=-0.9, wa=0.36, **HV))

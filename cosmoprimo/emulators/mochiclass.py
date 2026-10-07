@@ -1092,8 +1092,8 @@ def _verdict(s, M2_ini, alpha_K, ic_tolerance=None):
         # strict test refused GR itself -- the truth of every LambdaCDM mock -- while accepting
         # c_b = 1e-3 (measured 2026-09-12). There is no pole there: h3 = cs2num / (a^2 H^2 mu2) is
         # 0/0, which mochiclassy.Background._over_mu2 defines as h3 = h5 = 0 exactly where mu2 == 0,
-        # i.e. the GR source mu = h1; the live pt and the exact pipeline agree at that point to
-        # 0.2% in logL. A genuine crossing of mu2 through zero, the case the test exists for,
+        # i.e. the GR source mu = h1, which is also what HEFTCAMB gives at that point. A genuine
+        # crossing of mu2 through zero, the case the test exists for,
         # has cs2num > 0 there and a strictly negative minimum, and is still refused. Exact
         # zeros, not a tolerance: the degenerate case produces them by construction (products of
         # exact zeros), and -0.0 == 0. is True.
