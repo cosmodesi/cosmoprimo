@@ -208,10 +208,12 @@ class LeastSquareSolver(BaseClass):
                 raise ValueError('constraint_gradient must be 2D, of first dimension the number of model parameters (gradient first dimension)')
             dtype = constraint_gradient.dtype
             # Possible improvement: block-inverse
-            invfisher = jnp.bmat([[invfisher, - constraint_gradient],
-                                  [constraint_gradient.T, np.zeros((self.nconstraints,) * 2, dtype=dtype)]]).A
-            hv = jnp.bmat([[hv, jnp.zeros(constraint_gradient.shape, dtype=dtype)],
-                           [jnp.zeros((self.nconstraints, self.gradient.shape[-1]), dtype=dtype), jnp.eye(self.nconstraints, dtype=dtype)]]).A
+            # block, not bmat: jax.numpy has no bmat, and a constrained solve on a traced
+            # precision (hinton2017 on an emulated, jax-native P(k)) lands here
+            invfisher = jnp.block([[invfisher, - constraint_gradient],
+                                   [constraint_gradient.T, jnp.zeros((self.nconstraints,) * 2, dtype=dtype)]])
+            hv = jnp.block([[hv, jnp.zeros(constraint_gradient.shape, dtype=dtype)],
+                            [jnp.zeros((self.nconstraints, self.gradient.shape[-1]), dtype=dtype), jnp.eye(self.nconstraints, dtype=dtype)]])
         self.inverse_fisher = invfisher
         self.gradient_precision = hv
 

@@ -223,6 +223,8 @@ class Background(CambBackground):
         cosmo = AbacusSummit(0, engine='heftcamb', **common)
         cosmo.h1(eta), cosmo.h3(eta), cosmo.h5(eta), cosmo.Y(k, z)
 
+    :meth:`eft_interpolators` packages them as cubic splines for fkptjax.
+
     On the GR-only growth solver:
 
     Recent cosmoprimo gives ``camb.Background`` a ``growth_factor`` /
@@ -362,6 +364,81 @@ class Background(CambBackground):
         as a function of :math:`\eta = \ln a`.
         """
         return self._eft_of_de_at_eta(eta)['h5']
+
+    def eft_interpolators(self, eta=None, xnow=-3.912023, extrapolate=True, rtol=1e-3):
+        r"""
+        Tabulate :math:`h_{1}`, :math:`h_{3}`, :math:`h_{5}` on an :math:`\eta = \ln a` grid and return
+        standalone cubic splines, ready to be passed to fkptjax
+        (``FKPTJAXPTSpectrum2Poles(model='HDKI', mg_variant='EFT_DE', mg_params_override=...)``).
+
+        :meth:`h1`, :meth:`h3`, :meth:`h5` are exact but expensive per call. fkptjax evaluates
+        :math:`\mu(k, \eta) = h_{1} (1 + k^{2} h_{5}) / (1 + k^{2} h_{3})` inside its ODE right-hand side,
+        at every solver substep and every kernel :math:`(k, p)` pair, so it wants one cheap spline per function.
+
+        Parameters
+        ----------
+        eta : array_like, default=None
+            :math:`\ln a` nodes. Default is 512 points on ``[xnow - 0.2, 0]``.
+
+        xnow : float, default=-3.912023
+            fkptjax's integration start (:math:`z \simeq 49`); only used to build the default grid.
+
+        extrapolate : bool, default=True
+            Passed to :class:`scipy.interpolate.CubicSpline`; fkptjax probes marginally outside the grid
+            (down to :math:`\eta = -4`).
+
+        rtol : float, default=1e-3
+            The splines are compared to the exact functions at the grid midpoints, and a warning is emitted
+            if they differ by more than ``rtol`` (relative to the local value, with a floor at ``1e-3`` of the
+            function's maximum so zero crossings do not trigger it). This catches grids too coarse for the
+            model, e.g. :math:`h_{3}`, :math:`h_{5}` going through a pole where :math:`\mu^{2}` crosses zero.
+            ``None`` skips the check.
+
+        Returns
+        -------
+        interpolators : dict
+            ``{'eftcamb_h1_interp': spline, 'eftcamb_h3_interp': spline, 'eftcamb_h5_interp': spline}``,
+            keyed as fkptjax expects; :math:`h_{3}`, :math:`h_{5}` in :math:`(\mathrm{Mpc}/h)^{2}`.
+
+        Raises
+        ------
+        CosmologyComputationError
+            If any of :math:`h_{1}`, :math:`h_{3}`, :math:`h_{5}` is not finite on the grid, which would
+            otherwise silently propagate NaNs into fkptjax's ODE tables.
+        """
+        import warnings
+        from scipy.interpolate import CubicSpline
+        if eta is None:
+            eta = np.linspace(xnow - 0.2, 0., 512)
+        eta = np.unique(np.asarray(eta, dtype='f8').ravel())  # sorted, strictly increasing
+        if eta.size < 2:
+            raise ValueError('eta grid must contain at least 2 distinct points, got {:d}'.format(eta.size))
+        midpoints = (eta[1:] + eta[:-1]) / 2.
+        toret = {}
+        for name in ('h1', 'h3', 'h5'):
+            func = getattr(self, name)
+            values = np.asarray(func(eta), dtype='f8')
+            finite = np.isfinite(values)
+            if not np.all(finite):
+                bad = eta[~finite]
+                raise CosmologyComputationError('{}(eta) is not finite at {:d} of {:d} nodes, for eta in [{:.4f}, {:.4f}] '
+                                                '(z in [{:.3f}, {:.3f}]); check the smg / EFT parameters or the eta grid'.format(
+                                                name, bad.size, eta.size, bad.min(), bad.max(), np.expm1(-bad.max()), np.expm1(-bad.min())))
+            spline = CubicSpline(eta, values, extrapolate=extrapolate)
+            # max |values| == 0 is the GR limit (HEFTCAMB's kernels give h3 = h5 = 0 identically there, as
+            # mochiclassy.Background._over_mu2 does): the spline is exact and the relative error below
+            # would be 0 / 0, so there is nothing to check
+            if rtol is not None and np.max(np.abs(values)) > 0.:
+                exact = np.asarray(func(midpoints), dtype='f8')
+                scale = np.maximum(np.abs(exact), 1e-3 * np.max(np.abs(values)))
+                error = np.abs(spline(midpoints) - exact) / scale
+                if np.any(error > rtol):
+                    imax = np.argmax(error)
+                    warnings.warn('{}(eta) spline is off by {:.1e} (> rtol = {:.1e}) at eta = {:.3f} (z = {:.3f}): '
+                                  'the grid is too coarse there, e.g. near a pole of h3 / h5; refine eta or check the model'.format(
+                                  name, error[imax], rtol, midpoints[imax], np.expm1(-midpoints[imax])))
+            toret['eftcamb_{}_interp'.format(name)] = spline
+        return toret
 
     def Y(self, k, z):
         r"""
@@ -596,6 +673,12 @@ class HEFTCAMBEngine(CambEngine):
         "c_M",
         "c_T",
         "M2_ini",
+        # hill_valley's coefficients as scalars (tau_smg / r_smg, since 'tau' is cosmoprimo's
+        # alias of tau_reio and 'r' its tensor-to-scalar ratio; see _SCALAR_SMG_NAMES)
+        "alpha_K",
+        "tau_smg",
+        "a_t",
+        "r_smg",
         "gravity_model",
         "parameters_smg",
         "hill_valley",
@@ -634,6 +717,13 @@ class HEFTCAMBEngine(CambEngine):
 
     # mochi-class accepts 'no_slip_gravity' as an alias of 'hill_valley'.
     _GRAVITY_MODEL_ALIASES = {"no_slip_gravity": "hill_valley"}
+
+    # The same entries as top-level SCALAR parameters (one per coefficient, what a sampler needs),
+    # mapped to the parameters_smg names above. Same spelling as the 'mochiclass' engine.
+    _SCALAR_SMG_NAMES = {
+        "propto_omega": {"c_K": "c_K", "c_B": "c_B", "c_M": "c_M", "c_T": "c_T", "M2_ini": "M2_ini"},
+        "hill_valley": {"alpha_K": "alpha_K", "c_M": "c_M", "tau_smg": "tau", "a_t": "a_t", "r_smg": "r", "M2_ini": "M2_ini"},
+    }
 
     def __init__(self, *args, **kwargs):
         # ------------------------------------------------------------
@@ -890,6 +980,20 @@ class HEFTCAMBEngine(CambEngine):
                 value = container.get(name, None)
                 if value is not None:
                     toret[name] = value
+        # Coefficients given by name alongside the model, collected here because _set_camb strips
+        # every wrapper-private key from _params / _extra_params right after this call, before
+        # _apply_gravity_model runs. See _apply_gravity_model for the precedence rule.
+        model = toret.get('gravity_model', 'hill_valley' if 'hill_valley' in toret else None)
+        model = self._GRAVITY_MODEL_ALIASES.get(model, model)
+        if model in self._SCALAR_SMG_NAMES:
+            overrides = {}
+            for scalar, name in self._SCALAR_SMG_NAMES[model].items():
+                for container in (getattr(self, '_extra_params', {}), getattr(self, '_params', {})):
+                    value = container.get(scalar, None)
+                    if value is not None:
+                        overrides[name] = float(value)
+            if overrides:
+                toret['overrides'] = overrides
         return toret
 
     @classmethod
@@ -934,6 +1038,10 @@ class HEFTCAMBEngine(CambEngine):
         """
         if not spec:
             return
+        spec = dict(spec)
+        overrides = spec.pop('overrides', {})
+        if not spec:
+            return
         if 'hill_valley' in spec:
             model, parameters = 'hill_valley', dict(spec['hill_valley'])
             names = self._PARAMETERS_SMG_NAMES['hill_valley']
@@ -949,9 +1057,28 @@ class HEFTCAMBEngine(CambEngine):
                     "parameters_smg was given without gravity_model, so there is no way to know "
                     "what the entries mean")
             if 'parameters_smg' not in spec:
-                raise CosmologyInputError(
-                    "gravity_model = {!r} was given without parameters_smg".format(spec['gravity_model']))
-            model, parameters = self._parse_parameters_smg(spec['gravity_model'], spec['parameters_smg'])
+                # Scalar spelling only: every coefficient of the model given by name (the same
+                # rule as the 'mochiclass' engine: all of them are required).
+                model = self._GRAVITY_MODEL_ALIASES.get(spec['gravity_model'], spec['gravity_model'])
+                names = self._PARAMETERS_SMG_NAMES.get(model, None)
+                missing = [scalar for scalar, name in self._SCALAR_SMG_NAMES.get(model, {}).items()
+                           if name not in overrides]
+                if names is None or missing:
+                    raise CosmologyInputError(
+                        "gravity_model = {!r} was given without parameters_smg{}".format(
+                            spec['gravity_model'],
+                            "" if names is None else ", and the scalar coefficients {} are missing (it takes {})".format(
+                                ', '.join(missing), ', '.join(self._SCALAR_SMG_NAMES[model]))))
+                parameters = {name: overrides[name] for name in names}
+            else:
+                model, parameters = self._parse_parameters_smg(spec['gravity_model'], spec['parameters_smg'])
+
+        # A coefficient given by name -- as a top-level Cosmology parameter or an engine
+        # keyword (collected by _collect_gravity_model) -- overrides the matching parameters_smg
+        # entry. This is what lets a sampler vary one coefficient (a scalar Parameter) on top of
+        # a fiducial that carries the whole list, and it is the same rule as the 'mochiclass'
+        # engine's.
+        parameters.update(overrides)
 
         if model == 'propto_omega':
             # Same five numbers as the c_K/c_B/c_M/c_T/M2_ini alpha basis.
