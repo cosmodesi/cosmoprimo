@@ -18,7 +18,10 @@ classifiers = ["Programming Language :: Python :: 3"]
 [project.optional-dependencies]
 class = ["pyclass @ git+https://github.com/adematti/pyclass"]
 camb = ["camb"]
-discoeb = ["discoeb @ git+https://github.com/ohahn/DISCO-EB"]
+# This fork of cosmoprimo pins a DISCO-EB fork that carries fixes not yet upstream (correct
+# batched-solver output for more than one output redshift). Point this back at
+# github.com/ohahn/DISCO-EB once the DISCO-EB PR is merged.
+discoeb = ["discoeb @ git+https://github.com/dforero0896/DISCO-EB.git@fix/batched-multiz-reshape"]
 isitgr = ["isitgr"]
 mgcamb = ["mgcamb @ git+https://github.com/adematti/MGCAMB"]
 astropy = ["astropy"]
