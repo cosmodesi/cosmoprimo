@@ -14,6 +14,8 @@ Extra requirements are:
 
   - `pyclass <https://github.com/adematti/pyclass>`_ (for CLASS)
   - `CAMB <https://github.com/cmbant/CAMB>`_ (for CAMB)
+  - `DISCO-EB <https://github.com/ohahn/DISCO-EB>`_ (for the differentiable Einstein-Boltzmann
+    solver; pulls in jax, diffrax, equinox, jaxtyping, jax_cosmo and lineax)
   - `pyfftw <https://github.com/pyFFTW/pyFFTW>`_ (for faster FFTs)
 
 pip
@@ -29,3 +31,7 @@ If you want to install extra requirements as well (pyclass, CAMB, astropy, pyfft
 pyclass can be installed independently through::
 
   python -m pip install git+https://github.com/adematti/pyclass
+
+DISCO-EB can be installed independently through::
+
+  python -m pip install git+https://github.com/ohahn/DISCO-EB

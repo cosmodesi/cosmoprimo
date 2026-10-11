@@ -802,7 +802,7 @@ def get_engine(engine):
     ----------
     engine : type, string
         Engine or one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle',
-        'eisenstein_hu_nowiggle_variants', 'bbks'].
+        'eisenstein_hu_nowiggle_variants', 'bbks', 'discoeb'].
 
     Returns
     -------
@@ -846,6 +846,9 @@ def get_engine(engine):
             from . import eisenstein_hu_nowiggle_variants
         elif engine == 'bbks':
             from . import bbks
+        elif engine in ['discoeb', 'disco_eb', 'disco-eb']:
+            from . import discoeb
+            engine = 'discoeb'
         elif engine == 'astropy':
             from . import astropy
         elif engine == 'tabulated':
@@ -881,7 +884,7 @@ def _get_cosmology_engine(cosmology, engine=None, set_engine=True, **extra_param
         Current cosmology.
 
     engine : BaseEngine, string, default=None
-        Engine or one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+        Engine or one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks', 'discoeb'].
         If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool, default=True
@@ -927,7 +930,7 @@ def _make_section_getter(section):
         Current cosmology.
 
     engine : string, default=None
-        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks'].
+        Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle', 'bbks', 'discoeb'].
         If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool, default=True
@@ -1031,7 +1034,7 @@ class Cosmology(BaseCosmoParams):
         ----------
         engine : string, default=None
             Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle',
-            'bbks'].
+            'bbks', 'discoeb'].
             If ``None``, no engine is set.
 
         extra_params : dict, default=None
@@ -1155,7 +1158,7 @@ class Cosmology(BaseCosmoParams):
 
         engine : string, default=None
             Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle',
-            'bbks'].
+            'bbks', 'discoeb'].
             If ``None``, set as :class:`BaseEngine`.
 
         Returns
@@ -1597,7 +1600,7 @@ class Cosmology(BaseCosmoParams):
         ----------
         engine : string
             Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle',
-                'bbks'].
+                'bbks', 'discoeb'].
 
         set_engine : bool, default=True
             Whether to attach returned engine to ``cosmology``.
@@ -1627,7 +1630,7 @@ class Cosmology(BaseCosmoParams):
 
         engine : string, default=None
             Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle',
-            'bbks'].
+            'bbks', 'discoeb'].
             If ``None``, use same engine (class) as current instance.
 
         extra_params : dict, default=None
@@ -2025,7 +2028,7 @@ def _make_section_getter(section):
     ----------
     engine : string, default=None
         Engine name, one of ['class', 'camb', 'eisenstein_hu', 'eisenstein_hu_nowiggle',
-        'eisenstein_hu_variants', 'bbks'].
+        'eisenstein_hu_variants', 'bbks', 'discoeb'].
         If ``None``, returns current :attr:`Cosmology.engine`.
 
     set_engine : bool, default=True
