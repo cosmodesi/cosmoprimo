@@ -34,9 +34,10 @@ pyclass can be installed independently through::
 
 DISCO-EB can be installed independently through::
 
-  python -m pip install git+https://github.com/dforero0896/DISCO-EB.git@fix/batched-multiz-reshape
+  python -m pip install git+https://github.com/dforero0896/DISCO-EB.git@master
 
 .. note::
-   The ``discoeb`` extra points at this DISCO-EB fork, which carries a fix (correct batched-solver
-   output for more than one output redshift) that is not upstream yet. Once the DISCO-EB pull
-   request is merged, ``git+https://github.com/ohahn/DISCO-EB`` can be used instead.
+   The ``discoeb`` extra points at this DISCO-EB fork, whose ``master`` carries a fix (correct
+   batched-solver output for more than one output redshift) that is not upstream yet. Once the
+   DISCO-EB pull request is merged upstream, ``git+https://github.com/ohahn/DISCO-EB`` can be used
+   instead.

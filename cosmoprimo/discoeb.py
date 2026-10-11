@@ -149,7 +149,7 @@ def _import_discoeb():
         raise CosmologyInputError(
             'Could not import DISCO-EB; please install it with '
             '"pip install cosmoprimo[discoeb]" (or, directly, '
-            '"pip install git+https://github.com/dforero0896/DISCO-EB.git@fix/batched-multiz-reshape"). '
+            '"pip install git+https://github.com/dforero0896/DISCO-EB.git@master"). '
             'It requires jax, diffrax, equinox, jaxtyping, jax_cosmo and lineax. '
             'Original error: {}'.format(exc)) from exc
     # DISCO-EB requires double precision; cosmoprimo.jax already sets this, but be defensive.

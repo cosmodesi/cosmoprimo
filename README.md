@@ -48,7 +48,7 @@ If one wants to use CAMB:
 If one wants to use DISCO-EB (differentiable JAX Einstein-Boltzmann solver):
 - discoeb (which pulls jax, diffrax, equinox, jaxtyping, jax_cosmo, lineax).
   The `discoeb` extra pins the [dforero0896/DISCO-EB](https://github.com/dforero0896/DISCO-EB)
-  fork, which carries fixes not yet upstream; it is installed automatically by
+  fork (`master`, which carries the batched multi-redshift fix); it is installed automatically by
   `pip install cosmoprimo[discoeb]`.
 
 For faster FFTs in the FFTlog algorithm:
