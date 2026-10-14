@@ -249,7 +249,7 @@ def test_fourier_vs_eisenstein_hu():
 # what a user actually evaluates: it goes through cosmoprimo's own interpax-based interpolator on
 # top of the solver.  The Cosmology (and hence the interpolator) must be built inside the traced
 # function; reusing an interpolator built from concrete parameters would naturally give a
-# identically zero derivative.
+# identically zero derivative.  Out-of-bounds k must give nan derivatives, never zeros.
 # --------------------------------------------------------------------------------------------
 
 @requires_discoeb
@@ -257,23 +257,34 @@ def test_gradients_real_interpolator():
     extra = dict(nk=32, kmin=1e-3, kmax=1., z=[0.], rtol=1e-4, atol=1e-4, **REAL_EXTRA)
     base = dict(Omega_b=0.05, h=0.67742, A_s=2.1064e-9, n_s=0.96822, N_eff=3.044,
                 T_cmb=2.7255)
-    kq = np.geomspace(1e-3, 1., 8)
 
-    def pk_interp(Omega_cdm):
-        cosmo = Cosmology(engine='discoeb', extra_params=extra, Omega_cdm=Omega_cdm, **base)
-        return cosmo.get_fourier().pk_interpolator(of='delta_m')(kq, z=0.)
+    def pk_interp(k):
+        # k is a free vector, built outside the traced function, as a user would build it
+        def pk(Omega_cdm):
+            cosmo = Cosmology(engine='discoeb', extra_params=extra, Omega_cdm=Omega_cdm, **base)
+            return cosmo.get_fourier().pk_interpolator(of='delta_m')(k, z=0.)
+        return pk
 
     x = 0.25
-    g_auto = np.asarray(jax.jacfwd(pk_interp)(x))
+    kq = jax.numpy.geomspace(1e-3, 1., 8)
+    g_auto = np.asarray(jax.jacfwd(pk_interp(kq))(x))
     # the derivative must be non-trivial: this is exactly what is lost if the interpolator is
     # built once from concrete parameters and reused inside the traced function
     assert np.all(np.isfinite(g_auto))
     assert np.any(g_auto != 0.)
 
     eps = 1e-3
-    g_fd = (np.asarray(pk_interp(x + eps)) - np.asarray(pk_interp(x - eps))) / (2 * eps)
+    g_fd = (np.asarray(pk_interp(kq)(x + eps)) - np.asarray(pk_interp(kq)(x - eps))) / (2 * eps)
     # autodiff (forward mode, DISCO-EB's DirectAdjoint) should match finite differences
     assert np.allclose(g_auto, g_fd, rtol=0.05, atol=0.)
+
+    # An out-of-bounds k must give nan, not a plausible-looking all-zero Jacobian: a constant-nan
+    # fill carries a zero tangent, so this silently returned zeros before the interpolator was
+    # made to propagate the nan into the derivative.
+    k_out = jax.numpy.geomspace(-3., 1., 8)  # negative, hence outside [extrap_kmin, extrap_kmax]
+    assert np.all(np.isnan(np.asarray(pk_interp(k_out)(x))))
+    g_out = np.asarray(jax.jacfwd(pk_interp(k_out))(x))
+    assert np.all(np.isnan(g_out))
 
 
 @requires_discoeb

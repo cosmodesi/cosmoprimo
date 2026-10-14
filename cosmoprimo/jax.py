@@ -193,6 +193,19 @@ def _mask_bounds(x, xlim, bounds_error=False):
     return masks
 
 
+def _masked_nan(np, mask, value):
+    """
+    Return ``value`` where ``mask`` is True, ``nan`` elsewhere.
+
+    A constant fill value carries a zero tangent, so ``np.where(mask, value,
+    np.nan)`` makes forward-mode differentiation of an out-of-bounds evaluation
+    return an all-zero Jacobian, silently, instead of ``nan``.  Multiplying by
+    ``nan`` leaves the value unchanged (``x * nan`` is ``nan``) while
+    propagating ``nan`` into the derivative.
+    """
+    return np.where(mask, value, value * np.nan)
+
+
 @register_pytree_node_class
 class Interpolator1D(object):
 
@@ -291,7 +304,7 @@ class Interpolator1D(object):
             # put back what the solve was not allowed to see (see __init__)
             tmp = self._np.where(self._nan_columns, self._np.nan, tmp)
         if self.interp_fun == 'log': tmp = 10**tmp
-        toret = tmp = tmp if self.extrap else self._np.where(mask_x, tmp.T, self._np.nan).T
+        toret = tmp = tmp if self.extrap else _masked_nan(self._np, mask_x, tmp.T).T
         if self._mask_nan is not None:
             toret = self._np.full((x.size, self._mask_nan.size), self._np.nan)
             toret[..., self._mask_nan] = tmp
@@ -425,7 +438,7 @@ class Interpolator2D(object):
         if self._nan is not None:
             # what was taken out of the solve, put back: see the constructor
             tmp = self._np.where(self._nan, self._np.nan, tmp)
-        toret = tmp if self.extrap else self._np.where(mask_x, tmp, self._np.nan)
+        toret = tmp if self.extrap else _masked_nan(self._np, mask_x, tmp)
         return toret.astype(dtype).reshape(toret_shape)
 
     def tree_flatten(self):
