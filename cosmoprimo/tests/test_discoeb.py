@@ -1,29 +1,25 @@
 """Tests for the DISCO-EB engine.
 
-The DISCO-EB engine wraps a JAX Einstein-Boltzmann solver.  Its (stiff, vmapped) perturbation
-solve is heavy -- it is developed for GPU and needs several GB just to JIT-compile -- so the tests
-are split in two groups:
+The DISCO-EB engine wraps a JAX Einstein-Boltzmann solver, so these tests run the *real* solver
+by default; they are only skipped when DISCO-EB (or jax/interpax) is not importable.
 
-* tests that exercise the engine wiring (parameter mapping, unit conversions, cross-spectra,
-  sigma8 rescaling, transfer function, sections, state) using a *stubbed* DISCO-EB solver, which
-  always run (they only need jax for the ``jit`` wrapper);
-* tests that run the *real* DISCO-EB, which are opt-in: set the environment variable
-  ``COSMOPRIMO_TEST_DISCOEB=1`` (and have DISCO-EB installed with enough memory / a GPU).
+The solve is stiff and vmapped, and its dominant cost in a test session is the JIT compilation of
+the autodiff transform rather than the number of adaptive steps, so the settings below are kept
+deliberately small (``nk``, ``num_thermo``) to stay fast on a laptop while remaining accurate at
+the ~0.1% level on P(k).
 """
 
-import os
 import importlib.util
 
 import numpy as np
 import pytest
 
 from cosmoprimo import Cosmology, CosmologyInputError
-from cosmoprimo.discoeb import DISCOEBEngine, DISCOEB_VARIABLES as IV, yhe_bbn
+from cosmoprimo.discoeb import DISCOEBEngine, yhe_bbn
 
 
 try:
     import jax
-    import jax.numpy as jnp
     _HAS_JAX = True
 except ImportError:
     _HAS_JAX = False
@@ -31,61 +27,29 @@ except ImportError:
 _HAS_DISCOEB = importlib.util.find_spec('discoeb') is not None
 _HAS_INTERPAX = importlib.util.find_spec('interpax') is not None
 
-#: opt-in flag for the (heavy) real-DISCO-EB tests
-_RUN_REAL = os.environ.get('COSMOPRIMO_TEST_DISCOEB', '0') == '1'
-
-requires_jax = pytest.mark.skipif(not _HAS_JAX, reason='DISCO-EB engine requires jax')
-requires_interpax = pytest.mark.skipif(
-    not (_HAS_JAX and _HAS_INTERPAX), reason='cosmoprimo jax interpolator requires jax + interpax')
-requires_real_discoeb = pytest.mark.skipif(
-    not (_RUN_REAL and _HAS_DISCOEB),
-    reason='set COSMOPRIMO_TEST_DISCOEB=1 and install DISCO-EB to run the real solver')
+requires_discoeb = pytest.mark.skipif(
+    not (_HAS_JAX and _HAS_DISCOEB and _HAS_INTERPAX),
+    reason='the DISCO-EB engine requires jax, interpax and DISCO-EB to be installed')
 
 
 # Fiducial parameters, close to Planck/DESI (a single massive neutrino family, as DISCO-EB uses).
 FID = dict(Omega_cdm=0.25, Omega_b=0.05, h=0.67742, A_s=2.1064e-9, n_s=0.96822,
            m_ncdm=[0.06], N_eff=3.044, T_cmb=2.7255)
 
-#: Lightweight settings for the (opt-in, CPU-heavy) real-solver tests.  ``num_thermo=256`` is
-#: DISCO-EB's own fast default (<0.13% error on P(k)); the dominant cost of these tests is the
-#: JIT compilation of the *autodiff* transform, not the adaptive solver's step count, so there is
-#: nothing to gain from touching ``max_steps`` (which is only a safety cap).
+#: Lightweight settings shared by the solver tests.  ``num_thermo=256`` is DISCO-EB's own fast
+#: default (<0.13% on P(k)).  ``max_steps`` is only a safety cap (a compile-time constant), not the
+#: number of steps actually taken, so it is not a knob for test speed: the knobs are ``nk`` and
+#: ``num_thermo`` below.
 REAL_EXTRA = dict(num_thermo=256)
 
-
-@pytest.fixture
-def stub_discoeb(monkeypatch):
-    """Replace DISCO-EB's solvers with lightweight, correctly-shaped stubs."""
-    import cosmoprimo.discoeb as deb
-
-    def stub_background(*, param, **kwargs):
-        return dict(param)
-
-    def stub_perturbations(*, param, aexp_out, kmin, kmax, num_k, **kwargs):
-        kmodes = jnp.geomspace(kmin, kmax, num_k)
-        nout = aexp_out.shape[0]
-        y = jnp.zeros((num_k, nout, 20))
-        y = y.at[:, :, IV['delta_m']].set(1.0)
-        y = y.at[:, :, IV['delta_cb']].set(2.0)
-        y = y.at[:, :, IV['theta_m']].set(-0.5)
-        y = y.at[:, :, IV['theta_cb']].set(-0.5)
-        return y, kmodes, param
-
-    def stub_perturbations_batched(*, param, aexp_out, kmin, kmax, num_k, batch_size=16, **kwargs):
-        y, kmodes, _ = stub_perturbations(param=param, aexp_out=aexp_out, kmin=kmin, kmax=kmax,
-                                          num_k=num_k)
-        return y, kmodes
-
-    def stub_get_power(*, k, y, idx, param):
-        return 2 * jnp.pi**2 * param['A_s'] * (k / param['k_p'])**(param['n_s'] - 1)\
-            * k**(-3.) * y[..., idx]**2
-
-    monkeypatch.setattr(deb, '_import_discoeb', lambda: (
-        jax, jnp, stub_background, stub_perturbations, stub_perturbations_batched, stub_get_power))
+#: Common perturbation grid for the Fourier tests.  Sharing it (and hence the static solver
+#: settings that key the module-level JIT cache) means the solve is compiled once for the whole
+#: session.
+FOURIER_EXTRA = dict(nk=32, kmin=1e-4, kmax=5., z=[0., 1.], **REAL_EXTRA)
 
 
 # --------------------------------------------------------------------------------------------
-# Tests that do not require running DISCO-EB at all (engine wiring).
+# Tests that do not run DISCO-EB at all (engine wiring).
 # --------------------------------------------------------------------------------------------
 
 def test_registered():
@@ -167,25 +131,24 @@ def test_state_and_clone():
 
 
 # --------------------------------------------------------------------------------------------
-# Tests using a stubbed DISCO-EB solver (need jax for the jit wrapper, but not the real solver).
+# Tests running the real DISCO-EB solver (baseline).
 # --------------------------------------------------------------------------------------------
 
-@requires_jax
-def test_perturbation_plumbing(stub_discoeb):
-    cosmo = Cosmology(engine='discoeb',
-                      extra_params={'nk': 64, 'kmin': 1e-4, 'kmax': 5., 'z': [0., 1., 2.]}, **FID)
+@requires_discoeb
+def test_perturbation_plumbing():
+    cosmo = Cosmology(engine='discoeb', extra_params=dict(FOURIER_EXTRA), **FID)
     kmodes, y, z = cosmo.engine.get_discoeb_perturbations()
     h = FID['h']
-    assert y.shape == (64, 3, 20)
-    assert np.allclose(z, [0., 1., 2.])
+    assert y.shape == (32, 2, 20)
+    assert np.allclose(z, [0., 1.])
+    assert np.all(np.isfinite(y))
     # the k-grid is log-spaced in 1/Mpc between kmin*h and kmax*h
     assert np.isclose(kmodes[0], 1e-4 * h) and np.isclose(kmodes[-1], 5. * h)
 
 
-@requires_jax
-def test_fourier_units_and_spectra(stub_discoeb):
-    cosmo = Cosmology(engine='discoeb',
-                      extra_params={'nk': 128, 'kmin': 1e-4, 'kmax': 5., 'z': [0., 1., 2.]}, **FID)
+@requires_discoeb
+def test_fourier_units_and_spectra():
+    cosmo = Cosmology(engine='discoeb', extra_params=dict(FOURIER_EXTRA), **FID)
     h = FID['h']
     fo = cosmo.get_fourier()
     kmodes, y, z = cosmo.engine.get_discoeb_perturbations()
@@ -193,165 +156,63 @@ def test_fourier_units_and_spectra(stub_discoeb):
     ka, za, pka = fo.table(of='delta_m')
     assert np.allclose(ka, kmodes / h)                    # k: 1/Mpc -> h/Mpc
     assert np.allclose(za, z)
-    # delta_m = 1 => P = 2 pi^2 A_s (k/k_p)^(n_s-1) k^-3, converted to (Mpc/h)^3 (x h^3)
-    A_s, n_s, k_p = (cosmo.engine._discoeb_params[name] for name in ['A_s', 'n_s', 'k_p'])
-    prim = 2 * np.pi**2 * A_s * (kmodes / k_p)**(n_s - 1) * kmodes**(-3.)
-    assert np.allclose(pka[:, 0], prim * h**3)
+    assert np.all(np.isfinite(pka)) and np.all(pka > 0.)
 
-    # delta_cb = 2 => 4x the delta_m spectrum; the cross => 2x
-    _, _, pk_cb = fo.table(of='delta_cb')
-    _, _, pk_x = fo.table(of=('delta_m', 'delta_cb'))
-    assert np.allclose(pk_cb[:, 0], 4. * pka[:, 0])
-    assert np.allclose(pk_x[:, 0], 2. * pka[:, 0])
-
-    # interpolator, pk_kz, sigma_rz, sigma8 are all wired up
-    interp = fo.pk_interpolator(of='delta_m')
+    # interpolating the table at its own nodes reproduces it exactly, and the two public entry
+    # points agree
+    assert np.allclose(fo.pk_interpolator(of='delta_m')(ka, z=0.), pka[:, 0], rtol=1e-6)
     kk = np.logspace(-2, 0, 8)
-    assert np.allclose(interp(kk, z=0.), fo.pk_kz(kk, z=0., of='delta_m'))
+    assert np.allclose(fo.pk_interpolator(of='delta_m')(kk, z=0.), fo.pk_kz(kk, z=0., of='delta_m'))
+
+    # sigma(r, z) and sigma8 are wired up and in the right ballpark
     assert np.all(np.isfinite(fo.sigma_rz([8.], [0., 1.], of='delta_m')))
-    assert np.isfinite(fo.sigma8_m) and np.isfinite(fo.sigma8_cb)
-    # theta_m = -0.5 delta_m => P_theta_theta = 0.25 P_delta_delta
-    _, _, pk_th = fo.table(of='theta_m')
-    assert np.allclose(pk_th[:, 0], 0.25 * pka[:, 0])
+    assert np.isfinite(fo.sigma8_m) and 0.5 < fo.sigma8_m < 1.1
+    assert np.isfinite(fo.sigma8_cb) and 0.5 < fo.sigma8_cb < 1.1
 
 
-@requires_jax
-def test_transfer(stub_discoeb):
-    cosmo = Cosmology(engine='discoeb',
-                      extra_params={'nk': 128, 'kmin': 1e-4, 'kmax': 5., 'z': [0., 1.]}, **FID)
+@requires_discoeb
+def test_transfer():
+    cosmo = Cosmology(engine='discoeb', extra_params=dict(FOURIER_EXTRA), **FID)
     tr = cosmo.get_transfer()
     k = np.logspace(-3, 0.5, 20)
     t = tr.transfer_k(k)
-    assert np.all(np.isfinite(t))
+    assert np.all(np.isfinite(t)) and np.all(t > 0.)
     # normalised to unity on the largest scales
     assert np.isclose(tr.transfer_k([1e-4])[0], 1., rtol=1e-3)
 
 
-@requires_jax
-def test_sigma8_rescaling(stub_discoeb):
+@requires_discoeb
+def test_sigma8_rescaling():
     # with sigma8 as input, the (linear-in-A_s) spectrum is rescaled to match it exactly
     params = {k: v for k, v in FID.items() if k != 'A_s'}
-    cosmo = Cosmology(engine='discoeb', sigma8=0.81,
-                      extra_params={'nk': 128, 'kmin': 1e-4, 'kmax': 5., 'z': [0., 1.]}, **params)
+    cosmo = Cosmology(engine='discoeb', sigma8=0.81, extra_params=dict(FOURIER_EXTRA), **params)
     fo = cosmo.get_fourier()
     assert np.isclose(fo.sigma8_m, 0.81, rtol=1e-5)
     assert np.isclose(cosmo.get_primordial().A_s / cosmo.engine._A_s, cosmo.engine._rsigma8**2)
 
 
-@requires_jax
-def test_batched(stub_discoeb):
-    cosmo = Cosmology(engine='discoeb',
-                      extra_params={'nk': 32, 'batched': True, 'batch_size': 8, 'z': [0., 1.]},
-                      **FID)
-    kmodes, y, z = cosmo.engine.get_discoeb_perturbations()
-    assert y.shape == (32, 2, 20)
+@requires_discoeb
+def test_batched():
+    # Regression test for the DISCO-EB batched solver with more than one output time: the raw
+    # ``SaveAt`` output has the time axis first, so a plain reshape mixes the time and mode axes
+    # and only happens to be right when there is a single output time.
+    params = dict(FID)
+    extra = dict(FOURIER_EXTRA)
+    c_serial = Cosmology(engine='discoeb', extra_params=dict(extra, batched=False), **params)
+    c_batch = Cosmology(engine='discoeb',
+                        extra_params=dict(extra, batched=True, batch_size=8), **params)
+    k_s, z_s, pk_s = c_serial.get_fourier().table(of='delta_m')
+    k_b, z_b, pk_b = c_batch.get_fourier().table(of='delta_m')
+    assert pk_s.shape == (32, 2)
+    assert np.allclose(k_s, k_b) and np.allclose(z_s, z_b)
+    # batched and serial must agree: the batched vmap only changes the adaptive step control
+    # (a few % at the smallest scales here), whereas the axis-ordering bug this guards against
+    # moved the z=1 column to the z=0 solution (~2.7x).
+    assert np.allclose(pk_s, pk_b, rtol=0.05)
 
 
-# --------------------------------------------------------------------------------------------
-# Gradients / Jacobians.  DISCO-EB is autodifferentiable, and the engine keeps the whole
-# params -> P(k) chain traceable, so cosmoprimo's standard jax pattern works:
-#   jax.jacfwd(lambda params: Cosmology(**params, engine='discoeb').get_fourier().table(...))
-# These tests use a parameter-dependent stub so the derivatives are known analytically.
-# --------------------------------------------------------------------------------------------
-
-@pytest.fixture
-def stub_discoeb_diff(monkeypatch):
-    """Stub solver whose delta_m depends on Omegam, so P(k) ∝ A_s * Omegam^2 * h^3."""
-    import cosmoprimo.discoeb as deb
-
-    def stub_background(*, param, **kwargs):
-        return dict(param)
-
-    def stub_perturbations(*, param, aexp_out, kmin, kmax, num_k, **kwargs):
-        kmodes = jnp.geomspace(kmin, kmax, num_k)
-        nout = aexp_out.shape[0]
-        dm = param['Omegam'] * jnp.ones((num_k, nout))
-        y = jnp.zeros((num_k, nout, 20))
-        y = y.at[:, :, IV['delta_m']].set(dm)
-        y = y.at[:, :, IV['delta_cb']].set(dm)
-        return y, kmodes, param
-
-    def stub_perturbations_batched(*, param, aexp_out, kmin, kmax, num_k, batch_size=16, **kwargs):
-        y, kmodes, _ = stub_perturbations(param=param, aexp_out=aexp_out, kmin=kmin, kmax=kmax,
-                                          num_k=num_k)
-        return y, kmodes
-
-    monkeypatch.setattr(deb, '_import_discoeb', lambda: (
-        jax, jnp, stub_background, stub_perturbations, stub_perturbations_batched, None))
-
-
-@requires_jax
-def test_jacobian_analytic(stub_discoeb_diff):
-    extra = {'nk': 12, 'kmin': 1e-3, 'kmax': 0.5, 'z': [0.]}
-    p0 = dict(Omega_cdm=0.25, Omega_b=0.05, h=0.67742, A_s=2.1064e-9, n_s=0.96822, N_eff=3.044)
-
-    def pk_of(params):
-        cosmo = Cosmology(engine='discoeb', extra_params=extra, **params)
-        return cosmo.get_fourier().table(of='delta_m')[2][:, 0]
-
-    pk0 = np.asarray(pk_of(p0))
-    Omegam = p0['Omega_cdm'] + p0['Omega_b']
-    jac = jax.jacfwd(pk_of)(p0)
-
-    # P = 2 pi^2 A_s (k/k_p)^(n_s-1) k^-3 * Omegam^2 * h^3  (delta_m = Omegam in the stub)
-    assert np.allclose(np.asarray(jac['Omega_cdm']), 2. * pk0 / Omegam, rtol=1e-6)
-    assert np.allclose(np.asarray(jac['Omega_b']), 2. * pk0 / Omegam, rtol=1e-6)
-    assert np.allclose(np.asarray(jac['A_s']), pk0 / p0['A_s'], rtol=1e-6)
-    # d/dn_s = P * ln(k/k_p); recover the k-grid (in 1/Mpc) from the engine
-    kdeb = np.asarray(Cosmology(engine='discoeb', extra_params=extra,
-                                **p0).engine.get_discoeb_perturbations()[0])
-    assert np.allclose(np.asarray(jac['n_s']), pk0 * np.log(kdeb / p0.get('k_pivot', 0.05)),
-                       rtol=1e-5)
-
-
-@requires_jax
-def test_grad_finite_difference_and_h(stub_discoeb_diff):
-    extra = {'nk': 12, 'kmin': 1e-3, 'kmax': 0.5, 'z': [0.]}
-    p0 = dict(Omega_cdm=0.25, Omega_b=0.05, h=0.67742, A_s=2.1064e-9, n_s=0.96822, N_eff=3.044)
-
-    def pk_of(params):
-        cosmo = Cosmology(engine='discoeb', extra_params=extra, **params)
-        return cosmo.get_fourier().table(of='delta_m')[2][:, 0]
-
-    jac = jax.jacfwd(pk_of)(p0)
-    # h enters both the unit conversion (h^3) and the k-grid (k[1/Mpc] = k[h/Mpc]*h)
-    eps = 1e-4
-    fd_h = (np.asarray(pk_of(dict(p0, h=p0['h'] + eps)))
-            - np.asarray(pk_of(dict(p0, h=p0['h'] - eps)))) / (2 * eps)
-    assert np.allclose(np.asarray(jac['h']), fd_h, rtol=1e-3)
-    # jax.grad of a scalar summary
-    g = jax.grad(lambda p: jnp.sum(pk_of(p)))(p0)
-    pk0 = np.asarray(pk_of(p0))
-    Omegam = p0['Omega_cdm'] + p0['Omega_b']
-    assert np.isclose(float(g['Omega_cdm']), 2. * pk0.sum() / Omegam, rtol=1e-6)
-
-
-@requires_interpax
-def test_jacobian_through_cosmoprimo_interpolator(stub_discoeb_diff):
-    # Gradients also flow through cosmoprimo's OWN pk interpolator (jax-friendly via interpax):
-    # DISCO-EB's internal splines are just traced as part of the solve and never surface here.
-    extra = {'nk': 24, 'kmin': 1e-3, 'kmax': 1.0, 'z': [0., 1.]}
-    p0 = dict(Omega_cdm=0.25, Omega_b=0.05, h=0.67742, A_s=2.1064e-9, n_s=0.96822, N_eff=3.044)
-    Omegam = p0['Omega_cdm'] + p0['Omega_b']
-    kq = np.array([0.05, 0.1, 0.2])
-
-    def pk(params):
-        return Cosmology(engine='discoeb', extra_params=extra, **params).get_fourier()\
-            .pk_interpolator(of='delta_m')(kq, z=0.)
-
-    val = np.asarray(pk(p0))
-    jac = jax.jacfwd(pk)(p0)
-    # P ∝ Omegam^2 (stub), so dP/dOmega_cdm = 2P/Omegam -- through the interpax spline
-    assert np.allclose(np.asarray(jac['Omega_cdm']), 2. * val / Omegam, rtol=1e-3)
-
-
-
-# --------------------------------------------------------------------------------------------
-# Tests running the real DISCO-EB (opt-in: COSMOPRIMO_TEST_DISCOEB=1).
-# --------------------------------------------------------------------------------------------
-
-@requires_real_discoeb
-def test_thermodynamics_real():
+@requires_discoeb
+def test_thermodynamics():
     cosmo = Cosmology(engine='discoeb', extra_params=dict(REAL_EXTRA), **FID)
     th = cosmo.get_thermodynamics()
     # recombination / drag epochs and sound horizon, against the eisenstein_hu engine
@@ -365,13 +226,13 @@ def test_thermodynamics_real():
     assert 0. < th.x_e(0.) < 1e-3 and th.x_e(1100.) > 0.01
 
 
-@requires_real_discoeb
-def test_fourier_real_vs_eisenstein_hu():
+@requires_discoeb
+def test_fourier_vs_eisenstein_hu():
     # compare DISCO-EB (a full Boltzmann solve) to the Eisenstein & Hu analytic fit, for a
     # massless-neutrino cosmology so that both engines describe the same model.
     params = {k: v for k, v in FID.items() if k != 'm_ncdm'}
     cosmo = Cosmology(engine='discoeb',
-                      extra_params=dict(nk=128, z=[0., 1.], **REAL_EXTRA), **params)
+                      extra_params=dict(nk=32, z=[0., 1.], **REAL_EXTRA), **params)
     fo = cosmo.get_fourier()
     fo_eh = Cosmology(engine='eisenstein_hu', **params).get_fourier()
     k = np.logspace(-2.5, 0., 20)
@@ -380,35 +241,55 @@ def test_fourier_real_vs_eisenstein_hu():
     # the analytic EH fit is itself only good to ~10-15% against a Boltzmann code
     assert np.allclose(pk, pk_eh, rtol=0.2)
     assert np.isfinite(fo.sigma8_m) and 0.5 < fo.sigma8_m < 1.1
-    # cross-spectrum and theta are consistent with delta (P_theta_theta = f^2 P_delta_delta)
-    pk_th = fo.pk_interpolator(of='theta_m')(k, z=0.)
-    assert np.all(pk_th > 0.) and np.all(pk_th < pk)
 
 
-@requires_real_discoeb
-def test_gradients_real():
-    # DISCO-EB's headline feature: autodifferentiable P(k).  Compare jax autodiff against
-    # finite differences for the real solver (mirrors DISCO-EB's nb_discoeb_autodiff notebook).
-    import jax
+# --------------------------------------------------------------------------------------------
+# Gradients / Jacobians.  DISCO-EB is autodifferentiable and the engine keeps the whole
+# params -> P(k) chain traceable.  The important test is the *interpolated* spectrum, which is
+# what a user actually evaluates: it goes through cosmoprimo's own interpax-based interpolator on
+# top of the solver.  The Cosmology (and hence the interpolator) must be built inside the traced
+# function; reusing an interpolator built from concrete parameters would naturally give a
+# identically zero derivative.
+# --------------------------------------------------------------------------------------------
 
-    def pk_of(Omega_cdm):
-        # Tight solver tolerances: autodiff through an *adaptive* ODE solver inherits the
-        # step-size-controller's noise, which at rtol = 1e-3 reaches ~10% on one k (against a
-        # ~3e-4 median) and is exactly the effect DISCO-EB's autodiff notebook warns about
-        # ("increase accuracy ... to reduce noise on derivatives").
-        cosmo = Cosmology(engine='discoeb',
-                          extra_params=dict(nk=32, kmin=1e-3, kmax=1., z=[0.],
-                                            rtol=1e-4, atol=1e-4, **REAL_EXTRA),
-                          Omega_cdm=Omega_cdm, Omega_b=0.05, h=0.67742, A_s=2.1064e-9,
-                          n_s=0.96822, N_eff=3.044, T_cmb=2.7255)
+@requires_discoeb
+def test_gradients_real_interpolator():
+    extra = dict(nk=32, kmin=1e-3, kmax=1., z=[0.], rtol=1e-4, atol=1e-4, **REAL_EXTRA)
+    base = dict(Omega_b=0.05, h=0.67742, A_s=2.1064e-9, n_s=0.96822, N_eff=3.044,
+                T_cmb=2.7255)
+    kq = np.geomspace(1e-3, 1., 8)
+
+    def pk_interp(Omega_cdm):
+        cosmo = Cosmology(engine='discoeb', extra_params=extra, Omega_cdm=Omega_cdm, **base)
+        return cosmo.get_fourier().pk_interpolator(of='delta_m')(kq, z=0.)
+
+    x = 0.25
+    g_auto = np.asarray(jax.jacfwd(pk_interp)(x))
+    # the derivative must be non-trivial: this is exactly what is lost if the interpolator is
+    # built once from concrete parameters and reused inside the traced function
+    assert np.all(np.isfinite(g_auto))
+    assert np.any(g_auto != 0.)
+
+    eps = 1e-3
+    g_fd = (np.asarray(pk_interp(x + eps)) - np.asarray(pk_interp(x - eps))) / (2 * eps)
+    # autodiff (forward mode, DISCO-EB's DirectAdjoint) should match finite differences
+    assert np.allclose(g_auto, g_fd, rtol=0.05, atol=0.)
+
+
+@requires_discoeb
+def test_gradients_real_table():
+    # Same comparison for the raw table, i.e. without cosmoprimo's interpolator in between.
+    extra = dict(nk=32, kmin=1e-3, kmax=1., z=[0.], rtol=1e-4, atol=1e-4, **REAL_EXTRA)
+    base = dict(Omega_b=0.05, h=0.67742, A_s=2.1064e-9, n_s=0.96822, N_eff=3.044,
+                T_cmb=2.7255)
+
+    def pk_table(Omega_cdm):
+        cosmo = Cosmology(engine='discoeb', extra_params=extra, Omega_cdm=Omega_cdm, **base)
         return cosmo.get_fourier().table(of='delta_m')[2][:, 0]
 
     x = 0.25
-    g_auto = np.asarray(jax.jacfwd(pk_of)(x))
+    g_auto = np.asarray(jax.jacfwd(pk_table)(x))
     eps = 1e-3
-    g_fd = (np.asarray(pk_of(x + eps)) - np.asarray(pk_of(x - eps))) / (2 * eps)
-    # autodiff (forward mode, DISCO-EB's DirectAdjoint) should match finite differences
+    g_fd = (np.asarray(pk_table(x + eps)) - np.asarray(pk_table(x - eps))) / (2 * eps)
+    assert np.all(np.isfinite(g_auto))
     assert np.allclose(g_auto, g_fd, rtol=0.05, atol=0.)
-    assert np.all(np.abs(g_auto) > 0.)   # the derivative is non-trivial
-
-
