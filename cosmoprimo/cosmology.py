@@ -2916,7 +2916,7 @@ class BaseBackground(BaseSection):
                     f"Second redshift(s) z2 ({z2}) is less than first redshift(s) z1 ({z1})."
                     )
 
-        exception(warn, z1, z2)
+        exception(warn, z1, z2, level='warning')
         K = self.K  # in (h/Mpc)^2
         index = select(K == 0, 0, select(K > 0, 1, 2))
         def flat(chi): return chi

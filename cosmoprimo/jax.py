@@ -1,3 +1,4 @@
+import os
 import functools
 import logging
 
@@ -69,11 +70,53 @@ def numpy_jax(*args, return_use_jax=False):
     return toret
 
 
-def exception_numpy(fun, *args):
+def exception_numpy(fun, *args, level='error'):
     return fun(*args)
 
 
-def exception_jax(fun, *args):
+# Lowest level of the checks `exception_jax` compiles into traced code as a `jax.debug.callback`.
+# The callback runs on the host at every execution, once per point of a vmapped batch: a
+# device -> host round trip inside an otherwise jitted likelihood.
+_EXCEPTION_LEVELS = {'warning': 0, 'error': 1}
+
+
+def _get_exception_level(level):
+    if level in (None, 'none'):
+        return None
+    if level not in _EXCEPTION_LEVELS:
+        raise ValueError('exception callback level must be one of {}, got {!r}'.format(list(_EXCEPTION_LEVELS) + [None], level))
+    return level
+
+
+_exception_level = _get_exception_level(os.environ.get('COSMOPRIMO_EXCEPTION_CALLBACKS', 'warning'))
+
+
+def set_exception_callbacks(level='warning'):
+    """
+    Set which run-time checks are compiled into traced code.
+
+    Checks below *level* are dropped from traced (jitted, vmapped) code, e.g. the engine warnings
+    of :class:`~cosmoprimo.eisenstein_hu.EisensteinHuEngine` at ``level='error'``; checks on
+    concrete values always run, directly.
+    Takes effect at trace time: a function already jitted keeps what it was traced with.
+    The default can be set with the environment variable ``COSMOPRIMO_EXCEPTION_CALLBACKS``
+    (``warning``, ``error`` or ``none``).
+
+    Parameters
+    ----------
+    level : str, None, default='warning'
+        'warning' for warnings and errors, 'error' for errors only (e.g. interpolation ``bounds_error``),
+        ``None`` (or 'none') for no checks in traced code.
+    """
+    global _exception_level
+    _exception_level = _get_exception_level(level)
+
+
+def exception_jax(fun, *args, level='error'):
+    if _exception_level is None or _EXCEPTION_LEVELS[level] < _EXCEPTION_LEVELS[_exception_level]:
+        if args and not use_jax(*args, tracer_only=True):
+            return fun(*args)
+        return None
     return jax.debug.callback(fun, *args)
 
 

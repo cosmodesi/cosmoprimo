@@ -227,7 +227,7 @@ class LeastSquareSolver(BaseClass):
                     import warnings
                     warnings.warn('Numerically inaccurate inverse matrix, max absolute diff {:.6f}.'.format(jnp.max(jnp.abs(tmp - ref))))
 
-            exception(raise_error, tmp, ref)
+            exception(raise_error, tmp, ref, level='warning')
 
             self.projector = fisher.dot(hv).T
 
