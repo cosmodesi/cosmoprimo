@@ -117,7 +117,14 @@ def exception_jax(fun, *args, level='error'):
         if args and not use_jax(*args, tracer_only=True):
             return fun(*args)
         return None
-    return jax.debug.callback(fun, *args)
+
+    def host_fun(*args):
+        # The callback receives jax arrays: any jax op on them (e.g. ``Omega_k != 0.``) would dispatch a computation from
+        # inside the running one, which on CPU waits for the XLA execution slot that computation holds (deadlock).
+        # Hand the check plain numpy values instead.
+        return fun(*[np.asarray(arg) for arg in args])
+
+    return jax.debug.callback(host_fun, *args)
 
 
 if jax:
@@ -224,14 +231,15 @@ def _mask_bounds(x, xlim, bounds_error=False):
     masks = [(xx >= xxlim[0]) & (xx <= xxlim[1]) for xx, xxlim in zip(x, xlim)]
 
     if bounds_error:
-        def raise_error():
-            for mask, xx, xxlim in zip(masks, x, xlim):
+        # masks and x passed as arguments (not closed over), so the check receives plain numpy values in the callback
+        def raise_error(*arrays):
+            for mask, xx, xxlim in zip(arrays[:len(masks)], arrays[len(masks):], xlim):
                 if not mask.all():
                     raise ValueError(
                         'input outside of extrapolation range (min: {} vs. {}; '
                         'max: {} vs. {})'.format(xx.min(), xxlim[0], xx.max(), xxlim[1])
                     )
-        exception(raise_error)
+        exception(raise_error, *masks, *x)
 
     return masks
 
