@@ -52,6 +52,14 @@ BBKS
   :inherited-members:
   :show-inheritance:
 
+DISCO-EB
+~~~~~~~~
+
+.. automodule:: cosmoprimo.discoeb
+  :members:
+  :inherited-members:
+  :show-inheritance:
+
 Utilities
 ---------
 

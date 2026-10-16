@@ -12,7 +12,7 @@ from scipy import integrate
 from .utils import BaseClass, _bcast_dtype
 from .fftlog import PowerToCorrelation, CorrelationToPower, TophatVariance
 from .jax import numpy as jnp
-from .jax import romberg, simpson, opmask, _mask_bounds, numpy_jax, register_pytree_node_class, Partial
+from .jax import romberg, simpson, opmask, _mask_bounds, _masked_nan, numpy_jax, register_pytree_node_class, Partial
 
 
 def get_default_k_callable():
@@ -523,7 +523,7 @@ class PowerSpectrumInterpolator1D(_BasePowerSpectrumInterpolator):
                 k = k.ravel()
                 mask_k, = _mask_bounds([k], [(self.extrap_kmin, self.extrap_kmax)], bounds_error=bounds_error)
                 toret = self._interp(k, **kwargs)
-                toret = self._np.where(mask_k[(Ellipsis,) + (None,) * (toret.ndim - 1)], toret, self._np.nan)
+                toret = _masked_nan(self._np, mask_k[(Ellipsis,) + (None,) * (toret.ndim - 1)], toret)
                 return toret.astype(dtype).reshape(toret_shape + toret.shape[1:])
 
         return interp(k, **kwargs) * self._rsigma8sq
@@ -797,7 +797,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
                         tmp = tmp * growth
                 else:
                     tmp = self._interp(k, z, grid=grid)
-                toret = self._np.where(mask_k, tmp, self._np.nan)
+                toret = _masked_nan(self._np, mask_k, tmp)
                 return toret.astype(dtype).reshape(toret_shape)
 
         else:
@@ -824,7 +824,7 @@ class PowerSpectrumInterpolator2D(_BasePowerSpectrumInterpolator):
                         tmp = self._np.repeat(tmp[:, None], z.size, axis=-1)
                 if self.growth_factor_sq is not None and not ignore_growth:
                     tmp = tmp * self.growth_factor_sq(z).astype(dtype)
-                toret = self._np.where(mask_k, tmp, self._np.nan)
+                toret = _masked_nan(self._np, mask_k, tmp)
                 return toret.astype(dtype).reshape(toret_shape)
 
         return interp(k, z=z, grid=grid, **kwargs) * self._rsigma8sq
@@ -1174,7 +1174,7 @@ class CorrelationFunctionInterpolator1D(_BaseCorrelationFunctionInterpolator):
                 toret_shape = s.shape
                 s = s.ravel()
                 mask_s, = _mask_bounds([s], [(self.smin, self.smax)], bounds_error=bounds_error)
-                toret = self._np.where(mask_s, self._interp(s, **kwargs), self._np.nan)
+                toret = _masked_nan(self._np, mask_s, self._interp(s, **kwargs))
                 return toret.astype(dtype).reshape(toret_shape)
 
         return interp(s, **kwargs) * self._rsigma8sq
@@ -1394,7 +1394,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
                         tmp = tmp * growth
                 else:
                     tmp = self._interp(s, z, grid=grid)
-                toret = self._np.where(mask_s, tmp, self._np.nan)
+                toret = _masked_nan(self._np, mask_s, tmp)
                 return toret.astype(dtype).reshape(toret_shape)
 
         else:
@@ -1421,7 +1421,7 @@ class CorrelationFunctionInterpolator2D(_BaseCorrelationFunctionInterpolator):
                         tmp = self._np.repeat(tmp[:, None], z.size, axis=-1)
                 if self.growth_factor_sq is not None and not ignore_growth:
                     tmp = tmp * self.growth_factor_sq(z).astype(dtype)
-                toret = self._np.where(mask_s, tmp, self._np.nan)
+                toret = _masked_nan(self._np, mask_s, tmp)
                 return toret.astype(dtype).reshape(toret_shape)
 
         return interp(s, z, grid=grid, **kwargs) * self._rsigma8sq
