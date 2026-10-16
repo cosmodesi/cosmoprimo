@@ -36,6 +36,13 @@ world, and this layer has no notion of one. :meth:`predict` is what it offers.
 ``transform`` is applied after training, to the collected values, never before they are stored:
 the checkpoint holds physical outputs, so changing what you divide out costs a refit, not another
 run of the Boltzmann code.
+
+A fourth hook, :meth:`Emulator.select_node_params`, says which of the exact parameters the NODES
+should vary anyway. By default an exact parameter is held at the centre of the box while the nodes
+are evaluated; a subclass may instead have it sampled alongside the expanded ones, so that a node
+set (and its checkpoint) drawn before the parameter was made exact is reused as it stands -- the
+transform divides the parameter out of every node, and the fit sees the same nodes projected onto
+fewer parameters.
 """
 
 import logging
@@ -147,6 +154,15 @@ class Emulator(object):
         if not expanded:
             raise ValueError(f'{type(self).__name__}.select_params left nothing to expand')
         self.params = expanded
+        # Which parameters the NODES vary. The expanded ones, unless a subclass asks for some of
+        # the exact parameters to be sampled as well (`select_node_params`): those are then node
+        # coordinates the fit does not see -- `transform` has taken them out.
+        sampled = list(self.select_node_params(names))
+        unknown = [name for name in sampled if name not in names]
+        if unknown:
+            raise ValueError(f'{type(self).__name__}.select_node_params returned {unknown}, not in '
+                             f'the training space ({names})')
+        self.node_params = self._node_params(names, expanded, sampled)
 
     # ── the hooks: override any, ignore the rest ───────────────────────────────
     def output_coordinates(self, name):
@@ -209,6 +225,47 @@ class Emulator(object):
         """
         return list(names)
 
+    def select_node_params(self, names):
+        """Which of the EXACT parameters the nodes should vary anyway. None, by default.
+
+        A parameter left out of :meth:`select_params` is normally held at the centre of the box
+        while the nodes are evaluated: its dependence is divided out by :meth:`transform`, so
+        sampling it would only spend nodes on a direction the fit never sees. Returning some of
+        those parameters here samples them at the nodes regardless. The transform still takes them
+        out, node by node, and the fit is made over the node set PROJECTED onto the expanded
+        parameters -- as many nodes as before, over fewer inputs.
+
+        Two reasons to want that. A node set drawn while the parameter was still expanded -- and
+        the checkpoint holding its evaluations -- is then reused as it stands when the parameter is
+        later made exact, instead of being evaluated again with the parameter pinned: the
+        checkpoint matches nodes by their coordinates, and the coordinates are unchanged. And it is
+        a check of the transform itself: a dependence the transform failed to remove is, in the
+        projected set, a scatter no fit over the remaining parameters can absorb, and shows in the
+        fit residual rather than silently in every prediction.
+
+        ``names`` are the training parameters, as :meth:`select_params` receives them. The names
+        returned must be among them and not among the expanded ones (an expanded parameter is
+        sampled anyway).
+        """
+        return []
+
+    @staticmethod
+    def _node_params(names, expanded, sampled):
+        """The node coordinates, in a FIXED order: the training order whenever an exact parameter
+        is sampled, the expanded order otherwise.
+
+        The order is the column order of the node array, and so of every checkpoint, so it must not
+        depend on how a subclass happens to list its selections: a node set drawn when every
+        parameter was expanded (``expanded == names``) has to come out identical once one of them
+        becomes exact-but-sampled, or the whole point of sampling it is lost. Without a sampled
+        parameter the expanded order is kept as it was, so files and checkpoints written before
+        this hook existed are unaffected.
+        """
+        if not sampled:
+            return list(expanded)
+        wanted = set(expanded) | set(sampled)
+        return [name for name in names if name in wanted]
+
     def transform(self, values, params):
         """Applied to the target's output before fitting. Identity by default."""
         return values
@@ -245,7 +302,7 @@ class Emulator(object):
         evaluation already made; the Taylor engine's stencils are not, so there the order is
         worth choosing before paying (see :class:`~.taylor.TaylorEngine`).
         """
-        return self._engine(budget=budget, **kwargs).nodes()
+        return self._engine(budget=budget, params=self.node_params, **kwargs).nodes()
 
     def _engine(self, budget=None, space=None, params=None, **kwargs):
         from .engines import ChebyshevEngine
@@ -256,7 +313,9 @@ class Emulator(object):
         classes = {cls.name: cls
                    for cls in (ChebyshevEngine, TaylorEngine, PolynomialEngine, MLPEngine)}
         # `space`/`params` for an output fitted in coordinates of its own
-        # (:meth:`output_coordinates`); the emulator's own otherwise
+        # (:meth:`output_coordinates`); the emulator's own otherwise. `params` is also the node
+        # parameters for the engine that DRAWS the nodes, which differ from the expanded ones when
+        # an exact parameter is sampled at the nodes (see `select_node_params`).
         space = self.training if space is None else space
         params = self.params if params is None else list(params)
         subspace = space.marginal(params) if len(params) < len(space.params) else space
@@ -284,13 +343,33 @@ class Emulator(object):
 
     def train(self, engine=None, budget=None, checkpoint=None, chunk=None, batch_size=None,
               mpicomm=None, per_output=None, max_non_finite=0.05, method='auto',
-              basis_budget=None, drop_non_finite=None, **kwargs):
+              basis_budget=None, drop_non_finite=None, rows_per_rank=None,
+              outlier_factor=None, outlier_factor_low=None, **kwargs):
         """Evaluate the calculator on the node set and fit.
 
         Resumable and chunked: pass ``checkpoint`` and ``chunk='30min'`` for anything expensive,
         then rerun until it reports complete. A kill then costs one node, not the training.
         ``batch_size`` calls the target with dicts of arrays of that length instead of one node
         at a time; ``mpicomm`` splits the nodes across ranks.
+
+        ``rows_per_rank`` (MPI only) is how many nodes each rank evaluates between two
+        exchanges; see :class:`~.training.TrainingSet`.
+
+        ``outlier_factor`` (regression engines only) drops, before the fit, every node at which
+        some output component exceeds that factor times the component's median |value| over
+        the nodes. A stability gate says where a calculator *runs*, not where its answer is
+        sane: over the EFT-of-dark-energy box, gate-passing nodes returned one-loop tables up to
+        1e87 times their typical size (large c_M with w0 > -0.5), and a least-squares fit follows
+        such a node wherever it is. Dropped nodes are logged; the fit then extrapolates there,
+        finite but meaningless, which is what a chain that never visits those models can live with.
+
+        ``outlier_factor_low`` is the mirror cut: a node is dropped when some sign-definite
+        component (one that keeps the same sign over every node -- a component that crosses
+        zero is legitimately tiny near the crossing) falls below the median divided by that
+        factor. The same absurd region has a collapsed face: models whose growth is switched off
+        return tables and growth scalars 1e-3 to 1e-5 times typical.
+
+        Both cuts look at the transformed outputs, i.e. at what the engines are fitted to.
 
         ``per_output`` overrides the engine options for named outputs, e.g.
         ``per_output={'pk': dict(budget=2)}``. A key matches an output name, or the part of it
@@ -303,13 +382,30 @@ class Emulator(object):
         per_output = dict(per_output or {})
         if engine is not None:
             self.engine_name = engine
-        built = self._engine(budget=budget, **kwargs)
-        nodes = built.nodes()
+        # The engine that draws the nodes: over the node parameters, which include any exact
+        # parameter a subclass asked to have sampled (`select_node_params`). The engines that are
+        # FITTED, below, are over the expanded parameters alone.
+        built = self._engine(budget=budget, params=self.node_params, **kwargs)
+        sampled = [name for name in self.node_params if name not in self.params]
+        # The node set is drawn once, on rank 0, and broadcast: it is deterministic, but an
+        # engine with a `valid` predicate filters a candidate pool that can be a million points
+        # (the EFT-of-DE gate keeps 9%), five minutes of work that 255 other ranks would
+        # otherwise repeat -- and a set every rank must agree on exactly is safer sent than
+        # recomputed.
+        def draw():
+            return np.atleast_2d(np.asarray(built.nodes(), dtype='f8'))
+
+        if mpicomm is not None and mpicomm.size > 1:
+            nodes = mpicomm.bcast(draw() if mpicomm.rank == 0 else None, root=0)
+        else:
+            nodes = draw()
         whitened = getattr(built, 'whitened', False)
         self.logger.info(f'training on {len(nodes)} nodes over {len(self.params)} parameters'
                          + (f' (whitened, condition number {built.condition_number():.1f})'
                             if whitened else '')
-                         + f'; {len(self.exact_params)} handled exactly')
+                         + f'; {len(self.exact_params)} handled exactly'
+                         + (f', of which {sampled} sampled at the nodes and divided out'
+                            if sampled else ''))
         # The node box in physical parameters. Cheap, and it makes a whole class of bug
         # visible at a glance: a declared transform that never reaches the engine, or is
         # not inverted on the way out, hands the calculator the expansion variable and
@@ -322,12 +418,14 @@ class Emulator(object):
             + (f'; expansion variables {expansions}' if expansions else ''))
 
         # a parameter handled exactly leaves the grid, but the calculator still needs a value for
-        # it: hold it at the space centre while sampling, and let `transform` take it out
+        # it: hold it at the space centre while sampling, and let `transform` take it out -- unless
+        # it is one the subclass wants sampled, in which case it is a node coordinate like the rest
         centers = self.training.center
-        fixed = {name: centers[name] for name in self.exact_params}
-        training = TrainingSet(self._evaluate_target, nodes, self.params, fixed=fixed,
+        fixed = {name: centers[name] for name in self.exact_params if name not in self.node_params}
+        training = TrainingSet(self._evaluate_target, nodes, self.node_params, fixed=fixed,
                                checkpoint=checkpoint, chunk=chunk, batch_size=batch_size,
                                mpicomm=mpicomm,
+                               **({} if rows_per_rank is None else {'rows_per_rank': rows_per_rank}),
                                # An interpolating engine cannot absorb a hole on its own -- but it
                                # can if the caller also lowers `basis_budget`, which buys the
                                # redundancy by giving up polynomial degree. So the tolerance is
@@ -343,7 +441,7 @@ class Emulator(object):
         inputs, outputs = training.inputs(), training.outputs()
         transformed = {}
         for index, row in enumerate(inputs):
-            params = {**fixed, **dict(zip(self.params, row))}
+            params = {**fixed, **dict(zip(self.node_params, row))}
             values = self.transform({name: value[index] for name, value in outputs.items()},
                                     params)
             for name, value in values.items():
@@ -379,11 +477,30 @@ class Emulator(object):
                 inputs = np.asarray(inputs)[finite]
                 transformed = {name: [value for value, keep in zip(values, finite) if keep]
                                for name, values in transformed.items()}
+            if outlier_factor is not None or outlier_factor_low is not None:
+                sane = self._outlier_mask(transformed, outlier_factor, outlier_factor_low,
+                                          'the transformed outputs')
+                lost = int((~sane).sum())
+                if lost:
+                    self.logger.info(f'dropping {lost}/{len(sane)} nodes ({lost / len(sane):.1%}) in all; '
+                                     f'fitting on the rest')
+                    inputs = np.asarray(inputs)[sane]
+                    transformed = {name: [value for value, keep in zip(values, sane) if keep]
+                                   for name, values in transformed.items()}
 
         # one engine per output, all sharing the node set -- and, unless `output_coordinates`
         # says otherwise, the coordinates too
         self._engines = {}
-        rows = [{**fixed, **dict(zip(self.params, row))} for row in inputs]
+        # the nodes as training-parameter points, for an output fitted in coordinates of its own:
+        # every node coordinate -- a sampled exact parameter included -- with the other exact
+        # parameters at their fixed values. Taken before the projection below.
+        rows = [{**fixed, **dict(zip(self.node_params, row))} for row in inputs]
+        # The fit sees the expanded parameters only: a sampled exact parameter was a node
+        # coordinate up to here, and `transform` has taken its dependence out of every output, so
+        # its column is dropped and the nodes stand projected onto the remaining ones.
+        if sampled:
+            columns = [self.node_params.index(name) for name in self.params]
+            inputs = np.asarray(inputs)[:, columns]
         coordinates = {}      # cached by parameter tuple: several outputs share one basis
         for name, values in transformed.items():
             values = np.asarray(values)
@@ -411,6 +528,43 @@ class Emulator(object):
         if not self._engines:
             raise RuntimeError('the target returned no outputs, so there is nothing to fit')
         return self
+
+    def _outlier_mask(self, values, outlier_factor, outlier_factor_low, what):
+        """The nodes the two outlier cuts keep, over ``{name: (nnodes, ...) or list}``; logged.
+
+        The high cut: some component of some output above ``outlier_factor`` times that
+        component's median |value| over the nodes. The low cut: some SIGN-DEFINITE component (one
+        that keeps its sign over every node) below the median divided by ``outlier_factor_low``.
+        See :meth:`train` for why either exists.
+        """
+        sane, worst, lowest = None, {}, {}
+        for name, value in values.items():
+            signed = np.asarray(value)
+            signed = signed.reshape(len(signed), -1)
+            if sane is None:
+                sane = np.ones(len(signed), dtype='?')
+            stacked = np.abs(signed)
+            median = np.median(stacked, axis=0)
+            if outlier_factor is not None:
+                over = (stacked / np.where(median > 0., median, np.inf)).max(axis=1)
+                sane &= over <= outlier_factor
+                worst[name] = float(over.max())
+            if outlier_factor_low is not None:
+                definite = ((signed.min(axis=0) > 0.) | (signed.max(axis=0) < 0.)) & (median > 0.)
+                if definite.any():
+                    under = (median[definite] / stacked[:, definite]).max(axis=1)
+                    sane &= under <= outlier_factor_low
+                    lowest[name] = float(under.max())
+        lost = int((~sane).sum())
+        if lost:
+            top = sorted(worst.items(), key=lambda item: -item[1])[:3]
+            bottom = sorted(lowest.items(), key=lambda item: -item[1])[:3]
+            self.logger.info(
+                f'{what}: {lost}/{len(sane)} nodes ({lost / len(sane):.1%}) have an output '
+                + (f'above {outlier_factor:g} x its median size (worst: ' + ', '.join(f'{name} at {value:.2g}x' for name, value in top) + ')' if worst else '')
+                + (' or ' if worst and lowest else '')
+                + (f'below its median / {outlier_factor_low:g} (lowest: ' + ', '.join(f'{name} at 1/{value:.2g}' for name, value in bottom) + ')' if lowest else ''))
+        return sane
 
     # ── use ───────────────────────────────────────────────────────────────────
     # ── constraints ───────────────────────────────────────────────────────────
@@ -621,7 +775,8 @@ class Emulator(object):
                 'cls': f'{type(self).__module__}.{type(self).__name__}',
                 'space': self.space.__getstate__(),
                 'training': self.training.__getstate__(),
-                'params': list(self.params), 'engine_name': self.engine_name,
+                'params': list(self.params), 'node_params': list(self.node_params),
+                'engine_name': self.engine_name,
                 'violation': self.violation,
                 # for a reader older than `violation`, which knows this key only
                 'coverage': self.violation if self.violation in ('raise', 'warn', 'ignore') else 'raise',
@@ -646,6 +801,9 @@ class Emulator(object):
         self.training = Space.__new__(Space)
         self.training.__setstate__(state['training'])
         self.params, self.engine_name = list(state['params']), state['engine_name']
+        # files written before exact parameters could be sampled at the nodes have no entry: the
+        # nodes then varied the expanded parameters and nothing else
+        self.node_params = list(state.get('node_params', self.params))
         # `coverage`: the name before `violation`, the only one a file written then carries
         from .constraints import constraint_from_state
         self.violation = _check_violation(state.get('violation', state.get('coverage', 'raise')))
