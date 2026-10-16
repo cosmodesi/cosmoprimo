@@ -39,7 +39,7 @@ class EisensteinHuEngine(BaseEngine):
                         self.__class__.__name__
                         )
                     )
-        exception(raise_error, self['N_ncdm'], self['Omega_k'], self._has_fld)
+        exception(raise_error, self['N_ncdm'], self['Omega_k'], self._has_fld, level='warning')
         self.compute()
         self._A_s = self._get_A_s_fid()
 

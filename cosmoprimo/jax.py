@@ -1,3 +1,4 @@
+import os
 import functools
 import logging
 
@@ -69,12 +70,61 @@ def numpy_jax(*args, return_use_jax=False):
     return toret
 
 
-def exception_numpy(fun, *args):
+def exception_numpy(fun, *args, level='error'):
     return fun(*args)
 
 
-def exception_jax(fun, *args):
-    return jax.debug.callback(fun, *args)
+# Lowest level of the checks `exception_jax` compiles into traced code as a `jax.debug.callback`.
+# The callback runs on the host at every execution, once per point of a vmapped batch: a
+# device -> host round trip inside an otherwise jitted likelihood.
+_EXCEPTION_LEVELS = {'warning': 0, 'error': 1}
+
+
+def _get_exception_level(level):
+    if level in (None, 'none'):
+        return None
+    if level not in _EXCEPTION_LEVELS:
+        raise ValueError('exception callback level must be one of {}, got {!r}'.format(list(_EXCEPTION_LEVELS) + [None], level))
+    return level
+
+
+_exception_level = _get_exception_level(os.environ.get('COSMOPRIMO_EXCEPTION_CALLBACKS', 'warning'))
+
+
+def set_exception_callbacks(level='warning'):
+    """
+    Set which run-time checks are compiled into traced code.
+
+    Checks below *level* are dropped from traced (jitted, vmapped) code, e.g. the engine warnings
+    of :class:`~cosmoprimo.eisenstein_hu.EisensteinHuEngine` at ``level='error'``; checks on
+    concrete values always run, directly.
+    Takes effect at trace time: a function already jitted keeps what it was traced with.
+    The default can be set with the environment variable ``COSMOPRIMO_EXCEPTION_CALLBACKS``
+    (``warning``, ``error`` or ``none``).
+
+    Parameters
+    ----------
+    level : str, None, default='warning'
+        'warning' for warnings and errors, 'error' for errors only (e.g. interpolation ``bounds_error``),
+        ``None`` (or 'none') for no checks in traced code.
+    """
+    global _exception_level
+    _exception_level = _get_exception_level(level)
+
+
+def exception_jax(fun, *args, level='error'):
+    if _exception_level is None or _EXCEPTION_LEVELS[level] < _EXCEPTION_LEVELS[_exception_level]:
+        if args and not use_jax(*args, tracer_only=True):
+            return fun(*args)
+        return None
+
+    def host_fun(*args):
+        # The callback receives jax arrays: any jax op on them (e.g. ``Omega_k != 0.``) would dispatch a computation from
+        # inside the running one, which on CPU waits for the XLA execution slot that computation holds (deadlock).
+        # Hand the check plain numpy values instead.
+        return fun(*[np.asarray(arg) for arg in args])
+
+    return jax.debug.callback(host_fun, *args)
 
 
 if jax:
@@ -181,14 +231,15 @@ def _mask_bounds(x, xlim, bounds_error=False):
     masks = [(xx >= xxlim[0]) & (xx <= xxlim[1]) for xx, xxlim in zip(x, xlim)]
 
     if bounds_error:
-        def raise_error():
-            for mask, xx, xxlim in zip(masks, x, xlim):
+        # masks and x passed as arguments (not closed over), so the check receives plain numpy values in the callback
+        def raise_error(*arrays):
+            for mask, xx, xxlim in zip(arrays[:len(masks)], arrays[len(masks):], xlim):
                 if not mask.all():
                     raise ValueError(
                         'input outside of extrapolation range (min: {} vs. {}; '
                         'max: {} vs. {})'.format(xx.min(), xxlim[0], xx.max(), xxlim[1])
                     )
-        exception(raise_error)
+        exception(raise_error, *masks, *x)
 
     return masks
 
