@@ -224,12 +224,12 @@ class LeastSquareSolver(BaseClass):
             tmp = fisher.dot(invfisher)
             ref = jnp.eye(tmp.shape[0], dtype=tmp.dtype)
 
-            def raise_error(tmp, ref):
-                if not jnp.allclose(tmp, ref, rtol=1e-04, atol=1e-04):
+            def raise_error(tmp, ref):  # numpy only: runs on the host, inside the jax callback
+                if not np.allclose(tmp, ref, rtol=1e-04, atol=1e-04):
                     import warnings
-                    warnings.warn('Numerically inaccurate inverse matrix, max absolute diff {:.6f}.'.format(jnp.max(jnp.abs(tmp - ref))))
+                    warnings.warn('Numerically inaccurate inverse matrix, max absolute diff {:.6f}.'.format(np.max(np.abs(tmp - ref))))
 
-            exception(raise_error, tmp, ref)
+            exception(raise_error, tmp, ref, level='warning')
 
             self.projector = fisher.dot(hv).T
 
