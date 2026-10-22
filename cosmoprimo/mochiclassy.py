@@ -226,7 +226,11 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
                              expansion_model='wowa', expansion_smg='0.685, -1., 0.')
         cosmo.h1(eta), cosmo.h3(eta), cosmo.h5(eta), cosmo.Y(k, z)
 
-    :meth:`eft_interpolators` packages them as cubic splines for fkptjax.
+    :meth:`eft_interpolators` packages the source as cubic splines for fkptjax -- by default of the FINITE
+    coefficients :math:`h_{1}, D_{0}, N_{3}, N_{5}` of :meth:`_eft_finite_coefficients`, with
+    :math:`\mu = h_{1} (D_{0} + N_{5} k^{2}) / (D_{0} + N_{3} k^{2})`, which are smooth where :math:`h_{3}`,
+    :math:`h_{5}` have their pole (:math:`\mu^{2} = 0`); :meth:`qs_pole_scale` gives the pole of the
+    quasi-static expression that remains.
     """
 
     def _eft_of_de(self):
@@ -362,15 +366,80 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
         numerator = (1. + bg['alpha_M']) / (1. + bg['alpha_T']) * bg['alpha_1'] + bg['alpha_2']
         return self._over_mu2(numerator, bg)
 
-    def eft_interpolators(self, eta=None, xnow=-3.912023, extrapolate=True, rtol=1e-3):
+    def _eft_finite_coefficients(self, eta, noslip=None):
         r"""
-        Tabulate :math:`h_{1}`, :math:`h_{3}`, :math:`h_{5}` on an :math:`\eta = \ln a` grid and return
-        standalone cubic splines, ready to be passed to fkptjax
-        (``FKPTJAXPTSpectrum2Poles(model='HDKI', mg_variant='EFT_DE', mg_params_override=...)``).
+        The FINITE background coefficients of the quasi-static source, at :math:`\eta = \ln a`.
 
-        :meth:`h1`, :meth:`h3`, :meth:`h5` are exact but expensive per call. fkptjax evaluates
-        :math:`\mu(k, \eta) = h_{1} (1 + k^{2} h_{5}) / (1 + k^{2} h_{3})` inside its ODE right-hand side,
-        at every solver substep and every kernel :math:`(k, p)` pair, so it wants one cheap spline per function.
+        Dividing numerator and denominator of :math:`\mu(k, \eta) = h_{1} (1 + k^{2} h_{5}) / (1 + k^{2} h_{3})`
+        by the common denominator :math:`a^{2} H^{2} \mu^{2}` of :math:`h_{3}` and :math:`h_{5}` gives
+
+        .. math:: \mu(k, \eta) = h_{1}\,\frac{D_{0} + N_{5} k^{2}}{D_{0} + N_{3} k^{2}},\qquad
+                  D_{0} = a^{2} H^{2} \mu^{2},\quad N_{3} = c_{s}^{2}{\rm num},\quad
+                  N_{5} = \frac{1 + \alpha_{M}}{1 + \alpha_{T}}\,\alpha_{1} + \alpha_{2}
+
+        (:math:`N_{3}`, :math:`N_{5}` are the numerators of eqs. 66 and 68 of arXiv:1902.06978, :math:`D_{0}`
+        their denominator). All four are smooth functions of :math:`\eta` through :math:`\mu^{2} = 0`, where
+        :math:`h_{3}` and :math:`h_{5}` themselves have a pole that no spline of them represents (the pipeline's
+        512-node splines were wrong by order one over a range of times around the crossing, and biased fkptjax's
+        kernel constants by :math:`10^{-4}` to :math:`10^{-1}`; the finite representation reproduces the exact
+        source to :math:`10^{-7}` on the same nodes -- `QSPole/2_fix_and_validation.ipynb`, 2026-10-19). This is
+        the handoff form :math:`\mu = M_{\ast}^{-2} [m^{2} + (c_{s}^{2}{\rm num} + \beta^{2}/2) x^{2}] / [m^{2}
+        + c_{s}^{2}{\rm num}\, x^{2}]`, :math:`x = k / aH`, written for general :math:`\alpha_{T}`.
+
+        What remains is the pole of the quasi-static EXPRESSION itself, at :math:`k_{\rm pole}(\eta) = a H
+        \sqrt{-\mu^{2} / c_{s}^{2}{\rm num}}` where :math:`\mu^{2} < 0` (:meth:`qs_pole_scale`): the
+        approximation failing, not a feature of the theory, and what the pipeline's gate bounds
+        (``cosmoprimo.emulators.mochiclass`` ``qs_pole``).
+
+        No-slip (:math:`\alpha_{B} = -2 \alpha_{M}`, :math:`\alpha_{T} = 0`, hence :math:`\alpha_{1} = 0`) has
+        :math:`N_{5} = N_{3}` and :math:`\mu = h_{1}` at every :math:`k`, pole or not. The cancellation is exact
+        in floating point (:math:`\alpha_{B} = -2 \alpha_{M}` to the last bit, splines included, since scaling by
+        a power of two commutes with every rounding), and it is made explicit here: where :math:`\alpha_{1}` is
+        an exact zero on the whole grid, ``N5`` IS ``N3`` (the same array), so that a consumer testing
+        ``N5 == N3`` takes the analytic branch :math:`\mu = h_{1}` instead of forming a ratio -- which is also
+        what the exact-GR point needs, where :math:`D_{0} = N_{3} = N_{5} = 0`. ``noslip`` forces (``True``) or
+        forbids (``False``) that identification; ``None`` detects it.
+
+        Returns a dict of arrays of ``eta``'s shape: ``h1`` (unitless), ``D0`` (:math:`(h/{\rm Mpc})^{2}`),
+        ``N3``, ``N5`` (unitless, so :math:`k` in :math:`h/{\rm Mpc}`), plus ``alpha_1``, ``mu2``, ``cs2num``,
+        ``aH`` (:math:`h/{\rm Mpc}`) for diagnostics and the ``noslip`` flag.
+        """
+        eta = np.asarray(eta, dtype='f8')
+        bg = self._eft_of_de_at_eta(eta.ravel())
+        alpha_1, aH, mu2 = bg['alpha_1'], bg['aH'], bg['mu2']
+        N3 = np.asarray(bg['cs2num'], dtype='f8')
+        N5 = (1. + bg['alpha_M']) / (1. + bg['alpha_T']) * alpha_1 + bg['alpha_2']
+        if noslip is None:
+            noslip = bool(np.all(alpha_1 == 0.))
+        if noslip:
+            N5 = N3
+        toret = {'h1': (1. + bg['alpha_T']) / bg['M2'], 'D0': aH**2 * mu2, 'N3': N3, 'N5': N5,
+                 'alpha_1': alpha_1, 'mu2': mu2, 'cs2num': N3, 'aH': aH}
+        return {name: np.asarray(value, dtype='f8').reshape(eta.shape) for name, value in toret.items()} | {'noslip': bool(noslip)}
+
+    def qs_pole_scale(self, eta):
+        r"""
+        :math:`k_{\rm pole}(\eta) = a H \sqrt{\max(-\mu^{2}, 0) / c_{s}^{2}{\rm num}}` in :math:`h/{\rm Mpc}`:
+        where the quasi-static source :math:`\mu(k, \eta)` of :meth:`_eft_finite_coefficients` has its pole
+        (zero where :math:`\mu^{2} \geq 0`, and identically zero for no-slip, where the pole cancels). Its
+        maximum over fkptjax's integration range is the pipeline's pole-scale criterion.
+        """
+        c = self._eft_finite_coefficients(eta)
+        if c['noslip']:
+            return np.zeros_like(c['mu2'])
+        with np.errstate(divide='ignore', invalid='ignore'):
+            kp = c['aH'] * np.sqrt(np.maximum(-c['mu2'], 0.) / c['cs2num'])
+        return np.where(c['mu2'] >= 0., 0., kp)
+
+    def eft_interpolators(self, eta=None, xnow=-3.912023, extrapolate=True, rtol=1e-3, representation='finite', noslip=None):
+        r"""
+        Tabulate the quasi-static source on an :math:`\eta = \ln a` grid and return standalone cubic splines,
+        ready to be passed to fkptjax (``FKPTJAXPTSpectrum2Poles(model='HDKI', mg_variant='EFT_DE',
+        mg_params_override=...)``).
+
+        The exact functions are expensive per call, and fkptjax evaluates :math:`\mu(k, \eta)` inside its ODE
+        right-hand side, at every solver substep and every kernel :math:`(k, p)` pair, so it wants one cheap
+        spline per tabulated function.
 
         Parameters
         ----------
@@ -387,21 +456,33 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
         rtol : float, default=1e-3
             The splines are compared to the exact functions at the grid midpoints, and a warning is emitted
             if they differ by more than ``rtol`` (relative to the local value, with a floor at ``1e-3`` of the
-            function's maximum so zero crossings do not trigger it). This catches grids too coarse for the
-            model, e.g. :math:`h_{3}`, :math:`h_{5}` going through a pole where :math:`\mu^{2}` crosses zero.
-            ``None`` skips the check.
+            function's maximum so zero crossings do not trigger it). ``None`` skips the check.
+
+        representation : str, default='finite'
+            ``'finite'``: the finite coefficients of :meth:`_eft_finite_coefficients`, :math:`h_{1}`,
+            :math:`D_{0}`, :math:`N_{3}`, :math:`N_{5}`, from which fkptjax forms
+            :math:`\mu = h_{1} (D_{0} + N_{5} k^{2}) / (D_{0} + N_{3} k^{2})`; smooth through
+            :math:`\mu^{2} = 0` (the default since 2026-10-22). ``'h'``: the former :math:`h_{1}`,
+            :math:`h_{3}`, :math:`h_{5}` splines, which go through a pole where :math:`\mu^{2}` crosses zero
+            and are then wrong around it (kept for comparisons; not an fkptjax input any more).
+
+        noslip : bool, default=None
+            ``'finite'`` only: force / forbid / detect (``None``) the no-slip identification
+            :math:`N_{5} = N_{3}`, see :meth:`_eft_finite_coefficients`.
 
         Returns
         -------
         interpolators : dict
-            ``{'eftcamb_h1_interp': spline, 'eftcamb_h3_interp': spline, 'eftcamb_h5_interp': spline}``,
-            keyed as fkptjax expects; :math:`h_{3}`, :math:`h_{5}` in :math:`(\mathrm{Mpc}/h)^{2}`.
+            ``'finite'``: ``{'eftde_h1_interp', 'eftde_d0_interp', 'eftde_n3_interp', 'eftde_n5_interp'}``
+            (:math:`D_{0}` in :math:`(h/\mathrm{Mpc})^{2}`, the rest unitless), keyed as fkptjax expects;
+            ``'h'``: ``{'h1', 'h3', 'h5'}`` (:math:`h_{3}`, :math:`h_{5}` in :math:`(\mathrm{Mpc}/h)^{2}`), for
+            diagnostics -- fkptjax takes them through ``fkptjax.ode.eftde_source_from_h(**...)`` only.
 
         Raises
         ------
         CosmologyComputationError
-            If any of :math:`h_{1}`, :math:`h_{3}`, :math:`h_{5}` is not finite on the grid, which would
-            otherwise silently propagate NaNs into fkptjax's ODE tables.
+            If any tabulated function is not finite on the grid, which would otherwise silently propagate
+            NaNs into fkptjax's ODE tables.
         """
         import warnings
         from scipy.interpolate import CubicSpline
@@ -411,29 +492,53 @@ class Background(classy.BaseClassBackground, mochiclass.Background):
         if eta.size < 2:
             raise ValueError('eta grid must contain at least 2 distinct points, got {:d}'.format(eta.size))
         midpoints = (eta[1:] + eta[:-1]) / 2.
+        if representation == 'finite':
+            names = {'h1': 'eftde_h1_interp', 'D0': 'eftde_d0_interp', 'N3': 'eftde_n3_interp', 'N5': 'eftde_n5_interp'}
+            values = self._eft_finite_coefficients(eta, noslip=noslip)
+            exact = self._eft_finite_coefficients(midpoints, noslip=values['noslip']) if rtol is not None else None
+        elif representation == 'h':
+            names = {name: name for name in ('h1', 'h3', 'h5')}
+            values = {name: np.asarray(getattr(self, name)(eta), dtype='f8') for name in names}
+            exact = {name: np.asarray(getattr(self, name)(midpoints), dtype='f8') for name in names} if rtol is not None else None
+        else:
+            raise ValueError("representation must be 'finite' or 'h', got {!r}".format(representation))
         toret = {}
-        for name in ('h1', 'h3', 'h5'):
-            func = getattr(self, name)
-            values = np.asarray(func(eta), dtype='f8')
-            finite = np.isfinite(values)
+        for name, key in names.items():
+            value = values[name]
+            finite = np.isfinite(value)
             if not np.all(finite):
                 bad = eta[~finite]
                 raise CosmologyComputationError('{}(eta) is not finite at {:d} of {:d} nodes, for eta in [{:.4f}, {:.4f}] '
                                                 '(z in [{:.3f}, {:.3f}]); check the smg / EFT parameters or the eta grid'.format(
                                                 name, bad.size, eta.size, bad.min(), bad.max(), np.expm1(-bad.max()), np.expm1(-bad.min())))
-            spline = CubicSpline(eta, values, extrapolate=extrapolate)
-            # max |values| == 0 is the GR limit (h3 = h5 = 0 identically, see _over_mu2): the spline is exact
-            # and the relative error below would be 0 / 0, so there is nothing to check
-            if rtol is not None and np.max(np.abs(values)) > 0.:
-                exact = np.asarray(func(midpoints), dtype='f8')
-                scale = np.maximum(np.abs(exact), 1e-3 * np.max(np.abs(values)))
-                error = np.abs(spline(midpoints) - exact) / scale
+            if representation == 'finite' and name == 'N5' and values['noslip']:
+                # the no-slip identification N5 = N3, bit for bit: the SAME spline object
+                toret[key] = toret[names['N3']]
+                continue
+            spline = CubicSpline(eta, value, extrapolate=extrapolate)
+            if representation == 'finite' and values['noslip'] and name != 'h1':
+                # no-slip: mu = h1 whatever D0, N3 are (N5 == N3); their accuracy is immaterial
+                toret[key] = spline
+                continue
+            # max |values| == 0 is the GR limit (h3 = h5 = 0, or D0 = N3 = N5 = 0, identically): the spline is
+            # exact and the relative error below would be 0 / 0, so there is nothing to check
+            if exact is not None and np.max(np.abs(value)) > 0.:
+                # 'h': relative to the local value (with a floor), which is what catches a spline through
+                # the pole of h3 / h5. 'finite': relative to the function's own scale -- D0 crosses zero
+                # by construction where m_QS^2 does, and a local relative error there says nothing about
+                # mu (the 1e-3 floor fired on a smooth D0 at 3e-6 of its maximum, 2026-10-22).
+                if representation == 'finite':
+                    scale = np.max(np.abs(value))
+                else:
+                    scale = np.maximum(np.abs(exact[name]), 1e-3 * np.max(np.abs(value)))
+                error = np.abs(spline(midpoints) - exact[name]) / scale
                 if np.any(error > rtol):
                     imax = np.argmax(error)
                     warnings.warn('{}(eta) spline is off by {:.1e} (> rtol = {:.1e}) at eta = {:.3f} (z = {:.3f}): '
-                                  'the grid is too coarse there, e.g. near a pole of h3 / h5; refine eta or check the model'.format(
-                                  name, error[imax], rtol, midpoints[imax], np.expm1(-midpoints[imax])))
-            toret['eftcamb_{}_interp'.format(name)] = spline
+                                  'the grid is too coarse there{}; refine eta or check the model'.format(
+                                  name, error[imax], rtol, midpoints[imax], np.expm1(-midpoints[imax]),
+                                  ', e.g. near a pole of h3 / h5' if representation == 'h' else ''))
+            toret[key] = spline
         return toret
 
     def Y(self, k, z):

@@ -885,10 +885,21 @@ def test_mochiclass():
     params = {'Omega_Lambda': 0, 'Omega_fld': 0, 'Omega_smg': -1, 'gravity_model': 'propto_omega', 'parameters_smg': [1., 0.5, 0.3, 0., 1.],
               'expansion_model': 'wowa', 'expansion_smg': [0.685, -1., 0.]}
     background = Cosmology(engine='mochiclass', **params).get_background()
-    interps = background.eft_interpolators()
     eta = np.linspace(-3.9, -0.01, 50)
+    # the h-function representation (diagnostics), against the direct evaluation
+    hs = background.eft_interpolators(representation='h')
     for name in ['h1', 'h3', 'h5']:
-        assert np.allclose(interps['eftcamb_{}_interp'.format(name)](eta), getattr(background, name)(eta), rtol=1e-4, atol=0.)
+        assert np.allclose(hs[name](eta), getattr(background, name)(eta), rtol=1e-4, atol=0.)
+    # the finite coefficients (fkptjax's inputs since 2026-10-22): h1, D0 = a^2 H^2 mu^2, N3, N5, against the direct
+    # evaluation, and the source they make against the h-form (mu = h1 (D0 + N5 k^2) / (D0 + N3 k^2))
+    fin = background.eft_interpolators()
+    c = background._eft_finite_coefficients(eta)
+    for name, key in (('h1', 'eftde_h1_interp'), ('D0', 'eftde_d0_interp'), ('N3', 'eftde_n3_interp'), ('N5', 'eftde_n5_interp')):
+        assert np.allclose(fin[key](eta), c[name], rtol=1e-6, atol=1e-6 * np.max(np.abs(c[name])))
+    k2 = 0.1**2
+    mu_finite = fin['eftde_h1_interp'](eta) * (fin['eftde_d0_interp'](eta) + fin['eftde_n5_interp'](eta) * k2) / (fin['eftde_d0_interp'](eta) + fin['eftde_n3_interp'](eta) * k2)
+    mu_h = background.h1(eta) * (1. + k2 * background.h5(eta)) / (1. + k2 * background.h3(eta))
+    assert np.allclose(mu_finite, mu_h, rtol=1e-5, atol=0.)
 
     # scalar spelling of the smg sector: coefficients by name over / instead of parameters_smg,
     # and expansion_smg built from w0_fld / wa_fld -- must reproduce the list spelling exactly
@@ -916,7 +927,11 @@ def test_mochiclass():
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         interps = background.eft_interpolators()
-    assert np.all(interps['eftcamb_h3_interp'](eta) == 0.) and np.all(interps['eftcamb_h5_interp'](eta) == 0.)
+        hs = background.eft_interpolators(representation='h')
+    # the finite coefficients (fkptjax's inputs): D0 = N3 = N5 = 0 and the no-slip / GR identification N5 is N3
+    assert np.all(interps['eftde_d0_interp'](eta) == 0.) and np.all(interps['eftde_n3_interp'](eta) == 0.)
+    assert interps['eftde_n5_interp'] is interps['eftde_n3_interp'] and np.allclose(interps['eftde_h1_interp'](eta), 1., rtol=1e-10, atol=0.)
+    assert np.all(hs['h3'](eta) == 0.) and np.all(hs['h5'](eta) == 0.)
     kk, zz = np.linspace(0.01, 1., 20), np.linspace(0., 2., 5)
     assert np.allclose(background.Y(kk, zz), 1., rtol=1e-10, atol=0.)
     cosmo_near = Cosmology(engine='mochiclass', c_K=0.1, c_B=1e-3, c_M=0., c_T=0., M2_ini=1., w0_fld=-1., wa_fld=0., **common)
