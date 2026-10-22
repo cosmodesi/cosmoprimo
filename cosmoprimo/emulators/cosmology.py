@@ -507,6 +507,10 @@ class SectionEmulator(_Emulator):
         ``wa_fld = -1.65``; see :meth:`analytic_background`. Call :meth:`from_training` first.
         """
         known = set(self.cosmo.get_default_params(include_conflicts=True))
+        # ... plus the inputs the fiducial's engine declares beyond the cosmology's own (the
+        # EFT-of-dark-energy coefficients of mochiclass, ``c_M`` and the rest): legitimate inputs
+        # of that cosmology, which `clone` does pass on, and not a basis name left undone.
+        known |= set(getattr(getattr(self.cosmo, '_engine', None), '_extra_input_parameters', ()))
         unknown = [name for name in params if name not in known]
         if unknown:
             raise ValueError(f'{type(self).__name__} cannot clone the fiducial cosmology with '

@@ -41,6 +41,16 @@ class MochiClassEngine(classy.ClassEngine):
     name = 'mochiclass'
 
     _default_cosmological_parameters = dict()
+    #: Inputs this engine reads beyond the cosmology's own parameters: the smg switches, the
+    #: Horndeski coefficients by name (scalar inputs laid over ``parameters_smg``, see
+    #: :meth:`_assemble_smg_params`), the coupling / running reparametrisations and their caps,
+    #: and the mochi_class precision switches a pipeline sets. Declared so that code which checks
+    #: parameter names against the cosmology -- the cosmology emulator's `clone` guard -- knows
+    #: them: a sampled ``c_M`` is a legitimate input of a mochiclass cosmology (2026-10-18).
+    _extra_input_parameters = frozenset(_smg_parameters) | frozenset(
+        name for names in _parameters_smg_names.values() for name in names) | frozenset(
+        ('r_smg', 'm_smg', 'mfrac_smg', 'dlnm2_max', 'dlnm2_early_max', 'a_early', 'c_M_max',
+         'pert_ic_tolerance_smg', 'skip_stability_tests_smg', 'output_background_smg'))
 
     def _set_classy(self, params):
 
