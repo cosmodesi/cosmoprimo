@@ -141,7 +141,7 @@ import numpy as np
 
 from cosmoprimo.jax import numpy_jax, use_jax
 
-__all__ = ['stable', 'stable_hill_valley', 'stable_propto_omega', 'hill_valley_running_max', 'class_a_grid', 'QS_A_MIN',
+__all__ = ['stable', 'stable_hill_valley', 'stable_propto_omega', 'hill_valley_running_max', 'class_a_grid', 'QS_A_MIN', 'QS_K_POLE_MAX',
            'scan_hill_valley', 'scan_propto_omega',
            'min_cs2num_hill_valley', 'min_cs2num_propto_omega',
            'cs2num', 'kinetic_D', 'background', 'default_a_grid',
@@ -160,6 +160,21 @@ IC_TOLERANCE = 2e-2
 #: one-loop kernels from ``eta = ln a = -3.912023`` (z ~ 49) and probes 0.2 below it, and this is
 #: what its ``mu(k, eta) = h1 (1 + k^2 h5) / (1 + k^2 h3)`` is tabulated over.
 QS_A_MIN = float(np.exp(-3.912023 - 0.2))
+
+#: The pole-scale criterion (``qs_pole=True``), in h/Mpc: a model passes when the pole of the
+#: quasi-static source, ``k_pole(a) = a H sqrt(-m_QS^2 / cs2num)`` where ``m_QS^2 < 0``, stays below
+#: this over fkptjax's range (:func:`_qs_pole_scale`). 5e-3 is a quarter of the smallest k of the
+#: full-shape fits (0.02) and half the floor scale a finite-k configuration would regularise the
+#: source at (k_reg = 1e-2: the frozen denominator 1 - (k_pole / k_reg)^2 stays above 0.75). Over
+#: the six-parameter free-braiding box it keeps 99.3% of the models the former sign test
+#: ``min m_QS^2 > 0`` (``qs_mu2=True``) removed and cuts the thin layer along the stability boundary
+#: at large braiding where the pole climbs into the window (`QSPole/3_qs_mass_distribution.ipynb`,
+#: 2026-10-20). The sign test existed for the splines of h3, h5 across the pole, which the finite
+#: representation of the source (``mochiclassy.Background._eft_finite_coefficients``) removed.
+QS_K_POLE_MAX = 5e-3
+
+#: H0 / h in h/Mpc (c = 1): a H in h/Mpc is a sqrt(E2) times this.
+_H0_OVER_H = 1. / 2997.92458
 
 
 # --------------------------------------------------------------------------------------
@@ -618,8 +633,13 @@ def _qs_mu2(a, bg, alpha_B, alpha_M, alpha_T, dalpha_B_dlna, M2):
     happily (its scalar is fine at high :math:`k`; this is the quasi-static approximation
     breaking), but the one-loop ODE fed with that source crawls -- one such training node
     stalled all 16 MPI ranks of an emulator training.  With :math:`c_{s}^{2}{\rm num} > 0`
-    (the gradient test) :math:`h_{3} > 0 \Leftrightarrow \mu^{2} > 0`, so the criterion is
-    :math:`\min_{a \ge a_{\rm QS}} \mu^{2} > 0`.
+    (the gradient test) :math:`h_{3} > 0 \Leftrightarrow \mu^{2} > 0`, so the criterion was
+    :math:`\min_{a \ge a_{\rm QS}} \mu^{2} > 0`.  SUPERSEDED (2026-10-22): the splines were the
+    problem, not the crossing -- ``mochiclassy.Background.eft_interpolators`` now tabulates the
+    finite coefficients :math:`h_{1}, D_{0} = a^{2} H^{2} \mu^{2}, N_{3}, N_{5}`, smooth through the
+    crossing, and the criterion that remains is the pole-scale one (:func:`_qs_pole_scale`,
+    :data:`QS_K_POLE_MAX`); the production path never stalled (it evaluates the source at k = 1e-8
+    or the pivot 0.1; `QSPole/`, section 4.8 of EFTofDE_parameter_space.md).  Kept for comparisons.
 
     Ingredients, all background: :math:`\xi = H'/H = -\tfrac{3}{2}(\rho + p)_{\rm tot}/H^{2}`,
     :math:`p_{\rm tot}'/H^{2}` including the smg fluid (``dp_wo + dp_de`` of
@@ -636,6 +656,34 @@ def _qs_mu2(a, bg, alpha_B, alpha_M, alpha_T, dalpha_B_dlna, M2):
     alpha_2 = cs2 - (2. - alpha_B) * alpha_1 / 2.
     mu2 = -3. * (alpha_B * (xi * alpha_M - 1.5 * dp) + xi * alpha_2)
     return xnp.where(xnp.asarray(a) >= QS_A_MIN, mu2, xnp.inf)
+
+
+def _qs_pole_scale(a, bg, alpha_B, alpha_M, alpha_T, dalpha_B_dlna, M2):
+    r"""
+    The pole of the quasi-static source, :math:`k_{\rm pole}(a) = a H \sqrt{-\mu^{2} / c_{s}^{2}{\rm num}}`
+    in h/Mpc, on the grid: the scale at which :math:`\mu(k, a) = h_{1} (D_{0} + N_{5} k^{2}) / (D_{0} + N_{3}
+    k^{2})` with :math:`D_{0} = a^{2} H^{2} \mu^{2}`, :math:`N_{3} = c_{s}^{2}{\rm num}` has its denominator zero
+    where :math:`\mu^{2} < 0`. Zero where :math:`\mu^{2} \geq 0` (no pole), where :math:`\alpha_{1} = 0`
+    exactly (no-slip and exact GR: :math:`N_{5} = N_{3}` and the pole cancels from :math:`\mu`, which the
+    engine and fkptjax evaluate as :math:`\mu = h_{1}`), and where ``a < QS_A_MIN`` (outside fkptjax's
+    range); :math:`+\infty` where :math:`c_{s}^{2}{\rm num} \leq 0` with :math:`\mu^{2} < 0` (gradient-unstable,
+    refused anyway). Its maximum over the grid is what :data:`QS_K_POLE_MAX` bounds. Same ingredients as
+    :func:`_qs_mu2`; agrees with ``mochiclassy.Background.qs_pole_scale`` to the background's accuracy.
+    """
+    xnp = numpy_jax(a, alpha_B, alpha_M, alpha_T, dalpha_B_dlna, M2, *bg.values())
+    xi = -1.5 * (bg['X_m'] + bg['X_de'])
+    dp = bg['dp_wo'] + bg['dp_de']
+    cs2 = cs2num(alpha_B, alpha_M, alpha_T, dalpha_B_dlna, M2, bg['X_m'], bg['X_de'])
+    alpha_1 = alpha_B + (alpha_B - 2.) * alpha_T + 2. * alpha_M
+    alpha_2 = cs2 - (2. - alpha_B) * alpha_1 / 2.
+    mu2 = -3. * (alpha_B * (xi * alpha_M - 1.5 * dp) + xi * alpha_2)
+    a = xnp.asarray(a)
+    aH = a * xnp.sqrt(bg['E2']) * _H0_OVER_H
+    positive = cs2 > 0.
+    kp = aH * xnp.sqrt(xnp.maximum(-mu2, 0.) / xnp.where(positive, cs2, 1.))
+    kp = xnp.where(positive, kp, xnp.inf)
+    kp = xnp.where(xnp.logical_or(mu2 >= 0., alpha_1 == 0.), 0., kp)
+    return xnp.where(a >= QS_A_MIN, kp, 0.)
 
 
 def ic_growth_exponent(kin, bra, run, ten, dM2, dkin, dbra, R, Pt, Rs, Ps, dPt, dPs, w):
@@ -866,7 +914,7 @@ def _refined_grid(a_grid, a_t, tau, u_max=8., n_refine=96):
     return xnp.concatenate([xnp.broadcast_to(a_grid, (a_t.shape[0], a_grid.size)), a_ref], axis=-1)
 
 
-def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None, qs=False):
+def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None, qs=False, qs_pole=False):
     r"""
     Sweep the ``a`` grid once and return every quantity mochi_class reduces over it.
 
@@ -892,7 +940,8 @@ def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None, qs=F
     nchunk = chunk or max(1, _CHUNK_ELEMENTS // width)
 
     keys = (('min_cs2num', 'min_bra', 'max_bra', 'min_ten', 'min_M2') + (('x_growth',) if ic else ())
-            + (('min_mu2_qs',) if qs else ()))
+            + (('min_mu2_qs',) if qs else ()) + (('k_pole_max',) if qs_pole else ()))
+    derivs = (ic is not None) or qs or qs_pole
     out = {k: [] for k in keys}
     for i in range(0, n, nchunk):
         sl = slice(i, min(i + nchunk, n))
@@ -901,16 +950,18 @@ def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None, qs=F
         if model == 'hill_valley':
             a = (_refined_grid(a_grid, par['a_t'][sl], par['tau'][sl], n_refine=n_refine)
                  if refine else a_grid)
-            bg = background(a, derivs=(ic is not None) or qs, **bgkw)
+            bg = background(a, derivs=derivs, **bgkw)
             al = alphas_hill_valley(a, p['c_M'], p['tau'], p['a_t'], p['r'], p['M2_ini'],
                                     return_dM2=ic is not None)
         else:
             a = a_grid
-            bg = background(a_grid, derivs=(ic is not None) or qs, **bgkw)
+            bg = background(a_grid, derivs=derivs, **bgkw)
             al = alphas_propto_omega(a_grid, lna, bg, p['c_b'], p['c_m'], p['c_t'],
                                      p['M2_ini'], return_dM2=ic is not None)
         aB, aM, aT, daB, M2 = al[:5]
-        shape = bg['X_m'].shape
+        # the (models, a) shape: the background alone has no model axis when every cosmological
+        # parameter is a scalar (the coefficients then supply it)
+        shape = np.broadcast_shapes(np.shape(bg['X_m']), np.shape(aB))
         out['min_cs2num'].append(cs2num(aB, aM, aT, daB, M2, bg['X_m'], bg['X_de']).min(axis=-1))
         out['min_bra'].append(xnp.broadcast_to(aB, shape).min(axis=-1))
         out['max_bra'].append(xnp.broadcast_to(aB, shape).max(axis=-1))
@@ -918,6 +969,8 @@ def _scan(model, par, cosmo_keys, a_grid, refine, n_refine, chunk, ic=None, qs=F
         out['min_M2'].append(xnp.broadcast_to(M2, shape).min(axis=-1))
         if qs:
             out['min_mu2_qs'].append(_qs_mu2(a, bg, aB, aM, aT, daB, M2).min(axis=-1))
+        if qs_pole:
+            out['k_pole_max'].append(_qs_pole_scale(a, bg, aB, aM, aT, daB, M2).max(axis=-1))
         if ic is not None:
             q = {k: v[sl] for k, v in par.items()}
             if model == 'hill_valley':
@@ -948,7 +1001,7 @@ def _prepare(model, args, cosmo, na, a_grid, a_ref=None):
 
 
 def scan_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, na=DEFAULT_NA, a_grid=None,
-                     refine=True, n_refine=96, chunk=None, ic_test=False, qs_mu2=False, **cosmo):
+                     refine=True, n_refine=96, chunk=None, ic_test=False, qs_mu2=False, qs_pole=False, **cosmo):
     r"""
     Every quantity mochi_class minimises over ``a``, for the hill/valley parametrisation.
 
@@ -961,12 +1014,14 @@ def scan_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, na=DEFAULT_NA
     growth exponent at ``z_ref`` (:data:`IC_Z_REF`, inserted into the grid), which needs
     ``alpha_K`` (``parameters_smg[0]``, constant for hill/valley).  With ``qs_mu2=True`` it
     also carries ``min_mu2_qs``, the minimum of :math:`\mu^{2}` over the quasi-static range
-    (:func:`_qs_mu2`), on the refined grid.  numpy or jax.numpy, chosen from the inputs.
+    (:func:`_qs_mu2`), on the refined grid; with ``qs_pole=True`` ``k_pole_max``, the maximum over that
+    range of the pole scale of the quasi-static source (:func:`_qs_pole_scale`, h/Mpc).  numpy or
+    jax.numpy, chosen from the inputs.
     """
     args = dict(c_M=c_M, tau=tau, a_t=a_t, r=r, M2_ini=M2_ini)
     if not ic_test:
         par, shape, n, grid = _prepare('hill_valley', args, cosmo, na, a_grid)
-        out = _scan('hill_valley', par, list(cosmo), grid, refine, n_refine, chunk, qs=qs_mu2)
+        out = _scan('hill_valley', par, list(cosmo), grid, refine, n_refine, chunk, qs=qs_mu2, qs_pole=qs_pole)
     else:
         if alpha_K is None:
             raise ValueError('the superhorizon IC test needs alpha_K (parameters_smg[0])')
@@ -974,12 +1029,12 @@ def scan_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, na=DEFAULT_NA
         par, shape, n, grid, iref = _prepare('hill_valley', args, cosmo, na, a_grid,
                                              a_ref=1. / (1. + IC_Z_REF))
         out = _scan('hill_valley', par, list(cosmo), grid, refine, n_refine, chunk,
-                    ic={'iref': iref}, qs=qs_mu2)
+                    ic={'iref': iref}, qs=qs_mu2, qs_pole=qs_pole)
     return {k: (v.reshape(shape) if shape else v[0]) for k, v in out.items()}
 
 
 def scan_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, na=DEFAULT_NA, a_grid=None,
-                      chunk=None, ic_test=False, ic_omega_ref=None, qs_mu2=False, **cosmo):
+                      chunk=None, ic_test=False, ic_omega_ref=None, qs_mu2=False, qs_pole=False, **cosmo):
     r"""
     Every quantity mochi_class minimises over ``a``, for ``propto_omega``.
 
@@ -992,13 +1047,14 @@ def scan_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, na=DEFAULT_NA, 
     ``alpha_K`` (``parameters_smg[0]``, :math:`\alpha_K = c_K \Omega_{\rm smg}`).
     ``ic_omega_ref`` is the optional :math:`\Omega_{\rm smg}` rescaling of
     :func:`_ic_propto_omega`.  With ``qs_mu2=True`` the dict also carries ``min_mu2_qs``, the
-    minimum of :math:`\mu^{2}` over the quasi-static range (:func:`_qs_mu2`).  numpy or
-    jax.numpy, chosen from the inputs.
+    minimum of :math:`\mu^{2}` over the quasi-static range (:func:`_qs_mu2`); with ``qs_pole=True``
+    ``k_pole_max``, the maximum over that range of the pole scale of the quasi-static source
+    (:func:`_qs_pole_scale`, h/Mpc).  numpy or jax.numpy, chosen from the inputs.
     """
     args = dict(c_b=c_b, c_m=c_m, c_t=c_t, M2_ini=M2_ini)
     if not ic_test:
         par, shape, n, grid = _prepare('propto_omega', args, cosmo, na, a_grid)
-        out = _scan('propto_omega', par, list(cosmo), grid, False, 0, chunk, qs=qs_mu2)
+        out = _scan('propto_omega', par, list(cosmo), grid, False, 0, chunk, qs=qs_mu2, qs_pole=qs_pole)
     else:
         if alpha_K is None:
             raise ValueError('the superhorizon IC test needs alpha_K (parameters_smg[0])')
@@ -1006,7 +1062,7 @@ def scan_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, na=DEFAULT_NA, 
         par, shape, n, grid, iref = _prepare('propto_omega', args, cosmo, na, a_grid,
                                              a_ref=1. / (1. + IC_Z_REF))
         out = _scan('propto_omega', par, list(cosmo), grid, False, 0, chunk,
-                    ic={'iref': iref, 'omega_ref': ic_omega_ref}, qs=qs_mu2)
+                    ic={'iref': iref, 'omega_ref': ic_omega_ref}, qs=qs_mu2, qs_pole=qs_pole)
     return {k: (v.reshape(shape) if shape else v[0]) for k, v in out.items()}
 
 
@@ -1042,7 +1098,7 @@ def min_cs2num_propto_omega(c_b, c_m, c_t=0., M2_ini=1., **kwargs):
     return scan_propto_omega(c_b, c_m, c_t=c_t, M2_ini=M2_ini, **kwargs)['min_cs2num']
 
 
-def _verdict(s, M2_ini, alpha_K, ic_tolerance=None):
+def _verdict(s, M2_ini, alpha_K, ic_tolerance=None, qs_pole_kmax=None):
     """
     Apply mochi_class' rejection conditions to the output of a scan.
 
@@ -1068,7 +1124,11 @@ def _verdict(s, M2_ini, alpha_K, ic_tolerance=None):
 
     A sixth, ``x_growth <= 3 + ic_tolerance`` (the superhorizon IC test,
     :func:`ic_growth_exponent`), is applied when the scan carries ``x_growth``, i.e. when
-    it was run with ``ic_test=True``.
+    it was run with ``ic_test=True``.  Two more belong to the pipeline's quasi-static one-loop
+    source rather than to mochi_class: ``k_pole_max < qs_pole_kmax`` (:data:`QS_K_POLE_MAX` when
+    ``None``; the pole-scale criterion, :func:`_qs_pole_scale`) when the scan carries
+    ``k_pole_max`` (``qs_pole=True``), and the former sign test ``min_mu2_qs > 0`` when it carries
+    ``min_mu2_qs`` (``qs_mu2=True``).
 
     numpy or jax.numpy, chosen from the scan.  Nothing here is model-specific.
     """
@@ -1099,11 +1159,18 @@ def _verdict(s, M2_ini, alpha_K, ic_tolerance=None):
         # exact zeros), and -0.0 == 0. is True.
         mu2, cs2 = s['min_mu2_qs'], s['min_cs2num']
         ok = xnp.logical_and(ok, xnp.logical_or(mu2 > 0., xnp.logical_and(mu2 == 0., cs2 == 0.)))
+    if 'k_pole_max' in s:
+        # The pole-scale criterion (see _qs_pole_scale and QS_K_POLE_MAX): the pole of the quasi-static
+        # source stays below the scale the one-loop kernels are trusted down to. Zero (passes) where
+        # m_QS^2 >= 0 throughout and for no-slip / exact GR, where the pole cancels; +inf (refused)
+        # where cs2num <= 0 with m_QS^2 < 0, which the gradient test refuses anyway.
+        kmax = QS_K_POLE_MAX if qs_pole_kmax is None else qs_pole_kmax
+        ok = xnp.logical_and(ok, s['k_pole_max'] < kmax)
     return ok
 
 
 def stable_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, ic_test=False,
-                       ic_tolerance=None, qs_mu2=False, **kwargs):
+                       ic_tolerance=None, qs_mu2=False, qs_pole=False, qs_pole_kmax=None, **kwargs):
     r"""
     ``True`` where mochi_class would run the model, ``False`` where it would abort.
 
@@ -1121,12 +1188,18 @@ def stable_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, ic_test=Fal
     (:func:`ic_growth_exponent`; needs ``alpha_K``, the constant kineticity).  Off by
     default, i.e. what a mochi_class run with ``pert_ic_tolerance_smg = -1`` accepts, which is
     how the DESI-DR2-MG pipeline runs it; ``True`` reproduces a default run
-    (``ic_tolerance`` defaults to :data:`IC_TOLERANCE`).  ``qs_mu2`` adds the quasi-static
-    pole test :math:`\min \mu^{2} > 0` of :func:`_qs_mu2` -- not one of mochi_class' tests but a
-    requirement of the one-loop source built from :math:`h_{3}`, :math:`h_{5}`.  At
-    :math:`r = 2` (No Slip Gravity) :math:`\alpha_{1} = 0` so :math:`h_{3} = h_{5}` and the
-    pole cancels from :math:`\mu(k)`, but the splines of :math:`h_{3}`, :math:`h_{5}` across it
-    do not; away from :math:`r = 2` it is a genuine singularity at a finite :math:`k`.
+    (``ic_tolerance`` defaults to :data:`IC_TOLERANCE`).
+
+    Two tests of the pipeline's quasi-static one-loop source, neither one of mochi_class' own:
+    ``qs_pole`` adds the pole-scale criterion ``k_pole_max < qs_pole_kmax`` (:data:`QS_K_POLE_MAX`
+    when ``None``): the pole of :math:`\mu(k, a)` where :math:`\mu^{2} < 0`, at :math:`k_{\rm pole} =
+    a H \sqrt{-\mu^{2} / c_{s}^{2}{\rm num}}`, stays below the scale the kernels are trusted down to
+    (:func:`_qs_pole_scale`).  At :math:`r = 2` (No Slip Gravity) :math:`\alpha_{1} = 0`, the pole
+    cancels from :math:`\mu(k)` and the criterion passes identically; away from :math:`r = 2` it is a
+    genuine pole of the quasi-static expression at a finite :math:`k`.  ``qs_mu2`` adds the former
+    sign test :math:`\min \mu^{2} > 0` of :func:`_qs_mu2`, which existed for the splines of
+    :math:`h_{3}`, :math:`h_{5}` across that pole (superseded by the finite representation of the
+    source, 2026-10-22; kept for comparisons).
 
     numpy or jax.numpy, chosen from the inputs: under ``jax.jit`` / ``vmap`` / ``grad``
     every step traces (see the module docstring).
@@ -1134,12 +1207,12 @@ def stable_hill_valley(c_M, tau, a_t, r=2., M2_ini=1., alpha_K=None, ic_test=Fal
     if ic_test and alpha_K is None:
         raise ValueError('ic_test=True needs alpha_K (parameters_smg[0])')
     return _verdict(scan_hill_valley(c_M, tau, a_t, r=r, M2_ini=M2_ini, alpha_K=alpha_K,
-                                     ic_test=ic_test, qs_mu2=qs_mu2, **kwargs),
-                    M2_ini, alpha_K, ic_tolerance=ic_tolerance)
+                                     ic_test=ic_test, qs_mu2=qs_mu2, qs_pole=qs_pole, **kwargs),
+                    M2_ini, alpha_K, ic_tolerance=ic_tolerance, qs_pole_kmax=qs_pole_kmax)
 
 
 def stable_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, ic_test=False,
-                        ic_tolerance=None, ic_omega_ref=None, qs_mu2=False, **kwargs):
+                        ic_tolerance=None, ic_omega_ref=None, qs_mu2=False, qs_pole=False, qs_pole_kmax=None, **kwargs):
     r"""
     ``True`` where mochi_class would run the model, ``False`` where it would abort.
 
@@ -1157,10 +1230,15 @@ def stable_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, ic_test=False
     ``ic_omega_ref`` selects the rescaled evaluation of :func:`_ic_propto_omega`;
     ``None`` evaluates the test as mochi_class does.
 
-    ``qs_mu2`` adds the quasi-static pole test, :math:`\min \mu^{2} > 0` over fkptjax's
-    integration range (:func:`_qs_mu2`): NOT one of mochi_class' tests -- it accepts those
-    models -- but a requirement of the quasi-static one-loop source built from :math:`h_{3}`,
-    :math:`h_{5}`.  Off by default here; the DESI-DR2-MG pipeline turns it on.
+    ``qs_pole`` adds the pole-scale criterion of the pipeline's quasi-static one-loop source,
+    ``k_pole_max < qs_pole_kmax`` over fkptjax's integration range (:func:`_qs_pole_scale`,
+    :data:`QS_K_POLE_MAX` when ``None``): NOT one of mochi_class' tests -- it accepts those models,
+    fully dynamically -- but the condition for the quasi-static expression fkptjax integrates to be
+    regular down to the scale its kernels are trusted at.  Off by default here; the DESI-DR2-MG
+    pipeline turns it on (``tools_MG.eftde_stability_gate``).  ``qs_mu2`` adds the former sign test
+    :math:`\min \mu^{2} > 0` (:func:`_qs_mu2`), which existed for the splines of :math:`h_{3}`,
+    :math:`h_{5}` across the pole and is superseded by the finite representation of the source
+    (2026-10-22); kept for comparisons.
 
     numpy or jax.numpy, chosen from the inputs: under ``jax.jit`` / ``vmap`` / ``grad``
     every step traces (see the module docstring).
@@ -1168,11 +1246,11 @@ def stable_propto_omega(c_b, c_m, c_t=0., M2_ini=1., alpha_K=None, ic_test=False
     if ic_test and alpha_K is None:
         raise ValueError('ic_test=True needs alpha_K (parameters_smg[0])')
     return _verdict(scan_propto_omega(c_b, c_m, c_t=c_t, M2_ini=M2_ini, alpha_K=alpha_K,
-                                      ic_test=ic_test, ic_omega_ref=ic_omega_ref, qs_mu2=qs_mu2, **kwargs),
-                    M2_ini, alpha_K, ic_tolerance=ic_tolerance)
+                                      ic_test=ic_test, ic_omega_ref=ic_omega_ref, qs_mu2=qs_mu2, qs_pole=qs_pole, **kwargs),
+                    M2_ini, alpha_K, ic_tolerance=ic_tolerance, qs_pole_kmax=qs_pole_kmax)
 
 
-def stable(gravity_model, parameters_smg, ic_test=False, qs_mu2=False, **cosmo):
+def stable(gravity_model, parameters_smg, ic_test=False, qs_mu2=False, qs_pole=False, **cosmo):
     """
     Dispatch on mochi_class' own ``gravity_model`` / ``parameters_smg`` pair.
 
@@ -1187,7 +1265,7 @@ def stable(gravity_model, parameters_smg, ic_test=False, qs_mu2=False, **cosmo):
 
     ``'no_slip_gravity'`` is accepted as an alias of ``'hill_valley'``, as in
     ``gravity_models_smg.c``.  Extra keyword arguments go to :func:`background`, plus
-    ``na`` / ``a_grid`` / ``refine`` / ``chunk``; ``ic_test`` and ``qs_mu2`` as in
+    ``na`` / ``a_grid`` / ``refine`` / ``chunk``; ``ic_test``, ``qs_mu2`` and ``qs_pole`` as in
     :func:`stable_propto_omega` / :func:`stable_hill_valley`.
     """
     xnp = numpy_jax(parameters_smg)
@@ -1197,12 +1275,12 @@ def stable(gravity_model, parameters_smg, ic_test=False, qs_mu2=False, **cosmo):
             raise ValueError('hill_valley expects parameters_smg = [alpha_K, c_M, tau, '
                              'a_t, r, M2_ini] on the last axis, got {}'.format(p.shape))
         aK, c_M, tau, a_t, r, M2_ini = (p[..., i] for i in range(6))
-        return stable_hill_valley(c_M, tau, a_t, r=r, M2_ini=M2_ini, alpha_K=aK, ic_test=ic_test, qs_mu2=qs_mu2, **cosmo)
+        return stable_hill_valley(c_M, tau, a_t, r=r, M2_ini=M2_ini, alpha_K=aK, ic_test=ic_test, qs_mu2=qs_mu2, qs_pole=qs_pole, **cosmo)
     if gravity_model == 'propto_omega':
         if p.shape[-1] != 5:
             raise ValueError('propto_omega expects parameters_smg = [alpha_K, c_b, c_m, '
                              'c_t, M2_ini] on the last axis, got {}'.format(p.shape))
         aK, c_b, c_m, c_t, M2_ini = (p[..., i] for i in range(5))
-        return stable_propto_omega(c_b, c_m, c_t=c_t, M2_ini=M2_ini, alpha_K=aK, ic_test=ic_test, qs_mu2=qs_mu2, **cosmo)
+        return stable_propto_omega(c_b, c_m, c_t=c_t, M2_ini=M2_ini, alpha_K=aK, ic_test=ic_test, qs_mu2=qs_mu2, qs_pole=qs_pole, **cosmo)
     raise ValueError("gravity_model must be 'hill_valley' ('no_slip_gravity') or "
                      "'propto_omega', got {!r}".format(gravity_model))

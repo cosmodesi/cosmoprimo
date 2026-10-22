@@ -256,3 +256,52 @@ if __name__ == '__main__':
     test_hill_valley_ic_test()
     test_jax_path_matches_numpy()
     test_hill_valley_jax_path_matches_numpy()
+
+
+def test_pole_scale_criterion():
+    """The pole-scale criterion (qs_pole, 2026-10-22) that replaced the sign test: a free-braiding valley whose
+    quasi-static mass turns tachyonic is admitted while its pole stays below QS_K_POLE_MAX and refused for a
+    tighter bound; no-slip (c_B = -2 c_M) and exact GR have no pole in mu(k) (k_pole_max = 0 exactly) and pass
+    although the sign test refuses the no-slip valley; the hill/valley no-slip model likewise."""
+    kw = dict(alpha_K=0.1, w0=-1., wa=0., **FID)
+    # the largest pole of the LCDM (c_B, c_M) grid of QSPole/2_fix_and_validation.ipynb: 3.5e-3 h/Mpc
+    s = mcs.scan_propto_omega(2.5, -1.5, qs_pole=True, qs_mu2=True, **kw)
+    assert float(s['min_mu2_qs']) < 0. and 2e-3 < float(s['k_pole_max']) < mcs.QS_K_POLE_MAX
+    assert bool(mcs.stable_propto_omega(2.5, -1.5, **kw))
+    assert not bool(mcs.stable_propto_omega(2.5, -1.5, qs_mu2=True, **kw))
+    assert bool(mcs.stable_propto_omega(2.5, -1.5, qs_pole=True, **kw))
+    assert not bool(mcs.stable_propto_omega(2.5, -1.5, qs_pole=True, qs_pole_kmax=1e-3, **kw))
+    # no-slip: tachyonic mass, no pole
+    s = mcs.scan_propto_omega(2., -1., qs_pole=True, qs_mu2=True, **kw)
+    assert float(s['min_mu2_qs']) < 0. and float(s['k_pole_max']) == 0.
+    assert not bool(mcs.stable_propto_omega(2., -1., qs_mu2=True, **kw))
+    assert bool(mcs.stable_propto_omega(2., -1., qs_pole=True, **kw))
+    # exact GR
+    assert float(mcs.scan_propto_omega(0., 0., qs_pole=True, **kw)['k_pole_max']) == 0.
+    assert bool(mcs.stable_propto_omega(0., 0., qs_pole=True, **kw))
+    # a model without a crossing: no pole either
+    assert float(mcs.scan_propto_omega(1., 1., qs_pole=True, **kw)['k_pole_max']) == 0.
+    # hill/valley at r = 2 (No Slip Gravity)
+    hv = {k: v for k, v in HV.items() if k != 'alpha_K'}
+    s = mcs.scan_hill_valley(-1., 1., 0.5, r=2., qs_pole=True, qs_mu2=True, **hv)
+    assert float(s['k_pole_max']) == 0.
+    assert bool(mcs.stable_hill_valley(-1., 1., 0.5, r=2., alpha_K=0.1, qs_pole=True, **hv))
+
+
+def test_pole_scale_jax_path_matches_numpy():
+    jax = pytest.importorskip('jax')
+    import jax.numpy as jnp
+    jax.config.update('jax_enable_x64', True)
+    P = _random_models(300, seed=3)
+    cos = ('h', 'omega_b', 'omega_cdm', 'w0', 'wa', 'm_ncdm', 'N_ur')
+    ok_np = mcs.stable_propto_omega(P['c_B'], P['c_M'], alpha_K=0.1, qs_pole=True, **{k: P[k] for k in cos})
+    kp_np = mcs.scan_propto_omega(P['c_B'], P['c_M'], qs_pole=True, **{k: P[k] for k in cos})['k_pole_max']
+    J = {k: jnp.asarray(v) for k, v in P.items()}
+
+    def one(c_B, c_M, h, omega_b, omega_cdm, w0, wa, m_ncdm, N_ur):
+        return mcs.stable_propto_omega(c_B, c_M, alpha_K=0.1, qs_pole=True, h=h, omega_b=omega_b, omega_cdm=omega_cdm,
+                                       w0=w0, wa=wa, m_ncdm=m_ncdm, N_ur=N_ur)
+
+    ok_v = jax.jit(jax.vmap(one))(*[J[k] for k in ('c_B', 'c_M') + cos])
+    assert bool(jnp.array_equal(ok_v, ok_np))
+    assert bool(np.any(ok_np)) and bool(np.any(kp_np > 0.))
