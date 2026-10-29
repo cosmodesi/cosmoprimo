@@ -218,17 +218,14 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
         return children, aux_data
 
     def _prepare(self):
-        # the k grid is static, the spectrum may be a jax tracer (an emulated, jax-native P(k)
-        # inside a jitted likelihood): everything that reads self.pk goes through self._np
-        xnp = self._np
         self.kmask = (self.k > 1e-4) & (self.k < 5.)
         logk = np.log10(self.k[self.kmask])
-        logpk = xnp.log10(self.pk[self.kmask].T)
-        maxk = xnp.asarray(logk)[xnp.argmax(logpk[0], axis=0)]  # here we take just the first one, approximation
+        logpk = np.log10(self.pk[self.kmask].T)
+        maxk = logk[np.argmax(logpk[0], axis=0)]  # here we take just the first one, approximation
         meanlogk = np.mean(logk)
         stdlogk = np.std(logk)
-        gauss = xnp.exp(-0.5 * ((logk - maxk) / self.sigma)**2)
-        w = 1. - self.weight * gauss
+        gauss = np.exp(-0.5 * ((logk - maxk) / self.sigma)**2)
+        w = np.ones_like(logk) - self.weight * gauss
 
         gradient = np.array([((logk - meanlogk) / stdlogk)**i for i in range(self.degree + 1)])
         constraint_gradient = np.column_stack([gradient[..., 0], gradient[..., 1] - gradient[..., 0],
@@ -246,14 +243,8 @@ class Hinton2017PowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
                                                           logpk[..., -1], logpk[..., -2] - logpk[..., -1],
                                                           logpk[..., -3] - 2. * logpk[..., -2] + logpk[..., -1]]))
 
-        model = 10 ** self.solver.model().T
-        if self._np is np:
-            self.pknow = self.pk.copy()
-            self.pknow[self.kmask] = model
-        else:
-            # jax arrays are immutable: the in-place assignment above raised on an emulated
-            # (jax-native) P(k), which is what a jitted likelihood hands this filter
-            self.pknow = self._np.asarray(self.pk).at[self.kmask].set(model)
+        self.pknow = self.pk.copy()
+        self.pknow[self.kmask] = 10 ** self.solver.model().T
 
 
 class SavGolPowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
