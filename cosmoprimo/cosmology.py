@@ -1054,9 +1054,8 @@ class Cosmology(BaseCosmoParams):
 
     def tree_flatten(self):
         # WARNING: does not preserve key orders in _input_params, _params
-        _numerical_param_names, _numerical_input_param_names =\
-        getattr(self, '_numerical_param_names', None),
-        getattr(self, '_numerical_input_param_names', None)
+        _numerical_param_names, _numerical_input_param_names = (getattr(self, '_numerical_param_names', None),
+                                                                getattr(self, '_numerical_input_param_names', None))
 
         if _numerical_param_names is None:
             self._numerical_param_names = _numerical_param_names =\

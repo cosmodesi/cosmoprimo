@@ -64,7 +64,7 @@ class BasePowerSpectrumBAOFilter(BaseClass, metaclass=RegisteredPowerSpectrumBAO
         self.pk, self.pknow = (x.reshape(self.shape) for x in (self.pk, self.pknow))
 
     def tree_flatten(self):
-        children = ({getattr(self, name) for name in ['_cosmo_fid', '_cosmo', 'pk_interpolator', 'k', 'pk', 'pknow']},)
+        children = ({name: getattr(self, name) for name in ['_cosmo_fid', '_cosmo', 'pk_interpolator', 'k', 'pk', 'pknow']},)
         aux_data = {name: getattr(self, name) for name in ['shape', '_np']}
         return children, aux_data
 
@@ -580,13 +580,15 @@ class PeakAveragePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
             self.k_peaks.append(k)
 
     def _interp(self, xh, xl, x, y, k=3):
+        # Envelopes are splined in log(y), so they stay positive: no node falls between k ~ 1e-3 and the first BAO extremum,
+        # and a spline in y can ring below zero there when y = P / P_EH changes steeply across that gap (e.g. w ~ 0, f_nu > 0.5).
         logx = self._np.log10(x)
         toret = 0.
-        interp = Interpolator1D(logx, y, k=k, extrap=True)
+        interp = Interpolator1D(logx, self._np.log(y), k=k, extrap=True)
         for xx in [xh, xl]:
             logxx = self._np.log10(xx)
             yy = interp(logxx)
-            toret += Interpolator1D(logxx, yy, k=k)(logx)
+            toret += self._np.exp(Interpolator1D(logxx, yy, k=k)(logx))
         return toret / 2.
 
     def _compute(self):
@@ -698,7 +700,7 @@ class BSplinePowerSpectrumBAOFilter(BasePowerSpectrumBAOFilter):
 
         system = self._np.concatenate(system, axis=1)  # of shape (len(z), 1 + len(constraints), 1 + len(constraints))
         target = self._np.concatenate(target, axis=1)  # of shape (len(z), 1 + len(constraints))
-        coeffs = self._np.linalg.solve(system, target)
+        coeffs = self._np.linalg.solve(system, target[..., None])[..., 0]  # numpy >= 2 reads a 2D b as a matrix, not a stack of vectors
 
         # coeffs is shape (len(z), len(spline_models))
         self.pknow = self._np.sum(coeffs.T[..., None] * spline_models, axis=0).T
@@ -748,7 +750,7 @@ class BaseCorrelationFunctionBAOFilter(BaseClass, metaclass=RegisteredCorrelatio
         self.xi, self.xinow = (x.reshape(self.shape) for x in (self.xi, self.xinow))
 
     def tree_flatten(self):
-        children = ({getattr(self, name) for name in ['_cosmo_fid', '_cosmo', 'xi_interpolator', 's', 'xi', 'xinow']},)
+        children = ({name: getattr(self, name) for name in ['_cosmo_fid', '_cosmo', 'xi_interpolator', 's', 'xi', 'xinow']},)
         aux_data = {name: getattr(self, name) for name in ['shape', '_np']}
         return children, aux_data
 

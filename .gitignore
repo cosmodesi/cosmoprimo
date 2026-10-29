@@ -16,3 +16,4 @@ doc/_build/
 **/*.zip
 # Unit test / coverage reports
 **/.coverage
+**/*.png
