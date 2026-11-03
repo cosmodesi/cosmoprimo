@@ -18,6 +18,9 @@ classifiers = ["Programming Language :: Python :: 3"]
 [project.optional-dependencies]
 class = ["pyclass @ git+https://github.com/adematti/pyclass"]
 camb = ["camb"]
+# This fork of cosmoprimo pins the dforero0896 DISCO-EB fork, whose master carries the batched
+# multi-redshift fix.
+discoeb = ["discoeb @ git+https://github.com/dforero0896/DISCO-EB.git@master"]
 isitgr = ["isitgr"]
 mgcamb = ["mgcamb @ git+https://github.com/adematti/MGCAMB"]
 astropy = ["astropy"]

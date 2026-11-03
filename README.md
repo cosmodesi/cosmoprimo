@@ -5,6 +5,7 @@
 **cosmoprimo** provides a coherent interface (and parameter names!) to *CLASS* and *CAMB*, and extensions, ensuring same units and same definitions
 (e.g. fsigma8 as the amplitude of velocity perturbations in spheres of 8 Mpc/h).
 It also includes approximations such as [EH1998](https://arxiv.org/abs/astro-ph/9709112), [BBKS](https://ui.adsabs.harvard.edu/abs/1986ApJ...304...15B/abstract),
+and a wrapper for the differentiable JAX Einstein-Boltzmann solver [DISCO-EB](https://github.com/ohahn/DISCO-EB) (engine ``'discoeb'``),
 together with routines to manipulate these results:
 - automatic sigma8 rescaling
 - the FFTlog algorithm (using numpy.fft or [pyfftw](https://github.com/pyFFTW/pyFFTW) engines)
@@ -43,6 +44,12 @@ If one wants to use CLASS:
 
 If one wants to use CAMB:
 - camb
+
+If one wants to use DISCO-EB (differentiable JAX Einstein-Boltzmann solver):
+- discoeb (which pulls jax, diffrax, equinox, jaxtyping, jax_cosmo, lineax).
+  The `discoeb` extra pins the [dforero0896/DISCO-EB](https://github.com/dforero0896/DISCO-EB)
+  fork (`master`, which carries the batched multi-redshift fix); it is installed automatically by
+  `pip install cosmoprimo[discoeb]`.
 
 For faster FFTs in the FFTlog algorithm:
 - pyfftw

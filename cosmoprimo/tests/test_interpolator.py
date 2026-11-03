@@ -337,6 +337,44 @@ def test_nan():
     assert np.isnan(interp(k, z=1.)).all()
 
 
+def test_out_of_bounds_gradient():
+    """
+    Out-of-bounds evaluations are filled with nan, and the fill must propagate nan into the
+    derivative too.  Filling with a *constant* nan has a zero tangent, so forward-mode
+    differentiation of an out-of-bounds evaluation silently returned an all-zero Jacobian,
+    indistinguishable from a legitimate parameter-independent result.
+    """
+    from jax import jacfwd
+    from jax import numpy as jnp
+
+    k = np.geomspace(1e-3, 10., 64)
+    z = np.array([0., 1.])
+    pk = k[:, None]**-1.5 * (1. + z)[None, :]
+
+    def build(x):
+        return PowerSpectrumInterpolator2D(k, z, x * pk)
+
+    k_in = jnp.logspace(-3., 1., 50)  # inside [extrap_kmin, extrap_kmax]
+    k_out = jnp.geomspace(-3., 1., 50)  # negative, hence outside
+
+    # In-bounds: finite value, finite non-zero derivative.
+    assert np.all(np.isfinite(np.asarray(build(1.)(k_in, 0., grid=False))))
+    jac_in = np.asarray(jacfwd(lambda x: build(x)(k_in, 0., grid=False))(1.))
+    assert np.all(np.isfinite(jac_in)) and np.all(jac_in > 0.)
+
+    # Out-of-bounds: nan value and nan (not zero) derivative.
+    assert np.all(np.isnan(np.asarray(build(1.)(k_out, 0., grid=False))))
+    jac_out = np.asarray(jacfwd(lambda x: build(x)(k_out, 0., grid=False))(1.))
+    assert np.all(np.isnan(jac_out))
+
+    # Same for a positive, explicitly out-of-range k through the default grid=True path
+    # (beyond _default_extrap_kmax): the nan fill must reach the derivative there too.
+    k_hi = jnp.geomspace(1e3, 1e5, 50)
+    assert np.all(np.isnan(np.asarray(build(1.)(k_hi, 0.))))
+    jac_hi = np.asarray(jacfwd(lambda x: build(x)(k_hi, 0.))(1.))
+    assert np.all(np.isnan(jac_hi))
+
+
 def test_too_few_nodes_for_a_cubic():
     """A cubic spline needs four nodes; with fewer, the interpolator falls back to linear.
 
@@ -364,4 +402,5 @@ if __name__ == '__main__':
     test_extrap_2d(plot=False)
     test_jax()
     test_nan()
+    test_out_of_bounds_gradient()
     test_too_few_nodes_for_a_cubic()
