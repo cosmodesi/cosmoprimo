@@ -131,6 +131,14 @@ class CambEngine(BaseEngine):
                 all_params['lens_margin'] = all_params.pop('lens_output_margin')
 
             non_linear = all_params.pop('non_linear')
+            # 'mead2020': HMcode2020 of cosmoprimo.hmcode on CAMB's linear spectra (the same model as CAMB's, one implementation for every
+            # engine), its linear table reaching 200 h/Mpc (hmcode extrapolates from 100, the last points of a table being its least
+            # accurate); CAMB's own still runs when lensing is requested, for the lensed C_ell and C_L^phiphi.
+            self._hmcode = non_linear == 'mead2020'
+            if self._hmcode:
+                all_params['kmax'] = max(all_params['kmax'], 200. * self['h'])  # all_params: base_params are already merged in
+                if not base_params['Want_CMB_lensing']:
+                    non_linear = ''
 
             if non_linear:
                 self._camb_params.NonLinear = self.camb.model.NonLinear_both
@@ -827,6 +835,15 @@ class Fourier(BaseSection):
                 kpow -= 2
 
         var1, var2 = [self._index_pk_of(of_) for of_ in of]
+
+        if non_linear and getattr(self._engine, '_hmcode', False):
+            # non_linear='mead2020': the linear spectra times cosmoprimo.hmcode's matter ratio, as CAMB applies its own to every variable
+            ka, za, pka = self.table(non_linear=False, of=of)
+            cached = getattr(self, '_hmcode_ratio', None)  # with the (k, z) grid it was computed on
+            if cached is None or cached[0].shape != ka.shape or cached[1].shape != za.shape or not (np.array_equal(cached[0], ka) and np.array_equal(cached[1], za)):
+                from .hmcode import hmcode2020_ratio
+                self._hmcode_ratio = cached = (ka, za, hmcode2020_ratio(self, self._engine))
+            return ka, za, pka * cached[2]
 
         # Do the hubble_units, k_hunits conversion manually as it is incorrect for Weyl ~ k^2 (phi + psi) / 2
         if non_linear and self._engine._camb_params.NonLinear == self._engine.camb.model.NonLinear_none:

@@ -7,6 +7,22 @@ from .cosmology import BaseEngine, CosmologyInputError, CosmologyComputationErro
 from .interpolator import PowerSpectrumInterpolator1D, PowerSpectrumInterpolator2D
 
 
+def get_class_version():
+    """
+    Return the version of CLASS wrapped by pyclass.
+
+    Returns
+    -------
+    version : tuple
+        (major, minor); (0, 0) if unknown.
+    """
+    try:
+        from pyclass.base._version import class_version
+        return tuple(int(number) for number in class_version.split('.')[:2])
+    except Exception:
+        return (0, 0)
+
+
 class ClassEngine(BaseEngine):
 
     """Engine for the Boltzmann code CLASS."""
@@ -24,16 +40,35 @@ class ClassEngine(BaseEngine):
         params.setdefault('z_max_pk', max(params.pop('z_pk')))
         params.setdefault('P_k_max_h/Mpc', params.pop('kmax_pk'))
         params.setdefault('l_max_scalars', params.pop('ellmax_cl'))
+        # 'mead2020': HMcode2020 of cosmoprimo.hmcode on CLASS's linear spectra, at any redshift (CLASS's own HMcode stops where nothing has
+        # collapsed at its smallest mass: z ~ 1.6 at low amplitude). hmcode extrapolates the linear spectrum from 100 h/Mpc, so the table
+        # reaches 200 h/Mpc, the last points of a table being its least accurate: with 100, CLASS's boost was 1.6-4% off CAMB's at z >= 3.5
+        # (DESI fiducial), with 200 within 9e-4. CLASS's own HMcode2020 still runs when lensing is requested, for the lensed C_ell.
+        self._hmcode = params['non_linear'] == 'mead2020'
+        if self._hmcode:
+            params['P_k_max_h/Mpc'] = max(params['P_k_max_h/Mpc'], 200.)
+            if not lensing:
+                params['non_linear'] = ''
+                for name in ['hmcode_version', 'hmcode_min_k_max']:
+                    params.pop(name, None)
         if params['non_linear']:
             # Seems fixed
             #params['z_max_pk'] = min(params['z_max_pk'], 2.)  # otherwise error
             non_linear = params['non_linear']
-            if non_linear in ['mead', 'hmcode']:
+            # CLASS reads halofit_min_k_max / hmcode_min_k_max in 1/Mpc (they set precision parameter nonlinear_min_k_max)
+            k_max_mpc = params['P_k_max_h/Mpc'] * self['h']
+            # HMcode version, with the same names as the camb engine: 'mead' / 'hmcode' = HMcode2016 there.
+            # CLASS >= 3.3 defaults to HMcode2020, so set the version explicitly, unless hmcode_version is given in extra_params.
+            hmcode_versions = {'mead': '2016', 'hmcode': '2016', 'mead2016': '2016', 'mead2015': '2016',
+                               'mead2020': '2020', 'mead2020_feedback': '2020_baryonic_feedback'}
+            if non_linear in hmcode_versions:
                 params['non_linear'] = 'hmcode'
-                params.setdefault('hmcode_min_k_max', params['P_k_max_h/Mpc'])
+                if get_class_version() >= (3, 3):  # hmcode_version does not exist (unread) in CLASS < 3.3
+                    params.setdefault('hmcode_version', hmcode_versions[non_linear])
+                params.setdefault('hmcode_min_k_max', k_max_mpc)
             elif non_linear in ['halofit']:
                 params['non_linear'] = 'halofit'
-                params.setdefault('halofit_min_k_max', params['P_k_max_h/Mpc'])
+                params.setdefault('halofit_min_k_max', k_max_mpc)
             else:
                 raise CosmologyInputError('Unknown non-linear code {}'.format(non_linear))
             # As we cannot rescale sigma8 for the non-linear power spectrum
@@ -63,7 +98,7 @@ class ClassEngine(BaseEngine):
         params.setdefault('k_per_decade_for_bao', 100)  # default is 70 (precisions.h)
         params.setdefault('k_per_decade_for_pk', 20)  # default is 10
         for name, value in params.items():
-            if name in ['N_ncdm']: continue
+            if name in ['N_ncdm', 'hmcode_version']: continue  # keep hmcode_version a string ('2020', not '2020.0')
             try: params[name] = float(value)
             except: continue
         #for name in ['theta_s_100']:
@@ -305,6 +340,17 @@ class BaseClassFourier(object):
     def __init__(self, engine):
         super(BaseClassFourier, self).__init__(engine.classy)
         self._rsigma8 = engine._rescale_sigma8()
+        # non_linear='mead2020': the non-linear spectra are the linear ones times cosmoprimo.hmcode's matter ratio
+        self._hmcode_engine = engine if getattr(engine, '_hmcode', False) else None
+        self._hmcode_ratio = None
+
+    def _get_hmcode_ratio(self, k, z):
+        # cached with the (k, z) grid it was computed on: a later computation (e.g. the lensed C_ell) can resample CLASS's tables
+        cached = self._hmcode_ratio
+        if cached is None or cached[0].shape != k.shape or cached[1].shape != z.shape or not (np.array_equal(cached[0], k) and np.array_equal(cached[1], z)):
+            from .hmcode import hmcode2020_ratio
+            self._hmcode_ratio = cached = (k, z, hmcode2020_ratio(self, self._hmcode_engine))
+        return cached[2]
 
     @property
     def sigma8_m(self):
@@ -348,6 +394,8 @@ class BaseClassFourier(object):
         pk : array
             Power spectrum array of shape (len(k), len(z)).
         """
+        if non_linear and self._hmcode_engine is not None:
+            return self.pk_interpolator(non_linear=True, of=of)(k, z)
         return super(BaseClassFourier, self).pk_kz(k, z, non_linear=non_linear, of=of) * self._rsigma8**2
 
     def table(self, non_linear=False, of='delta_m'):
@@ -376,6 +424,9 @@ class BaseClassFourier(object):
         pk : array
             Power spectrum array of shape (len(k), len(z)).
         """
+        if non_linear and self._hmcode_engine is not None:
+            k, z, pk = self.table(non_linear=False, of=of)
+            return k, z, pk * self._get_hmcode_ratio(k, z)
         k, z, pk = super(BaseClassFourier, self).table(non_linear=non_linear, of=of)
         pk *= self._rsigma8**2
         return k, z, pk

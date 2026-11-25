@@ -254,9 +254,9 @@ def AbacusSummit(name=0, engine='class', precision=None, extra_params=None, **pa
     engine = get_engine(engine)
     default_extra_params = {}
     if engine is not None and engine.name == 'class':
-        default_extra_params = {'recombination': 'HyRec'}
-        # {'recombination': 'HyRec', 'sBBN file': 'bbn/sBBN.dat'}
-        # TODO: change this for Y3? ~5e-5 change in rs_drag
+        # sBBN_2017.dat: the DESI fiducial BBN table, kept fixed (CLASS >= 3.3 defaults to sBBN_2025.dat)
+        default_extra_params = {'recombination': 'HyRec', 'sBBN file': 'bbn/sBBN_2017.dat'}
+        # TODO: change this for Y3? ~5e-5 change in rs_drag with 'sBBN file': 'bbn/sBBN.dat'
         if precision == 'base':
             prec = dict(tol_ncdm_bg=1.e-10, recfast_Nz0=100000, tol_thermo_integration=1.e-5,
                         recfast_x_He0_trigger_delta=0.01, recfast_x_H0_trigger_delta=0.01,

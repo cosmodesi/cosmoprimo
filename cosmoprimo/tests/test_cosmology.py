@@ -1587,9 +1587,10 @@ def test_rs():
 def test_bbn():
     from cosmoprimo.fiducial import DESI
     fiducial = DESI(extra_params={'sBBN file': 'bbn/sBBN.dat'})
-    cosmo = DESI(extra_params={'sBBN file': 'bbn/sBBN_2017.dat'})
+    cosmo = DESI(extra_params={'sBBN file': 'bbn/sBBN_2017.dat'})  # the DESI fiducial BBN table, whatever the CLASS default
     test = DESI()
     assert test.rs_drag == cosmo.rs_drag
+    assert DESI(extra_params={'sBBN file': 'bbn/sBBN_2025.dat'}).rs_drag != test.rs_drag  # CLASS >= 3.3 default
     print(fiducial.rs_drag / cosmo.rs_drag - 1.)
 
 
