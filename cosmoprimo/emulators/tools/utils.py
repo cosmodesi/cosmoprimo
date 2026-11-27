@@ -289,6 +289,23 @@ def _log_inverse(u):
 TRANSFORMS = {'sqrt': (_sqrt_forward, lambda u: u * u), 'log': (_log_forward, _log_inverse)}
 
 
+def _negsqrt_forward(x):
+    xnp = numpy_jax(x)
+    return -xnp.sqrt(xnp.maximum(-x, 0.))
+
+
+def _negcbrt_forward(x):
+    xnp = numpy_jax(x)
+    return -xnp.cbrt(xnp.maximum(-x, 0.))
+
+
+#: ``'negsqrt'`` (u = -sqrt(-x)) and ``'negcbrt'`` (u = -cbrt(-x)): for a parameter bounded above by 0 whose response
+#: switches on at that bound. The case is the hill_valley no-slip EFT_DE ``c_M`` <= 0: with alpha_B = -2 alpha_M the
+#: scalar sound speed goes as c_s^2 ~ |c_M| / alpha_K, so the scales the modification reaches move as ~|c_M|^(-1/2)
+#: and a polynomial in c_M itself overshoots within |c_M| < 0.003 of the wall (measured 2e-3 on P(k) at k ~ 3e-3).
+TRANSFORMS.update({'negsqrt': (_negsqrt_forward, lambda u: -u * u), 'negcbrt': (_negcbrt_forward, lambda u: u * u * u)})
+
+
 def nested_level_nodes(level, limits=(-1., 1.)):
     """Nodes of the nested Chebyshev-Lobatto rule at *level*: 1 node at level 0,
     ``2^level + 1`` nodes otherwise; each level's nodes contain the previous level's."""

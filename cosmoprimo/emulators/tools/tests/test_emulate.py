@@ -257,6 +257,21 @@ def test_mlp_nodes_are_quasi_random_samples_of_the_box():
     assert nodes[:, 0].min() < 1.2 and nodes[:, 0].max() > 2.8
 
 
+class Sampled(Exact):
+    """`amplitude` exact as in `Exact`, but sampled at the nodes rather than pinned at the centre."""
+    def select_node_params(self, names):
+        return ['amplitude']
+
+
+def test_a_sampled_param_must_be_a_training_parameter():
+    class Wrong(Exact):
+        def select_node_params(self, names):
+            return ['nothing']
+
+    with pytest.raises(ValueError, match='select_node_params'):
+        Wrong(target, space())
+
+
 # ── saving ────────────────────────────────────────────────────────────────────
 
 def test_mlp_round_trips_through_a_file(tmp_path):
@@ -316,3 +331,80 @@ def test_contract_checks_the_shape_it_is_given():
         emu.contract('pk', np.zeros((3, len(K) + 1)))
     with pytest.raises(ValueError, match='no output'):
         emu.contract('nope', np.zeros((3, len(K))))
+
+
+#: A polynomial fit, the engine of the EFT-of-DE table emulators.
+POLY = dict(engine='polynomial', order=4)
+
+
+def test_a_sampled_exact_param_reuses_the_generic_checkpoint(tmp_path):
+    """`select_node_params`: a node set drawn while `amplitude` was still expanded -- and its
+    checkpoint -- is reused as it stands once `amplitude` is exact-but-sampled. Same coordinates
+    in the same column order, so nothing is evaluated again; the fit is over `tilt` alone, on the
+    nodes projected onto it; and `amplitude` is exact and unbounded as with the pinned version."""
+    calls = []
+
+    def counting(params):
+        calls.append(1)
+        return target(params)
+
+    checkpoint = str(tmp_path / 'nodes.ckpt.npz')
+    generic = Emulator(counting, space(), engine='polynomial')
+    generic.train(**{**POLY, 'checkpoint': checkpoint})
+    evaluated = len(calls)
+    emu = Sampled(counting, space(), engine='polynomial')
+    # expanded: tilt; exact: amplitude; node coordinates: both, in the TRAINING order, which is
+    # the column order the generic checkpoint was written in
+    assert emu.params == ['tilt'] and emu.exact_params == ['amplitude']
+    assert emu.node_params == ['amplitude', 'tilt']
+    draw = {name: value for name, value in POLY.items() if name != 'engine'}
+    assert np.allclose(emu.nodes(**draw), generic.nodes(**draw))
+    emu.train(**{**POLY, 'checkpoint': checkpoint})
+    assert emu.trained and len(calls) == evaluated
+    # the fitted engines are over `tilt` alone, and amplitude is exact far outside its range
+    assert all(engine.params == ['tilt'] for engine, *_ in emu._engines.values())
+    outside = emu.predict(amplitude=99., tilt=0.2)
+    assert np.allclose(outside['pk'], 99. / 2.9 * emu.predict(**OTHER)['pk'], rtol=1e-10)
+    # the projected nodes are a perfectly good 1-d set: the fit is as good as the pinned one's
+    pinned = trained(cls=Exact, **POLY)
+    truth = target(OTHER)['pk']
+    error = lambda emulator: np.max(np.abs(emulator.predict(**OTHER)['pk'] / truth - 1.))
+    assert error(emu) < 5. * max(error(pinned), 1e-3)
+    # and it survives a file
+    emu.write(str(tmp_path / 'sampled.h5'))
+    again = Emulator.read(str(tmp_path / 'sampled.h5'))
+    assert again.node_params == ['amplitude', 'tilt']
+    assert np.allclose(again.predict(**OTHER)['pk'], emu.predict(**OTHER)['pk'])
+
+
+def test_outlier_cuts_look_at_the_transformed_values(caplog):
+    """The cuts see what the engines are fitted to: a transform that removes the amplitude also
+    removes the amplitude-driven outliers."""
+    import logging
+
+    def spiky(params):
+        # one output that is exactly exp(amplitude) times a shape: e^10 above the median at the
+        # top of the box, e^10 below it at the bottom
+        return {'pk': np.exp(params['amplitude']) * K**(-1.5 + 0.2 * params['tilt'])}
+
+    class Scaled(Sampled):
+        def transform(self, values, params):
+            return {name: value / np.exp(params['amplitude']) for name, value in values.items()}
+
+        def inverse_transform(self, values, params):
+            return {name: value * np.exp(params['amplitude']) for name, value in values.items()}
+
+    wide = Space(bounds={'amplitude': (0., 20.), 'tilt': (-1., 1.)})
+
+    def dropped(cls):
+        caplog.clear()
+        emu = cls(spiky, wide, engine='polynomial')
+        with caplog.at_level(logging.INFO, logger='Emulator'):
+            emu.train(**{**POLY, 'outlier_factor': 10.})
+        lines = [record.getMessage() for record in caplog.records if record.getMessage().startswith('dropping')]
+        return int(lines[-1].split()[1].split('/')[0]) if lines else 0
+
+    # generic emulator, transform = identity: the large-amplitude nodes are outliers
+    assert dropped(Emulator) > 0
+    # amplitude divided out: nothing is an outlier in the values the engine is fitted to
+    assert dropped(Scaled) == 0

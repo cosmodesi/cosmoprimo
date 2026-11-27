@@ -71,6 +71,18 @@ _SPECTRA = {'lensed_cl': ('tt', 'ee', 'bb', 'te'),
 #: two the space is written in, it is the same single number that scales out.
 _SIGMA8 = ('sigma8',) + tuple(Cosmology._alias_parameters.get('sigma8', ()))
 
+#: The primordial spectrum in every spelling -- amplitude (sigma8 included) and tilt. No background
+#: quantity and no recombination scalar depends on it, so the background and thermodynamics sections
+#: leave it off their grid; in a composite it then costs a node only where a section really expands
+#: it (the lensed Cl, the non-linear spectrum). Left on, a fourier + background + thermodynamics
+#: emulator put logA and n_s on the shared node set although the fourier section handles both exactly:
+#: a 6-D grid instead of 4-D for the EFT-of-DE full-shape box (3003 terms at total degree 8 against 495).
+_PRIMORDIAL = _AMPLITUDES + _SIGMA8 + ('n_s',) + tuple(Cosmology._alias_parameters.get('n_s', ()))
+
+#: Reionization in every spelling: the background does not see it. The thermodynamics section keeps it,
+#: since CLASS integrates the drag optical depth from z = 0, so the reionized electrons reach `z_drag`.
+_REIONIZATION = ('tau_reio', 'z_reio') + tuple(Cosmology._alias_parameters.get('tau_reio', ()))
+
 
 def _guard(values):
     r"""*values* where they can be divided by, and 1 where they cannot.
@@ -296,12 +308,28 @@ class SectionEmulator(_Emulator):
         w0waCDM analysis actually bounds: CAMB's PPF refuses :math:`w_0 + w_a > 0` ("giving
         w > 0 at high redshift"), no per-axis limit expresses that, and a Smolyak grid is
         unisolvent, so one node past the bound is not a smaller problem but a singular one.
+    log : bool, default=False
+        Fit the logarithm of each output -- of what is left after the divisor (:meth:`scaling`)
+        and the dilation, which is what the engine would otherwise see -- and exponentiate at
+        prediction. For strictly positive outputs, power spectra above all: a regression in the
+        value itself can overshoot to a negative number where the output is small and its
+        parameter dependence steep, and a negative entry in a spectrum poisons the whole log-log
+        spline that serves it (one point of 117 on an EFT-of-dark-energy w0waCDM box, DESI-DR2-MG
+        CosmoPolyEmu, 2026-11-05: P(k = 1.7e-4) predicted at -86, every k then NaN). In the log
+        the prediction cannot change sign, and the least squares weighs each entry by its
+        relative rather than absolute error. A non-positive training value makes its node
+        non-finite, so this is not for outputs that cross zero (a TE cross spectrum). Saved with
+        the section; files written before the option read back as trained.
     """
     section = None
 
-    def __init__(self, cosmo, space, basis=None, **options):
+    #: files written before the option read back with the behaviour they were trained with
+    log = False
+
+    def __init__(self, cosmo, space, basis=None, log=False, **options):
         self.cosmo = cosmo
         self.basis = _get_basis(basis)
+        self.log = bool(log)
         # analytic backgrounds already built, see `analytic_background`. A dict rather than one
         # entry, because the sections of a composite share it and each may ask at its own
         # parameters, and shared rather than per section because they all clone the same fiducial.
@@ -507,6 +535,10 @@ class SectionEmulator(_Emulator):
         ``wa_fld = -1.65``; see :meth:`analytic_background`. Call :meth:`from_training` first.
         """
         known = set(self.cosmo.get_default_params(include_conflicts=True))
+        # ... plus the inputs the fiducial's engine declares beyond the cosmology's own (the
+        # EFT-of-dark-energy coefficients of mochiclass, ``c_M`` and the rest): legitimate inputs
+        # of that cosmology, which `clone` does pass on, and not a basis name left undone.
+        known |= set(getattr(getattr(self.cosmo, '_engine', None), '_extra_input_parameters', ()))
         unknown = [name for name in params if name not in known]
         if unknown:
             raise ValueError(f'{type(self).__name__} cannot clone the fiducial cosmology with '
@@ -642,21 +674,42 @@ class SectionEmulator(_Emulator):
             # k-dependent, so the order is part of the definition and `inverse_transform` undoes
             # it in reverse. Dividing the tilt here, where `k h` is the live one, is what leaves
             # the dilated spectrum's primordial factor h-free
+            logged = self._logged(name)
             if name in factors:
                 value = value / factors[name]
+            # the log between the factor and the dilation: a strictly positive residual (a spectrum
+            # over its divisor) fitted in the log cannot be predicted negative, and the least
+            # squares then weighs every entry by its relative, not absolute, error. Before the
+            # dilation, not after: the dilation reads the spectrum beyond its grid at one end (k s
+            # past the last node for s < 1), where a cubic extrapolation of a spectrum falling as
+            # k^-3 overshoots -- -7e6 against +1e8 at k = 10 h/Mpc for h = 0.50 on a DESI box
+            # (2026-11-05), harmless to a fit in the value, nan to a log of it. log P is close to
+            # linear in log k at both ends, so dilating the log extrapolates benignly.
+            if logged:
+                value = jnp.log(value)
             if name in dilations:
                 k, scale = dilations[name]
-                value = dilate(k, value, 1. / scale, axis=0) / scale**3
+                value = dilate(k, value, 1. / scale, axis=0)
+                value = value - 3. * jnp.log(scale) if logged else value / scale**3
             out[name] = value
         return out
+
+    def _logged(self, name):
+        """Whether output *name* is fitted in the log (:attr:`log`); per name, so that a composite
+        can answer for each of its sections, as :meth:`scaling` and :meth:`dilation` do."""
+        return self.log
 
     def inverse_transform(self, values, params):
         factors, dilations = self.scaling(params), self.dilation(params)
         out = {}
         for name, value in values.items():
+            logged = self._logged(name)
             if name in dilations:
                 k, scale = dilations[name]
-                value = scale**3 * dilate(k, value, scale, axis=0)
+                value = value + 3. * jnp.log(scale) if logged else scale**3 * value
+                value = dilate(k, value, scale, axis=0)
+            if logged:
+                value = jnp.exp(value)
             if name in factors:
                 value = value * factors[name]
             out[name] = value
@@ -680,7 +733,7 @@ class SectionEmulator(_Emulator):
         not called ``options``: :class:`~cosmoprimo.emulators.tools.Emulator` already keeps the
         engine options under that name, and a method would be shadowed by the attribute.
         """
-        return {'basis': self.basis}
+        return {'basis': self.basis, 'log': self.log}
 
     def __getstate__(self):
         state = super().__getstate__()
@@ -1039,9 +1092,13 @@ class BackgroundEmulator(SectionEmulator):
         background is what the divisor already does, and a node spent on them buys nothing.
 
         It also keeps the grid off `w0 + wa > 1/3`, which CLASS refuses outright.
+
+        The primordial spectrum and reionization (:data:`_PRIMORDIAL`, :data:`_REIONIZATION`) go
+        whatever ``analytic`` says: no background quantity depends on them at all.
         """
+        names = [name for name in names if name not in _PRIMORDIAL + _REIONIZATION]
         if not self.analytic:
-            return list(names)
+            return names
         return [name for name in names if name not in DARK_ENERGY]
 
     def scaling(self, params):
@@ -1167,6 +1224,17 @@ class FourierEmulator(SectionEmulator):
         the interpolation grid rather than a smaller thing to interpolate -- the same trade the
         amplitude already gets, and for the same reason. Off for ``non_linear``, where halofit
         mixes scales and the factorisation fails.
+    exact_dark_energy : bool, default=True
+        With ``analytic``, take :math:`w_0` and :math:`w_a` off the grid: at fixed physical
+        densities they reach a GR linear spectrum through the late-time growth, which the divisor
+        carries, up to the dark-energy perturbations (desilike measured the residual below 1.4e-4
+        from k = 3e-3 up for ``wa`` moved by 0.5). ``False`` keeps them on the grid while the
+        divisor still removes the bulk of their effect. For an engine whose growth depends on the
+        background beyond GR's: on mochi_class hill_valley no-slip (c_M = -0.3, w0 = -0.9 against
+        -1) the residual after the divisor is 1.8% at k < 0.03 and 8e-3 over k = 0.02-0.2, and in
+        GR the scalar field's own clustering leaves 1.2% at k < 0.03 (DESI-DR2-MG CosmoPolyEmu,
+        2026-11-04). Nothing at prediction depends on it: the divisor is built at the point's own
+        ``w0``, ``wa`` either way.
     """
     section = 'fourier'
     #: 3: the growth divisor counts the velocity legs (see :func:`_growth_factor_sq`), and the
@@ -1174,10 +1242,13 @@ class FourierEmulator(SectionEmulator):
     #: so a file written before it would predict confidently and wrongly rather than fail.
     #: 4: the divisor is built at the node's own cosmology -- see :class:`CosmologyEmulator`.
     version = 4
+    #: files written before the option read back with the behaviour they were trained with
+    exact_dark_energy = True
 
     def __init__(self, cosmo, space, k=None, z=None, of=('delta_m',), non_linear=False,
-                 analytic=True, tilt=True, dilate=False, **options):
+                 analytic=True, tilt=True, dilate=False, exact_dark_energy=True, **options):
         self.analytic = bool(analytic)
+        self.exact_dark_energy = bool(exact_dark_energy)
         self.tilt = bool(tilt) and not non_linear
         self.dilate = bool(dilate) and not non_linear
         self.k = np.asarray(k, dtype='f8') if k is not None else np.logspace(-4., 1., 512)
@@ -1228,7 +1299,12 @@ class FourierEmulator(SectionEmulator):
         #
         # It also keeps the node set off a corner no Boltzmann code will evaluate: a grid that
         # varies the pair reaches `w0 + wa > 1/3`, where CLASS refuses outright.
-        if self.analytic:
+        #
+        # `exact_dark_energy=False` keeps the pair on the grid with the divisor still on: for a
+        # growth that is not GR's (the modified-gravity engines), or where the dark energy itself
+        # clusters (w0 + wa near 0), the divisor removes the bulk and the polynomial fits the rest.
+        # The corner is then the caller's to keep off (a `valid` predicate on the pool).
+        if self.analytic and self.exact_dark_energy:
             exact = exact + DARK_ENERGY
         return [name for name in names if name not in exact]
 
@@ -1281,7 +1357,7 @@ class FourierEmulator(SectionEmulator):
     def section_options(self):
         return {**super().section_options(), 'k': self.k, 'z': self.z, 'of': self.of,
                 'non_linear': self.non_linear, 'analytic': self.analytic, 'tilt': self.tilt,
-                'dilate': self.dilate}
+                'dilate': self.dilate, 'exact_dark_energy': self.exact_dark_energy}
 
     def section_class(self, source, prefix=''):
         from cosmoprimo.cosmology import BaseSection, DefaultBackground
@@ -1447,15 +1523,24 @@ class ThermodynamicsEmulator(SectionEmulator):
         itself, and a flatter function needs fewer nodes for the same error. What the formula
         gets wrong (massive neutrinos, curvature, dark energy: exactly the cases its own engine
         refuses) simply stays on the grid.
+    exact_dark_energy : bool, default=True
+        With ``analytic``, take :math:`w_0` and :math:`w_a` off the grid (see :meth:`select_params`).
+        ``False`` keeps them on it: dark energy that is still a per-cent of the matter at
+        recombination (:math:`w_0 + w_a` within ~0.5 of 0) moves the drag scale -- measured on
+        mochi_class, 2e-4 on ``rs_drag`` at w0 + wa = -0.5 and 1% at -0.3 (DESI-DR2-MG CosmoPolyEmu,
+        2026-11-04) -- which the fitting formula does not know.
     """
     section = 'thermodynamics'
     #: 2: the Eisenstein-Hu scales are computed at the node's own cosmology. Before, a training
     #: basis reached `clone`, which ignored it, so `h` was the fiducial's -- and the sound horizon
     #: it divides out carries one factor of `h`.
     version = 2
+    #: files written before the option read back with the behaviour they were trained with
+    exact_dark_energy = True
 
-    def __init__(self, cosmo, space, of=None, analytic=True, **options):
+    def __init__(self, cosmo, space, of=None, analytic=True, exact_dark_energy=True, **options):
         self.analytic = bool(analytic)
+        self.exact_dark_energy = bool(exact_dark_energy)
         self.of = tuple(of) if of is not None else _THERMODYNAMICS
         unknown = [name for name in self.of if name not in _THERMODYNAMICS]
         if unknown:
@@ -1475,9 +1560,16 @@ class ThermodynamicsEmulator(SectionEmulator):
         The angular scales are the exception in principle -- an angle divides by a distance,
         which the dark energy does move -- but ``analytic`` divides by the analytic background's
         own distance to the same epoch, so that part is removed rather than interpolated.
+
+        The primordial spectrum (:data:`_PRIMORDIAL`) goes whatever ``analytic`` says: recombination
+        and the drag epoch do not depend on it. Reionization stays (:data:`_REIONIZATION`).
+
+        ``exact_dark_energy=False`` keeps the dark energy on the grid with ``analytic`` on, for the
+        corner where it is not negligible at recombination (see the class docstring).
         """
-        if not self.analytic:
-            return list(names)
+        names = [name for name in names if name not in _PRIMORDIAL]
+        if not (self.analytic and self.exact_dark_energy):
+            return names
         return [name for name in names if name not in DARK_ENERGY]
 
     def scaling(self, params):
@@ -1504,7 +1596,8 @@ class ThermodynamicsEmulator(SectionEmulator):
                 for name in self.of if name in formula}
 
     def section_options(self):
-        return {**super().section_options(), 'of': self.of, 'analytic': self.analytic}
+        return {**super().section_options(), 'of': self.of, 'analytic': self.analytic,
+                'exact_dark_energy': self.exact_dark_energy}
 
     def section_class(self, source, prefix=''):
         from cosmoprimo.cosmology import BaseSection
@@ -1670,6 +1763,12 @@ class CosmologyEmulator(_Emulator):
     # and that section agree
     transform = SectionEmulator.transform
     inverse_transform = SectionEmulator.inverse_transform
+
+    def _logged(self, name):
+        # the section behind the output answers (its `log`); a section from a file written
+        # before the option has the class default, False
+        section = self.sections.get(name.split('.', 1)[0], None)
+        return bool(getattr(section, 'log', False))
 
     def to_cosmology(self):
         if not self.trained:

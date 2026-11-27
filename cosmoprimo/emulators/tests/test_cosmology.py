@@ -409,6 +409,59 @@ def test_a_parameter_leaves_the_grid_only_if_every_section_is_exact():
     assert together.exact_params == [] and together.params == ['h', 'logA']
 
 
+def test_the_primordial_spectrum_leaves_the_background_and_thermodynamics_grids():
+    """No distance, growth or recombination scalar depends on the amplitude or the tilt, so a full-shape
+    composite (fourier + background + thermodynamics) keeps them off the shared node set: before, the two
+    sections put logA and n_s on it although the fourier section handles both exactly (a 6-D grid instead
+    of 4-D for the EFT-of-DE box). Reionization leaves the background only: the drag optical depth is
+    integrated from z = 0."""
+    space = Space(bounds={'h': (0.6, 0.8), 'omega_cdm': (0.10, 0.14), 'logA': (2.0, 3.7), 'n_s': (0.7, 1.3),
+                          'tau_reio': (0.03, 0.08)})
+    k, z = np.geomspace(1e-3, 1., 32), np.linspace(0., 2., 4)
+    # nothing is computed here, only the node set is decided: any engine with these sections will do
+    fiducial = lambda: Cosmology(engine='class')
+    sections = {'fourier': {'k': k, 'z': z, 'dilate': True}, 'background': {'z': z}, 'thermodynamics': {}}
+    together = Emulator(fiducial(), space, section=sections)
+    assert together.params == ['h', 'omega_cdm', 'tau_reio']
+    assert sorted(together.exact_params) == ['logA', 'n_s']
+    assert Emulator(fiducial(), space, section={'background': {'z': z}}).params == ['h', 'omega_cdm']
+    assert Emulator(fiducial(), space, section='thermodynamics').params == ['h', 'omega_cdm', 'tau_reio']
+    # and without the analytic divisor too: it is the dark energy that analytic=False puts back, not these
+    assert Emulator(fiducial(), space, section={'background': {'z': z, 'analytic': False}}).params == ['h', 'omega_cdm']
+    # sigma8 is the amplitude under another name
+    space8 = Space(bounds={'h': (0.6, 0.8), 'sigma8': (0.7, 0.9)})
+    assert Emulator(fiducial(), space8, section={'background': {'z': z}}).params == ['h']
+
+
+def test_the_dark_energy_stays_on_the_grid_only_when_asked():
+    """With the analytic divisor on, w0 and wa leave the fourier and thermodynamics grids (the divisor carries
+    them) -- unless ``exact_dark_energy=False``, for an engine whose growth is not GR's or a box where the dark
+    energy clusters. The background never expands them (its ratio to the analytic one is 1), and the option is
+    saved with the section so a file replays it."""
+    space = Space(bounds={'h': (0.6, 0.8), 'omega_cdm': (0.10, 0.14), 'logA': (2.0, 3.7),
+                          'w0_fld': (-1.6, 0.6), 'wa_fld': (-3., 1.1)})
+    k, z = np.geomspace(1e-3, 1., 32), np.linspace(0., 2., 4)
+    fiducial = lambda: Cosmology(engine='class')
+    fourier, thermo, background = {'k': k, 'z': z, 'dilate': True}, {}, {'z': z}
+    default = Emulator(fiducial(), space, section={'fourier': fourier, 'background': background, 'thermodynamics': thermo})
+    assert default.params == ['h', 'omega_cdm'] and sorted(default.exact_params) == ['logA', 'w0_fld', 'wa_fld']
+    on_grid = Emulator(fiducial(), space, section={'fourier': {**fourier, 'exact_dark_energy': False}, 'background': background,
+                                                   'thermodynamics': {**thermo, 'exact_dark_energy': False}})
+    assert on_grid.params == ['h', 'omega_cdm', 'w0_fld', 'wa_fld'] and on_grid.exact_params == ['logA']
+    # one section asking is enough to put them on the shared node set
+    fourier_only = Emulator(fiducial(), space, section={'fourier': {**fourier, 'exact_dark_energy': False}, 'background': background})
+    assert fourier_only.params == ['h', 'omega_cdm', 'w0_fld', 'wa_fld']
+    assert Emulator(fiducial(), space, section={'thermodynamics': {'exact_dark_energy': False}}).params == ['h', 'omega_cdm', 'w0_fld', 'wa_fld']
+    # with analytic=False the dark energy is on the grid whatever the option says
+    assert Emulator(fiducial(), space, section={'fourier': {**fourier, 'analytic': False}}).params == ['omega_cdm', 'w0_fld', 'wa_fld']
+    # the option is part of the section's saved state, for the file and for a cache key (the background has none:
+    # it never expands the dark energy)
+    for emulator, value in ((on_grid, False), (default, True)):
+        for name, section in emulator.sections.items():
+            if name != 'background':
+                assert section.section_options()['exact_dark_energy'] is value, (name, value)
+
+
 def test_multi_section_to_cosmology_serves_every_section(multi):
     cosmo = multi.to_cosmology().clone(**POINT)
     predicted = multi.predict(**POINT)
@@ -884,3 +937,94 @@ def test_a_file_written_before_the_growth_convention_changed_is_refused():
     state['version'] = 1
     with pytest.raises(StateVersionError):
         type(emulator).from_state(state)
+
+
+def test_the_log_fit_predicts_the_same_spectrum_and_is_saved(tmp_path):
+    """``log=True`` fits log(P / divisor) and exponentiates back: on a smooth target the two fits agree to the
+    fit's own accuracy, the prediction is strictly positive by construction, and the option travels with the
+    section (its state, hence a file and a cache key). Files written before the option read back as trained."""
+    plain = _fourier_emulator().train(budget=2)
+    logged = _fourier_emulator(log=True).train(budget=2)
+    assert plain.log is False and logged.log is True
+    point = {'omega_cdm': 0.1234, 'n_s': 0.965, 'logA': 3.04}
+    truth = np.asarray(plain.compute(point)['pk.delta_m'])
+    for emulator in (plain, logged):
+        predicted = np.asarray(emulator.predict(**point)['pk.delta_m'])
+        np.testing.assert_allclose(predicted, truth, rtol=5e-3)
+        assert np.all(predicted > 0.)
+    # what the engine was fitted to differs by exactly the log
+    params = dict(point)
+    values = plain.compute(params)
+    np.testing.assert_allclose(np.asarray(logged.transform(values, params)['pk.delta_m']),
+                               np.log(np.asarray(plain.transform(values, params)['pk.delta_m'])), rtol=0., atol=1e-12)
+    assert logged.section_options()['log'] is True and plain.section_options()['log'] is False
+    again = read(logged.write(str(tmp_path / 'log.h5')))
+    assert again.log is True
+    np.testing.assert_allclose(np.asarray(again.predict(**point)['pk.delta_m']),
+                               np.asarray(logged.predict(**point)['pk.delta_m']), rtol=0., atol=0.)
+    # a state without the key (a file from before the option) falls back to the class default
+    state = logged.__getstate__()
+    state['section_options'] = {key: value for key, value in state['section_options'].items() if key != 'log'}
+    old = type(logged).__new__(type(logged)); old.__setstate__(state)
+    assert old.log is False
+
+
+def test_a_composite_applies_the_log_to_its_own_section_only():
+    """`CosmologyEmulator` reuses the section's `transform` pair: the log must follow the section behind each
+    output (the fourier one asked for it, the background did not), and a composite without the option must
+    behave as before, attribute and all."""
+    from cosmoprimo.fiducial import DESI
+    space = Space(bounds={'omega_cdm': (0.11, 0.13), 'logA': (2.9, 3.2)})
+    z = np.array([0., 1.])
+    fourier = {'k': np.geomspace(1e-3, 1., 40), 'z': z}
+    plain = Emulator(DESI(engine='eisenstein_hu'), space, section={'fourier': fourier, 'background': {'z': z}}).train(budget=1)
+    logged = Emulator(DESI(engine='eisenstein_hu'), space,
+                      section={'fourier': {**fourier, 'log': True}, 'background': {'z': z}}).train(budget=1)
+    assert logged._logged('fourier.pk.delta_m') and not logged._logged('background.efunc')
+    assert not plain._logged('fourier.pk.delta_m')
+    point = {'omega_cdm': 0.1234, 'logA': 3.04}
+    values = plain.compute(point)
+    for emulator in (plain, logged):
+        transformed = emulator.transform(values, point)
+        np.testing.assert_allclose(np.asarray(transformed['background.efunc']),
+                                   np.asarray(plain.transform(values, point)['background.efunc']), rtol=0., atol=1e-12)
+    np.testing.assert_allclose(np.asarray(logged.transform(values, point)['fourier.pk.delta_m']),
+                               np.log(np.asarray(plain.transform(values, point)['fourier.pk.delta_m'])), rtol=0., atol=1e-12)
+    for emulator in (plain, logged):
+        predicted = emulator.predict(**point)
+        np.testing.assert_allclose(np.asarray(predicted['fourier.pk.delta_m']), np.asarray(values['fourier.pk.delta_m']), rtol=2e-2)
+        np.testing.assert_allclose(np.asarray(predicted['background.efunc']), np.asarray(values['background.efunc']), rtol=1e-6)
+        cosmo = emulator.to_cosmology().clone(**point)
+        assert np.all(np.isfinite(cosmo.get_fourier().pk_interpolator()(np.geomspace(2e-3, 0.5, 10), 0.5)))
+
+
+def test_the_log_fit_survives_the_dilation_s_extrapolation():
+    """With ``dilate=True`` the spectrum is read beyond its k grid at one end (k s past the last node for s < 1), where
+    a cubic extrapolation of a k^-3 tail overshoots to negative values: harmless to a fit in the value, nan to a log
+    taken after it (586 of 6006 nodes dropped on the DESI w0wa box, 2026-11-05). The log is therefore taken before the
+    dilation, and a dilated log fit trains on every node and predicts a finite, positive spectrum that agrees with the
+    dilated plain fit."""
+    space = Space(bounds={'omega_cdm': (0.11, 0.13), 'h': (0.50, 0.85)})
+    from cosmoprimo.fiducial import DESI
+    make = lambda **options: Emulator(DESI(engine='eisenstein_hu'), space, section='fourier',
+                                      k=np.geomspace(1e-4, 10., 300), z=np.array([0., 1.]), dilate=True, **options)
+    # the Chebyshev grid refuses a non-finite node outright, so training at all is the proof that no node was lost
+    plain, logged = make().train(budget=2), make(log=True).train(budget=2)
+    for h in (0.52, 0.67, 0.83):
+        point = {'omega_cdm': 0.12, 'h': h}
+        truth = np.asarray(plain.compute(point)['pk.delta_m'])
+        for emulator in (plain, logged):
+            predicted = np.asarray(emulator.predict(**point)['pk.delta_m'])
+            assert np.all(np.isfinite(predicted)) and np.all(predicted > 0.)
+            # the resampled ends are where the two can differ; the body of the spectrum agrees with the truth
+            inside = slice(5, -5)
+            np.testing.assert_allclose(predicted[inside], truth[inside], rtol=2e-2)
+    # the transform of the log fit is log(P / divisor) dilated, minus 3 log s -- the plain one dilated and divided by s^3
+    point = {'omega_cdm': 0.12, 'h': 0.52}
+    values = plain.compute(point)
+    a, b = np.asarray(logged.transform(values, point)['pk.delta_m']), np.asarray(plain.transform(values, point)['pk.delta_m'])
+    assert np.all(np.isfinite(a)) and np.all(np.isfinite(b))
+    # where the plain transform stays positive the two agree (the resampled end, where it may overshoot, is left out)
+    body = b > 0.
+    body[:10] = body[-10:] = False     # k s runs 0.1 decades past the grid at h = 0.52: ~6 of 60 points per decade
+    np.testing.assert_allclose(np.exp(a[body]), b[body], rtol=5e-2)
